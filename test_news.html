@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>API News Test Runner</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #13161c;
+      color: #eef1f5;
+      padding: 40px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #4fae8e;
+      font-size: 24px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding-bottom: 10px;
+    }
+    .test {
+      margin: 15px 0;
+      padding: 15px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .pass {
+      background: rgba(79, 174, 142, 0.1);
+      border: 1px solid rgba(79, 174, 142, 0.3);
+      color: #a7e6cd;
+    }
+    .fail {
+      background: rgba(224, 116, 95, 0.1);
+      border: 1px solid rgba(224, 116, 95, 0.3);
+      color: #f5c3b6;
+    }
+    pre {
+      background: #1a1f28;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-family: monospace;
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.05);
+      margin-top: 10px;
+      color: #eef1f5;
+    }
+  </style>
+</head>
+<body>
+  <h1>Wicktor API News Integration Test Suite</h1>
+  <div id="results"></div>
+
+  <script src="js/api.js"></script>
+  <script>
+    const resultsDiv = document.getElementById('results');
+
+    function log(message, type = 'pass') {
+      const div = document.createElement('div');
+      div.className = `test ${type}`;
+      div.innerHTML = message;
+      resultsDiv.appendChild(div);
+    }
+
+    async function runTests() {
+      // Mock global fetch to track calls
+      const originalFetch = window.fetch;
+      let fetchCount = 0;
+      window.fetch = async (url, opts) => {
+        fetchCount++;
+        return originalFetch(url, opts);
+      };
+
+      try {
+        // 1. Fetching BTC news
+        log("Testing fresh fetch for BTCUSDT...");
+        const resultBTC = await Api.coinNews('BTCUSDT');
+        if (!resultBTC || !Array.isArray(resultBTC.items)) {
+          throw new Error("BTC news fetch returned invalid response shape: " + JSON.stringify(resultBTC));
+        }
+        
+        log(`<strong>PASS:</strong> BTC news fetch successful. Found ${resultBTC.items.length} articles.<br>
+             <pre>${JSON.stringify(resultBTC.items.slice(0, 2), null, 2)}</pre>`);
+
+        // Verify return shape fields
+        if (resultBTC.items.length > 0) {
+          const first = resultBTC.items[0];
+          if (first.headline === undefined || first.source === undefined || first.time === undefined || first.url === undefined || first.sentiment === undefined) {
+            throw new Error(`BTC articles missing required properties: ${JSON.stringify(first)}`);
+          }
+          if (!['bull', 'bear', 'neutral'].includes(first.sentiment)) {
+            throw new Error(`BTC article sentiment mapping failed: ${first.sentiment}`);
+          }
+          log(`<strong>PASS:</strong> BTC article shape and sentiment mapped correctly.`);
+        }
+
+        // 2. Cache check
+        const currentFetchCount = fetchCount;
+        log("Testing cache hit with $NEAR...");
+        const resultNEAR = await Api.coinNews('$NEAR');
+        if (fetchCount !== currentFetchCount) {
+          throw new Error(`Cache hit check failed. Fetch count increased from ${currentFetchCount} to ${fetchCount}`);
+        }
+        log(`<strong>PASS:</strong> In-memory caching verified! Second request did not trigger a new fetch.`);
+
+        // 3. Normalization
+        log("Testing symbol normalization with NEAR-PERP...");
+        const resultNearPerp = await Api.coinNews('NEAR-PERP');
+        if (JSON.stringify(resultNearPerp.items) !== JSON.stringify(resultNEAR.items)) {
+          throw new Error('Symbol normalization failed. NEAR-PERP did not match $NEAR articles.');
+        }
+        log(`<strong>PASS:</strong> Symbol normalization verified! 'NEAR-PERP' maps to same articles as '$NEAR'.`);
+
+        // 4. Verification of sentiment mapping contract
+        const allSentiments = [...new Set(resultBTC.items.concat(resultNEAR.items).map(a => a.sentiment))];
+        log(`<strong>PASS:</strong> Sentiment values found: ${allSentiments.join(', ')}`);
+
+        log("<h3 style='color:#4fae8e; margin-top:20px;'>ALL API TESTS PASSED!</h3>");
+      } catch (err) {
+        log(`<strong>FAIL:</strong> ${err.message}<br><pre>${err.stack}</pre>`, 'fail');
+      } finally {
+        window.fetch = originalFetch;
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
