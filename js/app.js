@@ -14,7 +14,10 @@
     universeSize: 30,
     refreshIntervalSec: 60,
     showPerps: false,
-    fmpApiKey: ''
+    fmpApiKey: '',
+    maxAgeMinutes: 20,
+    spotCardsPerSide: 5,
+    perpCardsPerSide: 5
   };
 
   let state = {
@@ -22,7 +25,12 @@
     watchlist: new Set(loadJson(STORAGE_KEYS.watchlist, [])),
     discovered: loadJson(STORAGE_KEYS.discovered, {}),
     coins: [],           // last computed, unfiltered
-    activeFilter: 'all',
+    renderedCoins: [],   // final capped+ordered list actually rendered
+    activeFilters: {
+      primary: new Set(), // '3tf' | 'spot' | 'perp' | 'divergence'
+      band:    new Set(), // 'excellent' | 'watch' | 'avoid'
+      side:    new Set()  // 'buy' | 'sell'
+    },
     searchQuery: '',
     topStripData: {},
     rawMovers: [],
@@ -58,7 +66,13 @@
     universeInput: document.getElementById('setting-universe'),
     refreshInput: document.getElementById('setting-refresh'),
     perpToggle: document.getElementById('setting-perps'),
-    fmpKeyInput: document.getElementById('setting-fmpkey')
+    fmpKeyInput: document.getElementById('setting-fmpkey'),
+    maxAgeInput: document.getElementById('setting-maxage'),
+    spotCapInput: document.getElementById('setting-spot-cap'),
+    perpCapInput: document.getElementById('setting-perp-cap'),
+    scanProgress: document.getElementById('scan-progress'),
+    scanProgressFill: document.getElementById('scan-progress-fill'),
+    scanProgressLabel: document.getElementById('scan-progress-label')
   };
 
   // ---------------------------------------------------------------- Theme
@@ -181,24 +195,47 @@
       const activeKeys = new Set();
       const movers = [];
 
+      // Pre-fetch all universes so we know the total batch count up front
+      const universes = [];
       for (const category of categories) {
         const universe = await Api.topUniverse(category, state.settings.universeSize);
+        universes.push({ category, universe });
         universe.forEach(u => {
           if (category === 'spot') {
             movers.push({ symbol: u.symbol.replace(/USDT$/, ''), change: u.change24h });
           }
         });
-        // fetch sequentially in small batches to be gentle on rate limits
-        const batchSize = 5;
+      }
+
+      const batchSize = 5;
+      const totalBatches = universes.reduce(
+        (sum, { universe }) => sum + Math.ceil(universe.length / batchSize), 0
+      );
+      const totalCoins = universes.reduce((sum, { universe }) => sum + universe.length, 0);
+      let batchesDone = 0;
+      let coinsDone = 0;
+
+      const maxAgeMs = state.settings.maxAgeMinutes * 60 * 1000;
+      const now = Date.now();
+
+      for (const { category, universe } of universes) {
         for (let i = 0; i < universe.length; i += batchSize) {
           const batch = universe.slice(i, i + batchSize);
           const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap)));
           results.forEach(r => {
             if (r) {
+              const key = `${r.rawSymbol}:${r.market}`;
+              const ts = state.discovered[key];
+              // Exclude coins whose first-seen timestamp is older than maxAgeMinutes.
+              // Do NOT delete the entry — clearDiscoveredIfMissing() manages lifecycle.
+              if (ts && (now - ts) > maxAgeMs) return;
               allCoins.push(r);
-              activeKeys.add(`${r.rawSymbol}:${r.market}`);
+              activeKeys.add(key);
             }
           });
+          batchesDone++;
+          coinsDone += batch.length;
+          setScanProgress(coinsDone, totalCoins, batchesDone, totalBatches);
         }
       }
 
@@ -214,12 +251,26 @@
     }
   }
 
+  function setScanProgress(coinsDone, totalCoins, batchesDone, totalBatches) {
+    const pct = totalBatches > 0 ? Math.round((batchesDone / totalBatches) * 100) : 0;
+    el.scanProgressFill.style.width = pct + '%';
+    el.scanProgressLabel.textContent = `Scanning ${coinsDone} of ${totalCoins}…`;
+  }
+
   function setLoading(isLoading) {
     if (isLoading && state.coins.length === 0) {
       el.cardGrid.innerHTML = '<div class="loading-state">Scanning the market...</div>';
     }
     el.scanBtn.style.opacity = isLoading ? '0.6' : '1';
     el.scanBtn.disabled = isLoading;
+    if (isLoading) {
+      // Reset bar to zero and reveal it
+      el.scanProgressFill.style.width = '0%';
+      el.scanProgressLabel.textContent = 'Scanning…';
+      el.scanProgress.classList.add('scanning');
+    } else {
+      el.scanProgress.classList.remove('scanning');
+    }
   }
 
   // ------------------------------------------------------------- Top strip
@@ -260,11 +311,40 @@
   // ---------------------------------------------------------------- Filters
   function getFilteredCoins() {
     let list = state.coins;
-    if (state.activeFilter === '3tf') list = list.filter(c => c.alignCount === 3);
-    else if (state.activeFilter === 'spot') list = list.filter(c => c.market === 'SPOT');
-    else if (state.activeFilter === 'perp') list = list.filter(c => c.market === 'PERP');
-    else if (state.activeFilter === 'divergence') list = list.filter(c => c.divergenceOverall !== 'none');
 
+    // primary group — OR within, AND across
+    const prim = state.activeFilters.primary;
+    if (prim.size > 0) {
+      list = list.filter(c =>
+        (prim.has('3tf')        && c.alignCount === 3) ||
+        (prim.has('spot')       && c.market === 'SPOT') ||
+        (prim.has('perp')       && c.market === 'PERP') ||
+        (prim.has('divergence') && c.divergenceOverall !== 'none')
+      );
+    }
+
+    // band group — OR within, AND with above
+    const band = state.activeFilters.band;
+    if (band.size > 0) {
+      list = list.filter(c => {
+        const lbl = Scoring.bandLabel(c.score, c.unlock).text.toLowerCase();
+        return (band.has('excellent') && lbl === 'excellent') ||
+               (band.has('watch')     && lbl === 'watch') ||
+               (band.has('avoid')     && lbl === 'avoid');
+      });
+    }
+
+    // side group — OR within, AND with above
+    const side = state.activeFilters.side;
+    if (side.size > 0) {
+      list = list.filter(c => {
+        const isBuy  = c.side === 'Buy'  || c.side === 'Long';
+        const isSell = c.side === 'Sell' || c.side === 'Short';
+        return (side.has('buy') && isBuy) || (side.has('sell') && isSell);
+      });
+    }
+
+    // search — always AND
     if (state.searchQuery) {
       const q = state.searchQuery.toUpperCase();
       list = list.filter(c => c.symbol.toUpperCase().includes(q));
@@ -273,9 +353,42 @@
   }
 
   // ---------------------------------------------------------------- Render
+  /**
+   * Apply per-side card caps after filtering.
+   * Splits coins into four score-sorted buckets (spot-buy, spot-sell,
+   * perp-buy, perp-sell), slices each to its cap, then concatenates.
+   */
+  function applyCardCaps(coins) {
+    const spotCap = state.settings.spotCardsPerSide;
+    const perpCap = state.settings.perpCardsPerSide;
+
+    const spotBuy  = [];
+    const spotSell = [];
+    const perpBuy  = [];
+    const perpSell = [];
+
+    coins.forEach(c => {
+      const isBuy = c.side === 'Buy' || c.side === 'Long';
+      if (c.market === 'SPOT') {
+        (isBuy ? spotBuy : spotSell).push(c);
+      } else {
+        (isBuy ? perpBuy : perpSell).push(c);
+      }
+    });
+
+    const byScore = (a, b) => b.score - a.score;
+    return [
+      ...spotBuy.sort(byScore).slice(0, spotCap),
+      ...spotSell.sort(byScore).slice(0, spotCap),
+      ...perpBuy.sort(byScore).slice(0, perpCap),
+      ...perpSell.sort(byScore).slice(0, perpCap)
+    ];
+  }
+
   function renderAll() {
     el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
-    Render.renderCardGrid(el.cardGrid, getFilteredCoins());
+    state.renderedCoins = applyCardCaps(getFilteredCoins());
+    Render.renderCardGrid(el.cardGrid, state.renderedCoins);
     bindCardEvents();
   }
 
@@ -304,7 +417,7 @@
   }
 
   function toggleWatchlist(idx) {
-    const coin = getFilteredCoins()[idx];
+    const coin = state.renderedCoins[idx];
     if (!coin) return;
     const key = `${coin.rawSymbol}:${coin.market}`;
     if (state.watchlist.has(key)) state.watchlist.delete(key);
@@ -314,15 +427,15 @@
   }
 
   function openTradingView(idx) {
-    const coin = getFilteredCoins()[idx];
+    const coin = state.renderedCoins[idx];
     if (!coin) return;
     const tvSymbol = coin.market === 'PERP' ? `BYBIT:${coin.rawSymbol}.P` : `BYBIT:${coin.rawSymbol}`;
-    window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`, '_blank', 'noopener');
+    window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}&interval=5`, '_blank', 'noopener');
   }
 
   // ----------------------------------------------------------------- Modal
   async function openModal(idx) {
-    const coin = getFilteredCoins()[idx];
+    const coin = state.renderedCoins[idx];
     if (!coin) return;
     state.modalCoin = coin;
     el.modalContent.innerHTML = Render.detailModalHtml(coin, state.newsCache[coin.rawSymbol]);
@@ -353,6 +466,9 @@
     el.refreshInput.value = state.settings.refreshIntervalSec;
     el.perpToggle.checked = state.settings.showPerps;
     el.fmpKeyInput.value = state.settings.fmpApiKey;
+    el.maxAgeInput.value = state.settings.maxAgeMinutes;
+    el.spotCapInput.value = state.settings.spotCardsPerSide;
+    el.perpCapInput.value = state.settings.perpCardsPerSide;
     el.settingsBackdrop.classList.add('open');
     el.settingsPanel.classList.add('open');
   }
@@ -361,6 +477,9 @@
     state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
     state.settings.showPerps = el.perpToggle.checked;
     state.settings.fmpApiKey = el.fmpKeyInput.value.trim();
+    state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
+    state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
+    state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));
     saveJson(STORAGE_KEYS.settings, state.settings);
     el.settingsBackdrop.classList.remove('open');
     el.settingsPanel.classList.remove('open');
@@ -392,9 +511,17 @@
     });
     el.filterBar.querySelectorAll('.chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        el.filterBar.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        state.activeFilter = chip.dataset.filter;
+        const group  = chip.dataset.group;
+        const filter = chip.dataset.filter;
+        const set    = state.activeFilters[group];
+        if (!set) return;
+        if (set.has(filter)) {
+          set.delete(filter);
+          chip.classList.remove('active');
+        } else {
+          set.add(filter);
+          chip.classList.add('active');
+        }
         renderAll();
       });
     });

@@ -45,16 +45,37 @@
     </div>
   </header>
 
+  <!-- Scan progress bar — shown only while a scan is running -->
+  <div id="scan-progress" class="scan-progress" aria-live="polite" aria-label="Scan progress">
+    <div class="scan-progress-track">
+      <div id="scan-progress-fill" class="scan-progress-fill"></div>
+    </div>
+    <span id="scan-progress-label" class="scan-progress-label"></span>
+  </div>
+
   <!-- Top strip: market pulse, fear & greed, dominance, mcap, sector, movers -->
   <section id="top-strip" class="top-strip" aria-label="Market overview"></section>
 
   <!-- Filters -->
   <section id="filter-bar" class="filter-bar" aria-label="Filters">
-    <button class="chip active" data-filter="all">All</button>
-    <button class="chip" data-filter="3tf">3 TF aligned</button>
-    <button class="chip" data-filter="spot">Spot</button>
-    <button class="chip" data-filter="perp">Perps</button>
-    <button class="chip" data-filter="divergence">Divergence</button>
+    <!-- Row 1: primary filters (multi-select) -->
+    <div class="filter-row" data-group="primary" role="group" aria-label="Primary filters">
+      <button class="chip" data-group="primary" data-filter="3tf">3 TF aligned</button>
+      <button class="chip" data-group="primary" data-filter="spot">Spot</button>
+      <button class="chip" data-group="primary" data-filter="perp">Perps</button>
+      <button class="chip" data-group="primary" data-filter="divergence">Divergence</button>
+    </div>
+    <!-- Row 2: Band + Side groups -->
+    <div class="filter-row" aria-label="Band and side filters">
+      <span class="filter-row-label">Band</span>
+      <button class="chip chip--excellent" data-group="band" data-filter="excellent">Excellent</button>
+      <button class="chip chip--watch"     data-group="band" data-filter="watch">Watch</button>
+      <button class="chip chip--avoid"     data-group="band" data-filter="avoid">Avoid</button>
+      <span class="filter-row-sep"></span>
+      <span class="filter-row-label">Side</span>
+      <button class="chip chip--buy"  data-group="side" data-filter="buy">Buy · Long</button>
+      <button class="chip chip--sell" data-group="side" data-filter="sell">Sell · Short</button>
+    </div>
   </section>
 
   <!-- Card grid -->
@@ -91,11 +112,32 @@
   </div>
 
   <div class="settings-field">
-    <label class="settings-label" for="setting-perps">
-      <input id="setting-perps" type="checkbox" style="margin-right:6px;">
-      Include perpetual futures
+    <div class="settings-label">Include perpetual futures</div>
+    <label class="toggle-switch" for="setting-perps">
+      <input id="setting-perps" type="checkbox">
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
     </label>
     <div class="settings-hint">Off by default. Adds a second data pass per scan.</div>
+  </div>
+
+  <div class="settings-field">
+    <label class="settings-label" for="setting-maxage">Max signal age (minutes)</label>
+    <input id="setting-maxage" type="number" min="1" value="20">
+    <div class="settings-hint">Signals older than this are excluded from results. Default 20 min. Set higher to keep older setups visible.</div>
+  </div>
+
+  <div class="settings-field">
+    <label class="settings-label" for="setting-spot-cap">Spot cards per side (Buy / Sell)</label>
+    <input id="setting-spot-cap" type="number" min="1" max="20" value="5">
+    <div class="settings-hint">Max spot cards shown per buy/sell bucket, sorted by score. Default 5.</div>
+  </div>
+
+  <div class="settings-field">
+    <label class="settings-label" for="setting-perp-cap">Perp cards per side (Long / Short)</label>
+    <input id="setting-perp-cap" type="number" min="1" max="20" value="5">
+    <div class="settings-hint">Max perp cards shown per long/short bucket, sorted by score. Default 5.</div>
   </div>
 
   <div class="settings-field">

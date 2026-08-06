@@ -94,6 +94,45 @@ input:focus-visible {
   margin-bottom: 16px;
 }
 
+/* ---- Scan progress bar ---- */
+.scan-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+  transition: height 0.2s ease, opacity 0.2s ease, margin-bottom 0.2s ease;
+}
+.scan-progress.scanning {
+  height: 18px;
+  opacity: 1;
+  margin-bottom: 12px;
+}
+.scan-progress-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--surf2);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.scan-progress-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+.scan-progress-label {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -254,22 +293,65 @@ input:focus-visible {
 /* ---- Filter bar ---- */
 .filter-bar {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.filter-row {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 6px;
+}
+
+.filter-row-label {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.filter-row-sep {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+  margin: 0 4px;
+  flex-shrink: 0;
 }
 
 .chip {
   font-size: 11px;
   color: var(--text2);
   border: 1px solid var(--border);
-  padding: 6px 13px;
+  padding: 5px 12px;
   border-radius: 20px;
   background: none;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.chip.active { color: var(--text); background: var(--surf2); border-color: var(--border-strong); }
-.chip:hover { border-color: var(--border-strong); }
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* generic active (primary group) */
+.chip.active {
+  color: var(--text);
+  background: var(--surf2);
+  border-color: var(--border-strong);
+}
+
+/* Band chips — tinted active states */
+.chip--excellent.active { color: var(--green-text); background: rgba(79,174,142,0.12); border-color: var(--green); }
+.chip--watch.active    { color: var(--gold-text);  background: rgba(217,180,106,0.12); border-color: var(--gold); }
+.chip--avoid.active    { color: var(--text2);       background: var(--surf2);           border-color: var(--border-strong); }
+
+/* Side chips */
+.chip--buy.active  { color: var(--green-text); background: rgba(79,174,142,0.12); border-color: var(--green); }
+.chip--sell.active { color: var(--red-text);   background: rgba(224,116,95,0.12);  border-color: var(--red); }
+
 
 /* ---- Card grid ---- */
 .card-grid {
@@ -288,6 +370,19 @@ input:focus-visible {
 }
 .coin-card:hover { border-color: var(--border-strong); }
 .coin-card.unlock-severe { border-color: rgba(224,116,95,0.4); }
+
+/* Side glow — quiet ambient tint, unlock-severe border stays dominant */
+.coin-card.side-buy  {
+  box-shadow: 0 0 0 1px rgba(79,174,142,0.15),
+              0 0 16px rgba(79,174,142,0.08);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.coin-card.side-sell {
+  box-shadow: 0 0 0 1px rgba(224,116,95,0.15),
+              0 0 16px rgba(224,116,95,0.08);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
 
 .card-row-top {
   display: flex;
@@ -497,6 +592,56 @@ input:focus-visible {
 }
 .settings-hint { font-size: 10px; color: var(--text3); margin-top: 4px; }
 .settings-hint a { color: var(--gold-text); text-decoration: underline; }
+
+/* ---- Toggle switch ---- */
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+/* hide the native checkbox completely while keeping it accessible */
+.toggle-switch input[type="checkbox"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.toggle-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--surf2);
+  border: 1px solid var(--border-strong);
+  transition: background 0.22s ease, border-color 0.22s ease;
+  flex-shrink: 0;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: transform 0.22s ease, background 0.22s ease;
+}
+/* checked state */
+.toggle-switch input[type="checkbox"]:checked ~ .toggle-track {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+.toggle-switch input[type="checkbox"]:checked ~ .toggle-track .toggle-thumb {
+  transform: translateX(18px);
+  background: var(--surf);
+}
+/* focus-visible ring on the track */
+.toggle-switch input[type="checkbox"]:focus-visible ~ .toggle-track {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
 
 /* ---- Utility / states ---- */
 .empty-state, .loading-state {

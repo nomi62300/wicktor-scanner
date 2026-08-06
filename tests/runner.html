@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wicktor — Test Harness</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; font-size: 13px;
+           background: #0e0f11; color: #c8ccd4; padding: 24px; line-height: 1.6; }
+    h1 { font-size: 18px; color: #e2b96f; margin-bottom: 4px; }
+    .subtitle { color: #666; margin-bottom: 24px; font-size: 12px; }
+    .suite { margin-bottom: 20px; }
+    .suite-name { font-size: 14px; font-weight: bold; color: #7ec8b0; margin-bottom: 6px;
+                  border-left: 3px solid #7ec8b0; padding-left: 8px; }
+    .pass { color: #7ec8b0; }
+    .fail { color: #e07452; font-weight: bold; }
+    .item { padding: 2px 0 2px 16px; }
+    .summary { margin-top: 20px; padding: 12px 16px; border-radius: 6px; font-size: 14px; font-weight: bold; }
+    .summary.all-pass { background: rgba(79,174,142,0.12); color: #7ec8b0; border: 1px solid rgba(79,174,142,0.3); }
+    .summary.has-fail { background: rgba(224,116,95,0.12); color: #e07452; border: 1px solid rgba(224,116,95,0.3); }
+    .error-detail { color: #e07452; font-size: 11px; padding-left: 24px; opacity: 0.8; }
+    pre { background: #1a1b1e; padding: 12px; border-radius: 4px; margin: 8px 0;
+          font-size: 11px; overflow-x: auto; color: #c8ccd4; }
+  </style>
+</head>
+<body>
+
+<h1>⚗ Wicktor Test Harness</h1>
+<p class="subtitle">Loads real source files — runs in browser, no Node required.<br>
+Open DevTools console for additional output if a suite crashes.</p>
+
+<div id="output"></div>
+
+<!-- Load the real source files (same order as index.html) -->
+<script src="js/indicators.js"></script>
+<script src="js/scoring.js"></script>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal test runner
+// ─────────────────────────────────────────────────────────────────────────────
+const results = [];
+let currentSuite = null;
+
+function suite(name) {
+  currentSuite = { name, tests: [] };
+  results.push(currentSuite);
+}
+
+function test(name, fn) {
+  try {
+    fn();
+    currentSuite.tests.push({ name, ok: true });
+  } catch (e) {
+    currentSuite.tests.push({ name, ok: false, err: e.message });
+  }
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'Assertion failed');
+}
+function assertEqual(a, b, msg) {
+  if (a !== b) throw new Error((msg || '') + ` expected ${b}, got ${a}`);
+}
+function assertClose(a, b, eps = 1e-9, msg) {
+  if (Math.abs(a - b) > eps) throw new Error((msg || '') + ` expected ~${b}, got ${a}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers — synthetic candles
+// ─────────────────────────────────────────────────────────────────────────────
+function flatCandle(t, price) {
+  const s = price * 0.005;
+  return { t, o: price, h: price + s, l: price - s, c: price, v: 1000 };
+}
+
+function uptrend(n = 80, start = 100, step = 0.005) {
+  const cs = [];
+  let p = start;
+  for (let i = 0; i < n; i++) { cs.push(flatCandle(i, p)); p *= (1 + step); }
+  return cs;
+}
+
+function downtrend(n = 80, start = 100, step = 0.005) {
+  const cs = [];
+  let p = start;
+  for (let i = 0; i < n; i++) { cs.push(flatCandle(i, p)); p *= (1 - step); }
+  return cs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite A — heikinAshi() formula
+// ─────────────────────────────────────────────────────────────────────────────
+suite('A — heikinAshi() formula');
+
+const hc = { t: 0, o: 10, h: 12, l: 8, c: 14, v: 100 };
+const ha1 = Indicators.heikinAshi([hc]);
+
+test('haClose = (o+h+l+c)/4', () => assertEqual(ha1[0].c, (10+12+8+14)/4));
+test('haOpen first bar = (o+c)/2', () => assertEqual(ha1[0].o, (10+14)/2));
+test('haHigh = max(h, haOpen, haClose)', () => assertEqual(ha1[0].h, Math.max(12, ha1[0].o, ha1[0].c)));
+test('haLow  = min(l, haOpen, haClose)', () => assertEqual(ha1[0].l, Math.min(8,  ha1[0].o, ha1[0].c)));
+test('preserves timestamp', () => assertEqual(ha1[0].t, 0));
+test('preserves volume',    () => assertEqual(ha1[0].v, 100));
+
+const hc2 = { t: 1, o: 14, h: 16, l: 12, c: 18, v: 200 };
+const ha2 = Indicators.heikinAshi([hc, hc2]);
+test('second bar haOpen = (prevHaOpen + prevHaClose) / 2', () => {
+  const expected = (ha2[0].o + ha2[0].c) / 2;
+  assertClose(ha2[1].o, expected, 1e-10, 'second haOpen');
+});
+test('haHigh >= haClose always (uptrend series)', () => {
+  const cs = uptrend(50);
+  Indicators.heikinAshi(cs).forEach((bar, i) =>
+    assert(bar.h >= bar.c, `bar ${i}: haHigh < haClose`));
+});
+test('haLow <= haClose always (uptrend series)', () => {
+  const cs = uptrend(50);
+  Indicators.heikinAshi(cs).forEach((bar, i) =>
+    assert(bar.l <= bar.c, `bar ${i}: haLow > haClose`));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite B — alligatorTouchState() / clean uptrend stays valid
+// ─────────────────────────────────────────────────────────────────────────────
+suite('B — alligatorTouchState() clean uptrend');
+
+test('clean uptrend: last 20 touchStates are all false', () => {
+  const cs = uptrend(80);
+  const { jaw, teeth, lips, haCandles } = Indicators.alligator(cs);
+  const states = Indicators.alligatorTouchState(haCandles, jaw, teeth, lips);
+  const tail = states.slice(-20);
+  assert(!tail.some(s => s === true), 'Expected no invalidation in tail');
+});
+
+test('clean uptrend: analyzeTimeframe → alignment=1, alligatorInvalidated=false', () => {
+  const snap = Indicators.analyzeTimeframe(uptrend(80));
+  assert(snap !== null, 'snapshot null');
+  assertEqual(snap.alignment, 1, 'alignment');
+  assertEqual(snap.alligatorInvalidated, false, 'invalidated');
+});
+
+test('clean downtrend: analyzeTimeframe → alignment=-1, alligatorInvalidated=false', () => {
+  const snap = Indicators.analyzeTimeframe(downtrend(80));
+  assert(snap !== null, 'snapshot null');
+  assertEqual(snap.alignment, -1, 'alignment');
+  assertEqual(snap.alligatorInvalidated, false, 'invalidated');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite C — jaw-touch invalidation and recovery
+// ─────────────────────────────────────────────────────────────────────────────
+suite('C — jaw-touch → alignment=0, recovery → alignment=1');
+
+test('after jaw dip: alignment=0, alligatorInvalidated=true', () => {
+  const cs = uptrend(80);
+  // At bar 70 insert a candle whose low hammers 50% below current price
+  const dipPrice = cs[70].c;
+  cs[70] = { t: 70, o: dipPrice, h: dipPrice * 1.001, l: dipPrice * 0.30, c: dipPrice, v: 5000 };
+  const snap = Indicators.analyzeTimeframe(cs.slice(0, 73));
+  assert(snap !== null, 'snapshot null');
+  assertEqual(snap.alignment, 0, 'alignment after dip');
+  assertEqual(snap.alligatorInvalidated, true, 'invalidated after dip');
+});
+
+test('after strong recovery above lips: alignment=1, alligatorInvalidated=false', () => {
+  const cs = uptrend(80);
+  const dipPrice = cs[55].c;
+  cs[55] = { t: 55, o: dipPrice, h: dipPrice * 1.001, l: dipPrice * 0.30, c: dipPrice, v: 5000 };
+  // bars 60-79 rocket upward — ensure strong close above lips
+  let p = dipPrice * 2;
+  for (let i = 60; i < 80; i++) {
+    cs[i] = flatCandle(i, p); p *= 1.02;
+  }
+  const snap = Indicators.analyzeTimeframe(cs);
+  assert(snap !== null, 'snapshot null');
+  assertEqual(snap.alignment, 1, 'alignment after recovery');
+  assertEqual(snap.alligatorInvalidated, false, 'invalidated after recovery');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite D — AO / RSI / Fractals still use real candles
+// ─────────────────────────────────────────────────────────────────────────────
+suite('D — AO / RSI / Fractals unchanged (real candles)');
+
+test('snapshot RSI matches rsi(realCandles)[lastIdx]', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const rsiSeries = Indicators.rsi(cs);
+  assertClose(snap.rsi, rsiSeries[79], 1e-10, 'RSI mismatch');
+});
+
+test('AO value matches manual SMA(5)−SMA(34) on real medians', () => {
+  const cs = uptrend(80);
+  const ao = Indicators.awesomeOscillator(cs);
+  const med = Indicators.medianPrice(cs);
+  const f = Indicators.sma(med, 5), sl = Indicators.sma(med, 34);
+  assertClose(ao[79], f[79] - sl[79], 1e-10, 'AO mismatch');
+});
+
+test('RSI on HA candles differs from RSI on real candles (proving isolation)', () => {
+  const cs = uptrend(80);
+  // spike at bar 40 makes real vs HA candles diverge clearly
+  cs[40] = { t: 40, o: 100, h: 200, l: 50, c: 102, v: 5000 };
+  const rsiReal = Indicators.rsi(cs);
+  const rsiHA   = Indicators.rsi(Indicators.heikinAshi(cs));
+  const differ = rsiReal.some((v, i) => v != null && rsiHA[i] != null && Math.abs(v - rsiHA[i]) > 0.001);
+  assert(differ, 'RSI should differ between real and HA candles');
+});
+
+test('analyzeTimeframe RSI not affected by spike being HA-smoothed', () => {
+  // Prove analyzeTimeframe uses real candles for RSI by checking its value
+  // matches direct rsi(realCandles) even when a spike is present
+  const cs = uptrend(80);
+  cs[40] = { t: 40, o: 100, h: 200, l: 50, c: 102, v: 5000 };
+  const snap = Indicators.analyzeTimeframe(cs);
+  const rsiSeries = Indicators.rsi(cs);
+  assertClose(snap.rsi, rsiSeries[79], 1e-10, 'analyzeTimeframe RSI should use real candles');
+});
+
+test('fractal detection on real candles finds spike at bar 30', () => {
+  const cs = uptrend(80);
+  cs[30] = { t: 30, o: 200, h: 999, l: 199, c: 200, v: 1000 };
+  const frac = Indicators.fractals(cs);
+  assert(frac.up.includes(30), `Expected fractal up at 30, got [${frac.up}]`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite E — Scoring.bandLabel() contract
+// ─────────────────────────────────────────────────────────────────────────────
+suite('E — Scoring.bandLabel()');
+
+test('score >= 80 → EXCELLENT', () => assertEqual(Scoring.bandLabel(80).text, 'EXCELLENT'));
+test('score 79 → WATCH',        () => assertEqual(Scoring.bandLabel(79).text, 'WATCH'));
+test('score 50 → WATCH',        () => assertEqual(Scoring.bandLabel(50).text, 'WATCH'));
+test('score 49 → AVOID',        () => assertEqual(Scoring.bandLabel(49).text, 'AVOID'));
+test('score 100 → EXCELLENT',   () => assertEqual(Scoring.bandLabel(100).text, 'EXCELLENT'));
+test('unlock.severity=red overrides score', () => {
+  const lbl = Scoring.bandLabel(90, { severity: 'red' });
+  assert(lbl.text.includes('UNLOCK'), `expected UNLOCK label, got "${lbl.text}"`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite F — applyCardCaps() logic (pure function, tested inline)
+// ─────────────────────────────────────────────────────────────────────────────
+suite('F — applyCardCaps() bucketing and caps');
+
+// Inline copy of the function so we can test it without the full app bootstrap
+function applyCardCaps(coins, spotCap, perpCap) {
+  const spotBuy = [], spotSell = [], perpBuy = [], perpSell = [];
+  coins.forEach(c => {
+    const isBuy = c.side === 'Buy' || c.side === 'Long';
+    if (c.market === 'SPOT') { (isBuy ? spotBuy : spotSell).push(c); }
+    else                     { (isBuy ? perpBuy : perpSell).push(c); }
+  });
+  const byScore = (a, b) => b.score - a.score;
+  return [
+    ...spotBuy.sort(byScore).slice(0, spotCap),
+    ...spotSell.sort(byScore).slice(0, spotCap),
+    ...perpBuy.sort(byScore).slice(0, perpCap),
+    ...perpSell.sort(byScore).slice(0, perpCap)
+  ];
+}
+
+function makeCoin(id, market, side, score) {
+  return { id, market, side, score };
+}
+
+// Build a pool: 10 spot-buy (scores 1-10), 10 spot-sell, 10 perp-buy, 10 perp-sell
+const pool = [];
+for (let i = 1; i <= 10; i++) {
+  pool.push(makeCoin(`sb${i}`, 'SPOT', 'Buy',   i * 10));
+  pool.push(makeCoin(`ss${i}`, 'SPOT', 'Sell',  i * 10));
+  pool.push(makeCoin(`pb${i}`, 'PERP', 'Long',  i * 10));
+  pool.push(makeCoin(`ps${i}`, 'PERP', 'Short', i * 10));
+}
+
+test('cap=5: total output = 20 (5 × 4 buckets)', () => {
+  const out = applyCardCaps(pool, 5, 5);
+  assertEqual(out.length, 20, 'total cards');
+});
+
+test('cap=3 spot, 2 perp: total = 10', () => {
+  const out = applyCardCaps(pool, 3, 2);
+  assertEqual(out.length, 10, 'total cards');
+});
+
+test('each bucket sorted by score descending', () => {
+  const out = applyCardCaps(pool, 5, 5);
+  // spot-buy bucket is first 5 entries; scores should be 100,90,80,70,60
+  const spotBuyScores = out.slice(0, 5).map(c => c.score);
+  for (let i = 0; i < spotBuyScores.length - 1; i++) {
+    assert(spotBuyScores[i] >= spotBuyScores[i+1],
+      `spot-buy not sorted at pos ${i}: ${spotBuyScores}`);
+  }
+});
+
+test('bucket with fewer coins than cap renders all it has (no padding)', () => {
+  // Only 2 spot-buy coins
+  const small = [
+    makeCoin('a', 'SPOT', 'Buy', 80),
+    makeCoin('b', 'SPOT', 'Buy', 60),
+    makeCoin('c', 'SPOT', 'Sell', 70),
+    makeCoin('d', 'SPOT', 'Sell', 50),
+    makeCoin('e', 'SPOT', 'Sell', 30),
+  ];
+  const out = applyCardCaps(small, 5, 5);
+  const spotBuyCount = out.filter(c => c.market === 'SPOT' && (c.side === 'Buy' || c.side === 'Long')).length;
+  assertEqual(spotBuyCount, 2, 'spot-buy count (no padding)');
+});
+
+test('Long → perp-buy bucket, Short → perp-sell bucket', () => {
+  const coins = [
+    makeCoin('l1', 'PERP', 'Long', 90),
+    makeCoin('l2', 'PERP', 'Long', 80),
+    makeCoin('s1', 'PERP', 'Short', 70),
+  ];
+  const out = applyCardCaps(coins, 5, 5);
+  const perpBuyCount  = out.filter(c => c.id.startsWith('l')).length;
+  const perpSellCount = out.filter(c => c.id.startsWith('s')).length;
+  assertEqual(perpBuyCount, 2, 'perp-buy (Long)');
+  assertEqual(perpSellCount, 1, 'perp-sell (Short)');
+});
+
+test('cap=1: only highest-score coin per bucket survives', () => {
+  const out = applyCardCaps(pool, 1, 1);
+  assertEqual(out.length, 4, 'total cards with cap=1');
+  out.forEach(c => assertEqual(c.score, 100, `expected score 100, got ${c.score}`));
+});
+
+test('empty input → empty output', () => {
+  const out = applyCardCaps([], 5, 5);
+  assertEqual(out.length, 0, 'empty output');
+});
+
+test('output order: spotBuy → spotSell → perpBuy → perpSell', () => {
+  const coins = [
+    makeCoin('ss', 'SPOT', 'Sell', 90),
+    makeCoin('pb', 'PERP', 'Long', 95),
+    makeCoin('sb', 'SPOT', 'Buy', 85),
+    makeCoin('ps', 'PERP', 'Short', 80),
+  ];
+  const out = applyCardCaps(coins, 5, 5);
+  assertEqual(out[0].id, 'sb', 'first = spotBuy');
+  assertEqual(out[1].id, 'ss', 'second = spotSell');
+  assertEqual(out[2].id, 'pb', 'third = perpBuy');
+  assertEqual(out[3].id, 'ps', 'fourth = perpSell');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite G — max-age filter logic (pure, in-process)
+// ─────────────────────────────────────────────────────────────────────────────
+suite('G — max-age stale-coin exclusion');
+
+function applyMaxAge(coins, discovered, maxAgeMs) {
+  const now = Date.now();
+  return coins.filter(r => {
+    const key = `${r.rawSymbol}:${r.market}`;
+    const ts = discovered[key];
+    if (ts && (now - ts) > maxAgeMs) return false;
+    return true;
+  });
+}
+
+test('coin with no discovery entry passes through (brand new)', () => {
+  const coins = [{ rawSymbol: 'BTC', market: 'SPOT' }];
+  const out = applyMaxAge(coins, {}, 5 * 60 * 1000);
+  assertEqual(out.length, 1, 'new coin should pass');
+});
+
+test('coin discovered 1 min ago passes a 20-min cutoff', () => {
+  const coins = [{ rawSymbol: 'ETH', market: 'SPOT' }];
+  const discovered = { 'ETH:SPOT': Date.now() - 60_000 }; // 1 minute ago
+  const out = applyMaxAge(coins, discovered, 20 * 60 * 1000);
+  assertEqual(out.length, 1, 'fresh coin should pass');
+});
+
+test('coin discovered 25 min ago is excluded by a 20-min cutoff', () => {
+  const coins = [{ rawSymbol: 'XRP', market: 'SPOT' }];
+  const discovered = { 'XRP:SPOT': Date.now() - 25 * 60_000 }; // 25 min ago
+  const out = applyMaxAge(coins, discovered, 20 * 60 * 1000);
+  assertEqual(out.length, 0, 'stale coin should be excluded');
+});
+
+test('stale coin is excluded but discovery entry NOT deleted', () => {
+  const coins = [{ rawSymbol: 'SOL', market: 'SPOT' }];
+  const discovered = { 'SOL:SPOT': Date.now() - 30 * 60_000 };
+  applyMaxAge(coins, discovered, 20 * 60 * 1000); // run the filter
+  assert('SOL:SPOT' in discovered, 'discovery entry must survive filter');
+});
+
+test('mix: only fresh coin included when one is stale', () => {
+  const coins = [
+    { rawSymbol: 'FRESH', market: 'SPOT' },
+    { rawSymbol: 'STALE', market: 'SPOT' },
+  ];
+  const discovered = {
+    'FRESH:SPOT': Date.now() - 5 * 60_000,  // 5 min — ok
+    'STALE:SPOT': Date.now() - 30 * 60_000, // 30 min — too old
+  };
+  const out = applyMaxAge(coins, discovered, 20 * 60 * 1000);
+  assertEqual(out.length, 1, 'only fresh survives');
+  assertEqual(out[0].rawSymbol, 'FRESH');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite H — Scoring.evaluate() smoke test (end-to-end through real candles)
+// ─────────────────────────────────────────────────────────────────────────────
+suite('H — Scoring.evaluate() smoke test');
+
+test('returns non-null result for valid candle sets', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result !== null, 'evaluate should return non-null');
+});
+
+test('score is in [0,100]', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result.score >= 0 && result.score <= 100, `score out of range: ${result.score}`);
+});
+
+test('direction is in [-100,100]', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result.direction >= -100 && result.direction <= 100,
+    `direction out of range: ${result.direction}`);
+});
+
+test('uptrend → positive direction', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result.direction > 0, `expected positive direction, got ${result.direction}`);
+});
+
+test('downtrend → negative direction', () => {
+  const cs = downtrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result.direction < 0, `expected negative direction, got ${result.direction}`);
+});
+
+test('returns null when h1 candles are too short', () => {
+  const short = uptrend(10);
+  const result = Scoring.evaluate({ h1: short, m15: uptrend(80), m5: uptrend(80) });
+  assert(result === null, 'expected null for short h1');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render results to DOM
+// ─────────────────────────────────────────────────────────────────────────────
+let totalPass = 0, totalFail = 0;
+const out = document.getElementById('output');
+
+results.forEach(suite => {
+  const div = document.createElement('div');
+  div.className = 'suite';
+
+  const title = document.createElement('div');
+  title.className = 'suite-name';
+  title.textContent = suite.name;
+  div.appendChild(title);
+
+  suite.tests.forEach(t => {
+    const item = document.createElement('div');
+    item.className = 'item';
+    if (t.ok) {
+      item.innerHTML = `<span class="pass">✓</span>  ${t.name}`;
+      totalPass++;
+    } else {
+      item.innerHTML = `<span class="fail">✗</span>  ${t.name}`;
+      const detail = document.createElement('div');
+      detail.className = 'error-detail';
+      detail.textContent = t.err;
+      item.appendChild(detail);
+      totalFail++;
+    }
+    div.appendChild(item);
+  });
+
+  out.appendChild(div);
+});
+
+const summary = document.createElement('div');
+summary.className = `summary ${totalFail === 0 ? 'all-pass' : 'has-fail'}`;
+summary.textContent = totalFail === 0
+  ? `✓ All ${totalPass} tests passed`
+  : `✗ ${totalFail} failed, ${totalPass} passed — see details above`;
+out.appendChild(summary);
+</script>
+</body>
+</html>

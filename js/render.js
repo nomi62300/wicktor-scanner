@@ -109,9 +109,12 @@ const Render = (() => {
     const rsiRow = coin.rsiByTf.map((v, i) =>
       `<span style="color:${rsiColor(v)}">${TF_LABELS[i]} ${v != null ? v : '--'}</span>`).join(' &middot; ');
     const unlockSevereCls = coin.unlock && coin.unlock.severity === 'red' ? ' unlock-severe' : '';
+    const sideCls = (coin.side === 'Buy' || coin.side === 'Long') ? ' side-buy'
+                  : (coin.side === 'Sell' || coin.side === 'Short') ? ' side-sell'
+                  : '';
 
     return `
-    <div class="coin-card${unlockSevereCls}" data-idx="${idx}" tabindex="0" role="button" aria-label="${esc(coin.symbol)} details">
+    <div class="coin-card${unlockSevereCls}${sideCls}" data-idx="${idx}" tabindex="0" role="button" aria-label="${esc(coin.symbol)} details">
       <div class="card-row-top">
         <span class="card-time"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(coin.discoveredAgo)} ago</span>
         ${marketBadgeHtml(coin.market)}
@@ -255,8 +258,8 @@ const Render = (() => {
       ${breakdownBlockHtml('Reversal', 'var(--text3)', coin.reversal.score, coin.reversal.items)}
       <div class="news-section-label" style="margin-top:2px;">Key levels</div>
       <div class="levels-grid">
-        <div class="level-box"><div class="level-box-label">Resistance</div><div class="level-box-value">$${esc(coin.resistance)}</div></div>
-        <div class="level-box"><div class="level-box-label">Support</div><div class="level-box-value">$${esc(coin.support)}</div></div>
+        <div class="level-box"><div class="level-box-label">Resistance</div><div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div></div>
+        <div class="level-box"><div class="level-box-label">Support</div><div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div></div>
       </div>
       ${newsSectionHtml(newsResult)}
     `;
