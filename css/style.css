@@ -140,14 +140,10 @@ input:focus-visible {
   flex-shrink: 0;
 }
 
-.brand-icon svg { display: block; }
-
-.brand-name {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 17px;
-  color: var(--text);
-  letter-spacing: 0.2px;
+.brand-icon-img {
+  width: 26px;
+  height: 26px;
+  display: block;
 }
 
 .search-box {
