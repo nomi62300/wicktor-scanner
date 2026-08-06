@@ -14,7 +14,6 @@
     universeSize: 30,
     refreshIntervalSec: 60,
     showPerps: false,
-    fmpApiKey: '',
     maxAgeMinutes: 20,
     spotCardsPerSide: 5,
     perpCardsPerSide: 5
@@ -66,7 +65,6 @@
     universeInput: document.getElementById('setting-universe'),
     refreshInput: document.getElementById('setting-refresh'),
     perpToggle: document.getElementById('setting-perps'),
-    fmpKeyInput: document.getElementById('setting-fmpkey'),
     maxAgeInput: document.getElementById('setting-maxage'),
     spotCapInput: document.getElementById('setting-spot-cap'),
     perpCapInput: document.getElementById('setting-perp-cap'),
@@ -120,7 +118,7 @@
   }
 
   // -------------------------------------------------------- Core pipeline
-  async function computeCoin(base, category, mcapMap) {
+  async function computeCoin(base, category, mcapMap, newsData) {
     const candles = await Api.fetchCandleSet(category, base.symbol);
     if (!candles.h1) return null;
     const result = Scoring.evaluate(candles);
@@ -142,6 +140,16 @@
 
     let unlock = null; // populated lazily/best-effort in a later pass if desired
 
+    // Compute news metadata eagerly from the pre-fetched feed
+    const articles = newsData ? newsData.articles : null;
+    const newsItems = articles ? Api.newsForSymbol(articles, base.symbol) : [];
+    const newsResult = { items: newsItems };
+    state.newsCache[base.symbol] = newsResult;
+    const newsMeta = {
+      count: newsItems.length,
+      dominantSentiment: newsItems.length > 0 ? newsItems[0].sentiment : null
+    };
+
     return {
       symbol: displaySymbol,
       rawSymbol: base.symbol,
@@ -153,11 +161,7 @@
       mcap: Api.formatMcap(rawMcap),
       volatility,
       unlock,
-      newsMeta: state.newsCache[base.symbol]
-        ? { count: state.newsCache[base.symbol].items ? state.newsCache[base.symbol].items.length : 0,
-            dominantSentiment: state.newsCache[base.symbol].items && state.newsCache[base.symbol].items[0]
-              ? state.newsCache[base.symbol].items[0].sentiment : null }
-        : { count: 0 },
+      newsMeta,
       watchlisted: state.watchlist.has(key),
       resistance: formatPrice(priceNum * 1.015),
       support: formatPrice(priceNum * 0.987),
@@ -186,7 +190,11 @@
   async function runScan() {
     setLoading(true);
     try {
-      const mcapMap = await Api.coingeckoMarketCaps();
+      // Fetch market caps and pre-warm the news feed in parallel
+      const [mcapMap, newsData] = await Promise.all([
+        Api.coingeckoMarketCaps(),
+        Api.fetchAllNews()
+      ]);
 
       const categories = ['spot'];
       if (state.settings.showPerps) categories.push('linear');
@@ -221,7 +229,7 @@
       for (const { category, universe } of universes) {
         for (let i = 0; i < universe.length; i += batchSize) {
           const batch = universe.slice(i, i + batchSize);
-          const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap)));
+          const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap, newsData)));
           results.forEach(r => {
             if (r) {
               const key = `${r.rawSymbol}:${r.market}`;
@@ -438,18 +446,10 @@
     const coin = state.renderedCoins[idx];
     if (!coin) return;
     state.modalCoin = coin;
+    // News is pre-fetched at scan time and stored in state.newsCache — read directly
     el.modalContent.innerHTML = Render.detailModalHtml(coin, state.newsCache[coin.rawSymbol]);
     el.modalBackdrop.classList.add('open');
     bindModalCloseEvents();
-
-    if (!state.newsCache[coin.rawSymbol]) {
-      const news = await Api.coinNews(coin.symbol, state.settings.fmpApiKey);
-      state.newsCache[coin.rawSymbol] = news;
-      if (state.modalCoin === coin) {
-        el.modalContent.innerHTML = Render.detailModalHtml(coin, news);
-        bindModalCloseEvents();
-      }
-    }
   }
   function bindModalCloseEvents() {
     const closeBtn = el.modalContent.querySelector('[data-action="close-modal"]');
@@ -465,7 +465,6 @@
     el.universeInput.value = state.settings.universeSize;
     el.refreshInput.value = state.settings.refreshIntervalSec;
     el.perpToggle.checked = state.settings.showPerps;
-    el.fmpKeyInput.value = state.settings.fmpApiKey;
     el.maxAgeInput.value = state.settings.maxAgeMinutes;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
     el.perpCapInput.value = state.settings.perpCardsPerSide;
@@ -476,7 +475,6 @@
     state.settings.universeSize = Math.max(10, Math.min(80, parseInt(el.universeInput.value) || 30));
     state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
     state.settings.showPerps = el.perpToggle.checked;
-    state.settings.fmpApiKey = el.fmpKeyInput.value.trim();
     state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
     state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));

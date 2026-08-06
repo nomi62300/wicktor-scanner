@@ -207,9 +207,6 @@ const Render = (() => {
     if (!newsResult) {
       return `<div class="news-section-label">Latest news &amp; reports</div><div class="empty-note">Loading news...</div>`;
     }
-    if (newsResult.error === 'no-key') {
-      return `<div class="news-section-label">Latest news &amp; reports</div><div class="empty-note">Add your FMP API key in Settings to see news for this coin.</div>`;
-    }
     if (newsResult.error) {
       return `<div class="news-section-label">Latest news &amp; reports</div><div class="empty-note">News is temporarily unavailable.</div>`;
     }

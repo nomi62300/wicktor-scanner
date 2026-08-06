@@ -15,7 +15,7 @@ const Api = (() => {
   const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
   const FNG_BASE = 'https://api.alternative.me/fng/';
   const DEFILLAMA_BASE = 'https://api.llama.fi';
-  const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+  const NEWS_JSON_URL = 'https://nomi62300.github.io/crypto-news-bot/news.json';
 
   async function safeFetch(url, opts) {
     try {
@@ -224,72 +224,67 @@ const Api = (() => {
   // -------------------------------------------------------- News Feed ----
 
   /**
-   * News is lazy-loaded per coin (only called when a card's detail
-   * view is opened). Fetches from a live GitHub Pages news feed.
+   * Fetches and caches the full news JSON from the self-hosted GitHub Pages
+   * feed. Returns the parsed data object (with .articles array) or null on
+   * failure. If a previous cache entry exists it is returned on failure
+   * rather than null, so a transient network blip doesn't wipe the news UI.
    */
-  async function coinNews(symbol, apiKey) {
-    const cleanedSymbol = (symbol || '')
+  async function fetchAllNews() {
+    const now = Date.now();
+    if (_newsCache && (now - _newsCacheTime < NEWS_CACHE_TTL)) return _newsCache;
+    const data = await safeFetch(`${NEWS_JSON_URL}?t=${now}`);
+    if (data && Array.isArray(data.articles)) {
+      _newsCache = data;
+      _newsCacheTime = now;
+    }
+    // Return existing cache on failure rather than null (fail-soft)
+    return _newsCache || null;
+  }
+
+  /**
+   * Filters a raw articles array to those mentioning `symbol` (uppercase
+   * ticker match), sorts newest-first, maps sentiment, caps to 5 items.
+   * Pure — no async, no side effects.
+   */
+  function newsForSymbol(articles, symbol) {
+    const clean = (symbol || '')
       .toUpperCase()
       .replace(/USDT$|USD$|PERP$|-PERP$/i, '')
       .replace(/^[$#]/, '');
 
-    const now = Date.now();
-    if (!_newsCache || (now - _newsCacheTime > NEWS_CACHE_TTL)) {
-      const url = `https://nomi62300.github.io/crypto-news-bot/news.json?t=${now}`;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) {
-          return { error: 'fetch-failed' };
-        }
-        const data = await res.json();
-        if (!data || !Array.isArray(data.articles)) {
-          return { error: 'unexpected-response' };
-        }
-        _newsCache = data;
-        _newsCacheTime = now;
-      } catch (err) {
-        console.warn('[Api] news fetch failed', err);
-        return { error: 'fetch-failed' };
-      }
-    }
-
-    if (!_newsCache || !Array.isArray(_newsCache.articles)) {
-      return { error: 'unexpected-response' };
-    }
-
-    const filtered = _newsCache.articles.filter(a => {
-      return Array.isArray(a.tickers) && 
-             a.tickers.some(t => (t || '').toUpperCase() === cleanedSymbol);
-    });
-
-    return {
-      items: filtered.map(a => {
-        const sentimentLower = (a.sentiment || '').toLowerCase();
-        let mappedSentiment = 'neutral';
-        if (sentimentLower === 'bullish') {
-          mappedSentiment = 'bull';
-        } else if (sentimentLower === 'bearish') {
-          mappedSentiment = 'bear';
-        } else if (sentimentLower === 'neutral') {
-          mappedSentiment = 'neutral';
-        }
-
+    return (articles || [])
+      .filter(a => Array.isArray(a.tickers) &&
+                   a.tickers.some(t => (t || '').toUpperCase() === clean))
+      .sort((a, b) => new Date(b.published) - new Date(a.published))
+      .slice(0, 5)
+      .map(a => {
+        const s = (a.sentiment || '').toLowerCase();
         return {
           headline: a.title,
-          source: a.source,
-          time: a.published,
-          sentiment: mappedSentiment,
-          url: a.url
+          source:   a.source,
+          time:     a.published,
+          sentiment: s === 'bullish' ? 'bull' : s === 'bearish' ? 'bear' : 'neutral',
+          url:      a.url
         };
-      })
-    };
+      });
+  }
+
+  /**
+   * Returns { items } for the given symbol using the cached feed.
+   * No apiKey parameter — feed is open CORS, no key required.
+   */
+  async function coinNews(symbol) {
+    const data = await fetchAllNews();
+    if (!data) return { error: 'fetch-failed' };
+    return { items: newsForSymbol(data.articles, symbol) };
   }
 
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
     isTradeableUsdtPair, isXStock,
     coingeckoGlobal, coingeckoTopSector, coingeckoMarketCaps, formatMcap,
-    fearGreedIndex, unlockInfo, coinNews
+    fearGreedIndex, unlockInfo,
+    fetchAllNews, newsForSymbol, coinNews
   };
 })();
 
