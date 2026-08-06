@@ -31,7 +31,8 @@
     activeFilters: {
       primary: new Set(), // '3tf' | 'spot' | 'perp' | 'divergence'
       band:    new Set(), // 'excellent' | 'watch' | 'avoid'
-      side:    new Set()  // 'buy' | 'sell'
+      side:    new Set(), // 'buy' | 'sell'
+      mcap:    new Set()  // 'micro' | 'small' | 'mid' | 'large'
     },
     searchQuery: '',
     topStripData: {},
@@ -163,6 +164,7 @@
       side: result.bias === 1 ? (market === 'PERP' ? 'Long' : 'Buy') : (market === 'PERP' ? 'Short' : 'Sell'),
       discoveredAgo: discoveredAgoLabel(key),
       mcap: Api.formatMcap(rawMcap),
+      mcapRaw: rawMcap,
       volatility,
       unlock,
       newsMeta,
@@ -384,6 +386,19 @@
         const isBuy  = c.side === 'Buy'  || c.side === 'Long';
         const isSell = c.side === 'Sell' || c.side === 'Short';
         return (side.has('buy') && isBuy) || (side.has('sell') && isSell);
+      });
+    }
+
+    // mcap group — OR within, AND with above
+    const mcap = state.activeFilters.mcap;
+    if (mcap && mcap.size > 0) {
+      list = list.filter(c => {
+        const cap = c.mcapRaw;
+        if (cap == null) return false;
+        return (mcap.has('micro') && cap < 150_000_000) ||
+               (mcap.has('small') && cap >= 150_000_000 && cap < 500_000_000) ||
+               (mcap.has('mid')   && cap >= 500_000_000 && cap < 1_000_000_000) ||
+               (mcap.has('large') && cap >= 1_000_000_000);
       });
     }
 

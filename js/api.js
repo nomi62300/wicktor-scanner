@@ -163,24 +163,34 @@ const Api = (() => {
    * rare collision is possible when two listed projects share a
    * ticker; in that case the larger-cap project wins since the list
    * is already sorted by market cap descending. Coins outside the
-   * top 250 simply won't have a match, and callers should show "—"
+   * top 1000 simply won't have a match, and callers should show "—"
    * rather than guess.
    */
   let mcapCache = { map: null, ts: 0 };
-  const MCAP_CACHE_MS = 5 * 60 * 1000;
+  const MCAP_CACHE_MS = 10 * 60 * 1000; // 10 minutes
 
   async function coingeckoMarketCaps() {
     const now = Date.now();
     if (mcapCache.map && now - mcapCache.ts < MCAP_CACHE_MS) return mcapCache.map;
-    const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1`);
-    if (!data || !Array.isArray(data)) return mcapCache.map || {};
+
     const map = {};
-    data.forEach(c => {
-      const sym = (c.symbol || '').toUpperCase();
-      if (!(sym in map)) map[sym] = c.market_cap; // first hit = highest mcap for that symbol
-    });
-    mcapCache = { map, ts: now };
-    return map;
+    for (let page = 1; page <= 4; page++) {
+      const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}`);
+      if (data && Array.isArray(data)) {
+        data.forEach(c => {
+          const sym = (c.symbol || '').toUpperCase();
+          if (!(sym in map)) map[sym] = c.market_cap; // first hit = highest mcap for that symbol
+        });
+      }
+      if (page < 4) {
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    if (Object.keys(map).length > 0) {
+      mcapCache = { map, ts: now };
+    }
+    return mcapCache.map || map;
   }
 
   function formatMcap(n) {
