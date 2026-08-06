@@ -324,10 +324,23 @@ const Render = (() => {
         </div>
       </div>`;
 
+    const narrativeTile = (data.narrativeSectors && data.narrativeSectors.length)
+      ? `<div class="strip-tile">
+          <div class="strip-label">Narratives &middot; 7d</div>
+          <div class="strip-list">
+            ${data.narrativeSectors.map(s => {
+              const color = s.weightedChange7d >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+              const sign  = s.weightedChange7d >= 0 ? '+' : '';
+              return `<div><span>${esc(s.name)}</span><span style="color:${color}">${sign}${s.weightedChange7d.toFixed(1)}%</span></div>`;
+            }).join('')}
+          </div>
+        </div>`
+      : '';
+
     return [
       pulseTile('Pulse Spot', data.pulseSpot),
       pulseTile('Pulse Perp', data.pulsePerp),
-      fngTile, domTile, mcapTile, sectorTile,
+      fngTile, domTile, mcapTile, sectorTile, narrativeTile,
       listTile('Top Gainers', data.gainers || [], 'var(--green-text)'),
       listTile('Top Losers', data.losers || [], 'var(--red-text)')
     ].join('');

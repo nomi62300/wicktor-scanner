@@ -112,6 +112,17 @@
   </div>
 
   <div class="settings-field">
+    <div class="settings-label">Narrative sector screening</div>
+    <label class="toggle-switch" for="setting-narratives">
+      <input id="setting-narratives" type="checkbox" checked>
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+    <div class="settings-hint">Identifies the top 4 performing CoinGecko sectors (7d) and adds qualifying coins to the scan. Cached 4h — adds ~24 s only on first use after cache expiry.</div>
+  </div>
+
+  <div class="settings-field">
     <label class="settings-label" for="setting-maxage">Max signal age (minutes)</label>
     <input id="setting-maxage" type="number" min="1" value="20">
     <div class="settings-hint">Signals older than this are excluded from results. Default 20 min. Set higher to keep older setups visible.</div>

@@ -11,6 +11,25 @@ const Api = (() => {
   let _newsCacheTime = 0;
   const NEWS_CACHE_TTL = 5 * 60 * 1000;
 
+  // -------------------------------------------------- Narrative sector cache
+  let _cgCategoryListCache = { data: null, ts: 0 };
+  const CG_CATEGORY_LIST_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+  let _sectorPerfCache = { data: null, ts: 0 };
+  const SECTOR_PERF_TTL = 4 * 60 * 60 * 1000; // 4 hours
+
+  /**
+   * Narrative name-fragments matched case-insensitively against the live
+   * CoinGecko category list. A console.warn fires for any that find no match,
+   * making taxonomy drift visible without silently dropping a sector.
+   */
+  const NARRATIVE_KEYWORDS = [
+    'Artificial Intelligence', 'DePIN', 'Real World Assets', 'Gaming',
+    'Layer 1', 'Layer 2', 'Meme', 'Privacy', 'Oracle', 'Metaverse',
+    'Liquid Staking', 'Restaking', 'Modular Blockchain', 'Data Availability',
+    'Infrastructure', 'DeFi'
+  ];
+
   const BYBIT_BASE = 'https://api.bybit.com';
   const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
   const FNG_BASE = 'https://api.alternative.me/fng/';
@@ -279,12 +298,138 @@ const Api = (() => {
     return { items: newsForSymbol(data.articles, symbol) };
   }
 
+  // ------------------------------------------------- Narrative / Sectors ---
+
+  /**
+   * Lightweight list of every CoinGecko category {id, name}.
+   * Cached 24h — taxonomy changes are rare.
+   */
+  async function cgCategoryList() {
+    const now = Date.now();
+    if (_cgCategoryListCache.data && now - _cgCategoryListCache.ts < CG_CATEGORY_LIST_TTL) {
+      return _cgCategoryListCache.data;
+    }
+    const data = await safeFetch(`${COINGECKO_BASE}/coins/categories/list`);
+    if (data && Array.isArray(data)) {
+      _cgCategoryListCache = { data, ts: now };
+    }
+    return _cgCategoryListCache.data || [];
+  }
+
+  /**
+   * For each NARRATIVE_KEYWORDS entry, resolves the matching CoinGecko
+   * category ID (dynamic lookup — never hardcodes slugs), then fetches the
+   * top-50 coins for that category with 7d price change data. Computes a
+   * market-cap-weighted 7d performance per sector.
+   *
+   * Sequential fetches with a 1.5 s delay to stay under the free-tier limit.
+   * Cached 4 hours — sector rotation over a 7d window doesn't meaningfully
+   * change minute-to-minute.
+   *
+   * Returns [{categoryId, name, weightedChange7d, coins}]
+   */
+  async function sectorPerformance7d() {
+    const now = Date.now();
+    if (_sectorPerfCache.data && now - _sectorPerfCache.ts < SECTOR_PERF_TTL) {
+      return _sectorPerfCache.data;
+    }
+
+    // Resolve keyword → category ID dynamically from the live category list
+    const categoryList = await cgCategoryList();
+    const resolvedCategories = [];
+    for (const kw of NARRATIVE_KEYWORDS) {
+      const kwLower = kw.toLowerCase();
+      const match = categoryList.find(c => c.name.toLowerCase().includes(kwLower));
+      if (match) {
+        resolvedCategories.push({ id: match.id, name: kw });
+      } else {
+        console.warn(`[Api] narrative: no CoinGecko category match for keyword "${kw}"`);
+      }
+    }
+
+    const results = [];
+    for (const cat of resolvedCategories) {
+      const data = await safeFetch(
+        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${cat.id}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
+      );
+      if (data && Array.isArray(data) && data.length > 0) {
+        let totalMcap = 0, weightedSum = 0;
+        for (const coin of data) {
+          const chg = coin.price_change_percentage_7d_in_currency;
+          if (chg == null || coin.market_cap == null) continue;
+          totalMcap += coin.market_cap;
+          weightedSum += coin.market_cap * chg;
+        }
+        const weightedChange7d = totalMcap > 0 ? weightedSum / totalMcap : 0;
+        results.push({ categoryId: cat.id, name: cat.name, weightedChange7d, coins: data });
+      }
+      // 1.5 s delay between calls — stays comfortably under CoinGecko free-tier rate limit
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    _sectorPerfCache = { data: results, ts: now };
+    return results;
+  }
+
+  /**
+   * Pure synchronous function. Given the full sectorPerf array, returns
+   * [{symbol, price, change24h, volume24h, isStock, narrativeSector, sectorRank}]
+   * ready to merge into the scan universe.
+   *
+   * Rules:
+   *  - Top 4 sectors by weightedChange7d
+   *  - Per sector: mcap >= $350M, sorted by 7d % desc, top 8
+   *  - isTradeableUsdtPair() check (computeCoin handles further failsoft)
+   *  - Deduped within narrative candidates (higher-ranked sector wins)
+   *
+   * Caller dedupes against the volume-based universe.
+   */
+  function topNarrativeCandidates(sectorPerf) {
+    if (!sectorPerf || !sectorPerf.length) return [];
+
+    const top4 = [...sectorPerf]
+      .sort((a, b) => b.weightedChange7d - a.weightedChange7d)
+      .slice(0, 4);
+
+    const seen = new Set(); // deduplicate across sectors
+    const candidates = [];
+
+    top4.forEach((sector, sectorRank) => {
+      const qualifying = (sector.coins || [])
+        .filter(c => c.market_cap != null && c.market_cap >= 350_000_000)
+        .sort((a, b) =>
+          (b.price_change_percentage_7d_in_currency || 0) -
+          (a.price_change_percentage_7d_in_currency || 0)
+        )
+        .slice(0, 8);
+
+      for (const coin of qualifying) {
+        const bybitSymbol = (coin.symbol || '').toUpperCase() + 'USDT';
+        if (!isTradeableUsdtPair(bybitSymbol)) continue;
+        if (seen.has(bybitSymbol)) continue; // higher-ranked sector already claimed it
+        seen.add(bybitSymbol);
+        candidates.push({
+          symbol:          bybitSymbol,
+          price:           coin.current_price    || 0,
+          change24h:       coin.price_change_percentage_24h || 0,
+          volume24h:       coin.total_volume      || 0,
+          isStock:         false,
+          narrativeSector: sector.name,
+          sectorRank:      sectorRank + 1
+        });
+      }
+    });
+
+    return candidates;
+  }
+
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
     isTradeableUsdtPair, isXStock,
     coingeckoGlobal, coingeckoTopSector, coingeckoMarketCaps, formatMcap,
     fearGreedIndex, unlockInfo,
-    fetchAllNews, newsForSymbol, coinNews
+    fetchAllNews, newsForSymbol, coinNews,
+    cgCategoryList, sectorPerformance7d, topNarrativeCandidates
   };
 })();
 

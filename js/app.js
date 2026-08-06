@@ -16,15 +16,18 @@
     showPerps: false,
     maxAgeMinutes: 20,
     spotCardsPerSide: 5,
-    perpCardsPerSide: 5
+    perpCardsPerSide: 5,
+    includeNarrativeSectors: true
   };
 
   let state = {
-    settings: loadJson(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+    // Merge stored settings on top of defaults so new keys always have a value
+    settings: { ...DEFAULT_SETTINGS, ...loadJson(STORAGE_KEYS.settings, {}) },
     watchlist: new Set(loadJson(STORAGE_KEYS.watchlist, [])),
     discovered: loadJson(STORAGE_KEYS.discovered, {}),
     coins: [],           // last computed, unfiltered
     renderedCoins: [],   // final capped+ordered list actually rendered
+    narrativePerf: null, // top-4 sector objects [{name, weightedChange7d}] from last scan
     activeFilters: {
       primary: new Set(), // '3tf' | 'spot' | 'perp' | 'divergence'
       band:    new Set(), // 'excellent' | 'watch' | 'avoid'
@@ -65,6 +68,7 @@
     universeInput: document.getElementById('setting-universe'),
     refreshInput: document.getElementById('setting-refresh'),
     perpToggle: document.getElementById('setting-perps'),
+    narrativeToggle: document.getElementById('setting-narratives'),
     maxAgeInput: document.getElementById('setting-maxage'),
     spotCapInput: document.getElementById('setting-spot-cap'),
     perpCapInput: document.getElementById('setting-perp-cap'),
@@ -153,7 +157,7 @@
     return {
       symbol: displaySymbol,
       rawSymbol: base.symbol,
-      sector: base.isStock ? 'Tokenized Stock' : 'Crypto',
+      sector: base.narrativeSector || (base.isStock ? 'Tokenized Stock' : 'Crypto'),
       price: formatPrice(priceNum),
       market,
       side: result.bias === 1 ? (market === 'PERP' ? 'Long' : 'Buy') : (market === 'PERP' ? 'Short' : 'Sell'),
@@ -215,6 +219,36 @@
         });
       }
 
+      // Narrative sector screening — start BEFORE universe loop finishes so
+      // it overlaps with Bybit kline fetches. Cached 4h so usually instant.
+      const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
+      const narrativePromise = narrativeEnabled
+        ? Api.sectorPerformance7d().catch(e => {
+            console.warn('[App] narrative fetch failed, skipping', e.message);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      // Await narrative results (overlapped above with universe building)
+      const sectorPerf = await narrativePromise;
+      state.narrativePerf = null;
+      if (sectorPerf && sectorPerf.length) {
+        state.narrativePerf = [...sectorPerf]
+          .sort((a, b) => b.weightedChange7d - a.weightedChange7d)
+          .slice(0, 4);
+        // Merge narrative candidates into spot universe — deduped by symbol
+        const volumeSymbols = new Set(
+          universes.flatMap(u => u.universe.map(b => b.symbol))
+        );
+        const narrativeCandidates = Api.topNarrativeCandidates(sectorPerf);
+        const newCandidates = narrativeCandidates.filter(c => !volumeSymbols.has(c.symbol));
+        if (newCandidates.length > 0) {
+          const spotEntry = universes.find(u => u.category === 'spot');
+          if (spotEntry) spotEntry.universe.push(...newCandidates);
+        }
+      }
+
+      // Progress counts include narrative-merged entries
       const batchSize = 5;
       const totalBatches = universes.reduce(
         (sum, { universe }) => sum + Math.ceil(universe.length / batchSize), 0
@@ -303,6 +337,7 @@
       mcap: global ? Api.formatMcap(global.total_market_cap.usd) : null,
       mcapChange24h: global ? global.market_cap_change_percentage_24h_usd : 0,
       topSector: sector,
+      narrativeSectors: state.narrativePerf,
       gainers: buildMovers(true),
       losers: buildMovers(false)
     };
@@ -465,6 +500,7 @@
     el.universeInput.value = state.settings.universeSize;
     el.refreshInput.value = state.settings.refreshIntervalSec;
     el.perpToggle.checked = state.settings.showPerps;
+    el.narrativeToggle.checked = state.settings.includeNarrativeSectors !== false;
     el.maxAgeInput.value = state.settings.maxAgeMinutes;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
     el.perpCapInput.value = state.settings.perpCardsPerSide;
@@ -475,6 +511,7 @@
     state.settings.universeSize = Math.max(10, Math.min(80, parseInt(el.universeInput.value) || 30));
     state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
     state.settings.showPerps = el.perpToggle.checked;
+    state.settings.includeNarrativeSectors = el.narrativeToggle.checked;
     state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
     state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));
