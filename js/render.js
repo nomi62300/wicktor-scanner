@@ -310,10 +310,12 @@ const Render = (() => {
         <div class="strip-value mono">${data.mcap || '--'} <span style="font-size:11px;color:${mcapChangeColor}">${mcapArrow} ${Math.abs(data.mcapChange24h || 0).toFixed(1)}%</span></div>
       </div>`;
 
+    const sectorColor = (data.topSector && data.topSector.change >= 0) ? 'var(--green-text)' : 'var(--red-text)';
+    const sectorSign = (data.topSector && data.topSector.change >= 0) ? '+' : '';
     const sectorTile = `
       <div class="strip-tile">
-        <div class="strip-label">Top Sector &middot; 24h</div>
-        <div class="strip-value" style="color:var(--green-text)">${data.topSector ? esc(data.topSector.name) + ' +' + data.topSector.change.toFixed(1) + '%' : '--'}</div>
+        <div class="strip-label">Top Sector &middot; 7D</div>
+        <div class="strip-value" style="color:${sectorColor}">${data.topSector ? esc(data.topSector.name) + ' ' + sectorSign + data.topSector.change.toFixed(1) + '%' : '--'}</div>
       </div>`;
 
     const listTile = (label, list, colorVar) => `

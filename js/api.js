@@ -130,7 +130,7 @@ const Api = (() => {
 
   // ----------------------------------------------------------- CoinGecko --
 
-  let cgCache = { global: null, categories: null, ts: 0 };
+  let cgCache = { global: null, ts: 0 };
   const CG_CACHE_MS = 5 * 60 * 1000;
 
   async function coingeckoGlobal() {
@@ -142,19 +142,6 @@ const Api = (() => {
       cgCache.ts = now;
     }
     return cgCache.global;
-  }
-
-  async function coingeckoTopSector() {
-    const now = Date.now();
-    if (cgCache.categories && now - cgCache.ts < CG_CACHE_MS) return cgCache.categories;
-    const data = await safeFetch(`${COINGECKO_BASE}/coins/categories`);
-    if (!data || !Array.isArray(data)) return null;
-    const sorted = data
-      .filter(c => c.market_cap_change_24h != null)
-      .sort((a, b) => b.market_cap_change_24h - a.market_cap_change_24h);
-    const top = sorted[0] ? { name: sorted[0].name, change: sorted[0].market_cap_change_24h } : null;
-    cgCache.categories = top;
-    return top;
   }
 
   /**
@@ -203,10 +190,18 @@ const Api = (() => {
 
   // ------------------------------------------------------- Fear & Greed ---
 
+  let fngCache = { data: null, ts: 0 };
+  const FNG_CACHE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
   async function fearGreedIndex() {
+    const now = Date.now();
+    if (fngCache.data && now - fngCache.ts < FNG_CACHE_MS) return fngCache.data;
     const data = await safeFetch(FNG_BASE + '?limit=1');
-    if (!data || !data.data || !data.data[0]) return null;
-    return { value: Number(data.data[0].value), label: data.data[0].value_classification };
+    if (data && data.data && data.data[0]) {
+      const res = { value: Number(data.data[0].value), label: data.data[0].value_classification };
+      fngCache = { data: res, ts: now };
+    }
+    return fngCache.data;
   }
 
   // ------------------------------------------------------- DefiLlama -----
@@ -341,8 +336,13 @@ const Api = (() => {
   async function sectorPerformance7d() {
     const now = Date.now();
     if (_sectorPerfCache.data && now - _sectorPerfCache.ts < SECTOR_PERF_TTL) {
+      const ageSec = Math.round((now - _sectorPerfCache.ts) / 1000);
+      console.log(`[Api] sectorPerformance7d cache HIT (age: ${ageSec}s)`);
       return _sectorPerfCache.data;
     }
+
+    console.log('[Api] sectorPerformance7d cache MISS');
+    console.time('sectorPerformance7d');
 
     // Resolve keyword → category ID dynamically from the live category list
     const categoryList = await cgCategoryList();
@@ -377,6 +377,7 @@ const Api = (() => {
       await new Promise(r => setTimeout(r, 1500));
     }
 
+    console.timeEnd('sectorPerformance7d');
     _sectorPerfCache = { data: results, ts: now };
     return results;
   }
@@ -436,7 +437,7 @@ const Api = (() => {
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
     isTradeableUsdtPair, isXStock,
-    coingeckoGlobal, coingeckoTopSector, coingeckoMarketCaps, formatMcap,
+    coingeckoGlobal, coingeckoMarketCaps, formatMcap,
     fearGreedIndex, unlockInfo,
     fetchAllNews, newsForSymbol, coinNews,
     cgCategoryList, sectorPerformance7d, topNarrativeCandidates

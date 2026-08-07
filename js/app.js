@@ -194,24 +194,36 @@
   }
 
   async function runScan() {
+    console.time('[Scan] total');
     setLoading(true);
     try {
-      // Fetch market caps and pre-warm the news feed in parallel
-      const [mcapMap, newsData] = await Promise.all([
-        Api.coingeckoMarketCaps(),
-        Api.fetchAllNews()
+      // 1. Fetch market data, news, sector rankings, global stats, FNG in parallel!
+      console.time('[Scan] parallel-fetches');
+      const [mcapMap, newsData, sectorPerf, globalData, fngData] = await Promise.all([
+        Api.coingeckoMarketCaps().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
+        Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
+        Api.sectorPerformance7d().catch(e => { console.warn('[App] sector performance fetch failed', e); return []; }),
+        Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
+        Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; })
       ]);
+      console.timeEnd('[Scan] parallel-fetches');
 
+      // Compute sector ranking and save it in state.narrativePerf
+      state.narrativePerf = null;
+      if (sectorPerf && sectorPerf.length) {
+        state.narrativePerf = [...sectorPerf]
+          .sort((a, b) => b.weightedChange7d - a.weightedChange7d)
+          .slice(0, 4);
+      }
+
+      // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
+      console.time('[Scan] universe-building');
       const categories = ['spot'];
       if (state.settings.showPerps) categories.push('linear');
 
-      let allCoins = [];
-      const activeKeys = new Set();
       const movers = [];
-
-      // Pre-fetch all universes so we know the total batch count up front
       const universes = [];
-      for (const category of categories) {
+      await Promise.all(categories.map(async (category) => {
         const universe = await Api.topUniverse(category, state.settings.universeSize);
         universes.push({ category, universe });
         universe.forEach(u => {
@@ -219,26 +231,20 @@
             movers.push({ symbol: u.symbol.replace(/USDT$/, ''), change: u.change24h });
           }
         });
-      }
+      }));
+      state.rawMovers = movers;
+      console.timeEnd('[Scan] universe-building');
 
-      // Narrative sector screening — start BEFORE universe loop finishes so
-      // it overlaps with Bybit kline fetches. Cached 4h so usually instant.
+      // 3. Render the top strip early using pre-existing coins (for pulse) + new movers + new cg/fng/sector stats!
+      console.time('[Scan] top-strip-rendering');
+      refreshTopStrip(globalData, fngData);
+      el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
+      console.timeEnd('[Scan] top-strip-rendering');
+
+      // 4. Narrative coin sourcing (gated specifically by includeNarrativeSectors)
+      console.time('[Scan] narrative-sourcing');
       const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
-      const narrativePromise = narrativeEnabled
-        ? Api.sectorPerformance7d().catch(e => {
-            console.warn('[App] narrative fetch failed, skipping', e.message);
-            return null;
-          })
-        : Promise.resolve(null);
-
-      // Await narrative results (overlapped above with universe building)
-      const sectorPerf = await narrativePromise;
-      state.narrativePerf = null;
-      if (sectorPerf && sectorPerf.length) {
-        state.narrativePerf = [...sectorPerf]
-          .sort((a, b) => b.weightedChange7d - a.weightedChange7d)
-          .slice(0, 4);
-        // Merge narrative candidates into spot universe — deduped by symbol
+      if (narrativeEnabled && sectorPerf && sectorPerf.length) {
         const volumeSymbols = new Set(
           universes.flatMap(u => u.universe.map(b => b.symbol))
         );
@@ -249,8 +255,10 @@
           if (spotEntry) spotEntry.universe.push(...newCandidates);
         }
       }
+      console.timeEnd('[Scan] narrative-sourcing');
 
-      // Progress counts include narrative-merged entries
+      // 5. Run sequential batch analysis of all coins (Bybit klines + indicator scoring)
+      console.time('[Scan] coin-analysis');
       const batchSize = 5;
       const totalBatches = universes.reduce(
         (sum, { universe }) => sum + Math.ceil(universe.length / batchSize), 0
@@ -261,6 +269,8 @@
 
       const maxAgeMs = state.settings.maxAgeMinutes * 60 * 1000;
       const now = Date.now();
+      const allCoins = [];
+      const activeKeys = new Set();
 
       for (const { category, universe } of universes) {
         for (let i = 0; i < universe.length; i += batchSize) {
@@ -271,7 +281,6 @@
               const key = `${r.rawSymbol}:${r.market}`;
               const ts = state.discovered[key];
               // Exclude coins whose first-seen timestamp is older than maxAgeMinutes.
-              // Do NOT delete the entry — clearDiscoveredIfMissing() manages lifecycle.
               if (ts && (now - ts) > maxAgeMs) return;
               allCoins.push(r);
               activeKeys.add(key);
@@ -285,13 +294,18 @@
 
       clearDiscoveredIfMissing(activeKeys);
       state.coins = allCoins.sort((a, b) => b.score - a.score);
-      state.rawMovers = movers;
-      await refreshTopStrip();
+      console.timeEnd('[Scan] coin-analysis');
+
+      // 6. Refresh the top strip with updated scan results (pulse level) and render the cards
+      console.time('[Scan] final-rendering');
+      refreshTopStrip(globalData, fngData);
       renderAll();
+      console.timeEnd('[Scan] final-rendering');
     } catch (err) {
       console.error('[App] scan failed', err);
     } finally {
       setLoading(false);
+      console.timeEnd('[Scan] total');
     }
   }
 
@@ -318,11 +332,7 @@
   }
 
   // ------------------------------------------------------------- Top strip
-  async function refreshTopStrip() {
-    const [global, sector, fng] = await Promise.all([
-      Api.coingeckoGlobal(), Api.coingeckoTopSector(), Api.fearGreedIndex()
-    ]);
-
+  function refreshTopStrip(global, fng) {
     const spotCoins = state.coins.filter(c => c.market === 'SPOT');
     const perpCoins = state.coins.filter(c => c.market === 'PERP');
     const pulse = (list) => {
@@ -338,7 +348,9 @@
       btcDominance: global ? global.market_cap_percentage.btc : null,
       mcap: global ? Api.formatMcap(global.total_market_cap.usd) : null,
       mcapChange24h: global ? global.market_cap_change_percentage_24h_usd : 0,
-      topSector: sector,
+      topSector: state.narrativePerf && state.narrativePerf[0]
+        ? { name: state.narrativePerf[0].name, change: state.narrativePerf[0].weightedChange7d }
+        : null,
       narrativeSectors: state.narrativePerf,
       gainers: buildMovers(true),
       losers: buildMovers(false)
