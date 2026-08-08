@@ -103,11 +103,20 @@ const Api = (() => {
 
   /**
    * Picks the top N USDT pairs by 24h quote volume from a given category.
+   * `assetFilter` ('crypto' | 'stock' | 'all', default 'all') is applied
+   * BEFORE ranking by volume — crypto volume dwarfs stock volume, so
+   * filtering after a shared top-N ranking would mean stocks almost never
+   * appear even when explicitly requested.
    */
-  async function topUniverse(category, count) {
+  async function topUniverse(category, count, assetFilter = 'all') {
     const tickers = await bybitTickers(category);
     return tickers
       .filter(t => isTradeableUsdtPair(t.symbol))
+      .filter(t => {
+        if (assetFilter === 'crypto') return !isXStock(t.symbol);
+        if (assetFilter === 'stock') return isXStock(t.symbol);
+        return true;
+      })
       .map(t => ({
         symbol: t.symbol,
         price: parseFloat(t.lastPrice),

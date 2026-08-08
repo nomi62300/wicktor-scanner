@@ -13,7 +13,9 @@
   const DEFAULT_SETTINGS = {
     universeSize: 30,
     refreshIntervalSec: 60,
-    showPerps: false,
+    includeCryptoSpot: true,
+    includeStocks: false,
+    includePerps: true,
     maxAgeMinutes: 20,
     spotCardsPerSide: 5,
     perpCardsPerSide: 5,
@@ -29,7 +31,8 @@
     renderedCoins: [],   // final capped+ordered list actually rendered
     narrativePerf: null, // top-4 sector objects [{name, weightedChange7d}] from last scan
     activeFilters: {
-      primary: new Set(), // '3tf' | 'spot' | 'perp' | 'divergence'
+      market:  new Set(), // 'spot' | 'perp' — ANDed with quality, OR'd within itself
+      quality: new Set(), // '3tf' | 'divergence' — ANDed with market, OR'd within itself
       band:    new Set(), // 'excellent' | 'watch' | 'avoid'
       side:    new Set(), // 'buy' | 'sell'
       mcap:    new Set()  // 'micro' | 'small' | 'mid' | 'large'
@@ -68,6 +71,8 @@
     settingsClose: document.getElementById('settings-close'),
     universeInput: document.getElementById('setting-universe'),
     refreshInput: document.getElementById('setting-refresh'),
+    cryptoSpotToggle: document.getElementById('setting-crypto-spot'),
+    stocksToggle: document.getElementById('setting-stocks'),
     perpToggle: document.getElementById('setting-perps'),
     narrativeToggle: document.getElementById('setting-narratives'),
     maxAgeInput: document.getElementById('setting-maxage'),
@@ -169,8 +174,8 @@
       unlock,
       newsMeta,
       watchlisted: state.watchlist.has(key),
-      resistance: formatPrice(priceNum * 1.015),
-      support: formatPrice(priceNum * 0.987),
+      resistance: formatPrice(result.tfSnapshots[0].resistance),
+      support: formatPrice(result.tfSnapshots[0].support),
       ...result
     };
   }
@@ -218,19 +223,26 @@
 
       // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
       console.time('[Scan] universe-building');
-      const categories = ['spot'];
-      if (state.settings.showPerps) categories.push('linear');
+      // assetFilter is applied before ranking by volume — crypto volume dwarfs
+      // stock volume, so filtering after a shared top-N ranking would mean
+      // stocks almost never appear even with the toggle on.
+      const scanTargets = [];
+      if (state.settings.includeCryptoSpot) scanTargets.push({ category: 'spot', assetFilter: 'crypto' });
+      if (state.settings.includeStocks) scanTargets.push({ category: 'spot', assetFilter: 'stock' });
+      if (state.settings.includePerps) scanTargets.push({ category: 'linear', assetFilter: 'crypto' }); // stocks are spot-only, no leverage on Bybit
 
       const movers = [];
       const universes = [];
-      await Promise.all(categories.map(async (category) => {
-        const universe = await Api.topUniverse(category, state.settings.universeSize);
-        universes.push({ category, universe });
-        universe.forEach(u => {
-          if (category === 'spot') {
+      await Promise.all(scanTargets.map(async ({ category, assetFilter }) => {
+        const universe = await Api.topUniverse(category, state.settings.universeSize, assetFilter);
+        universes.push({ category, assetFilter, universe });
+        // Top Gainers/Losers strip stays crypto-only for a consistent meaning
+        // regardless of which toggles are enabled.
+        if (category === 'spot' && assetFilter === 'crypto') {
+          universe.forEach(u => {
             movers.push({ symbol: u.symbol.replace(/USDT$/, ''), change: u.change24h });
-          }
-        });
+          });
+        }
       }));
       state.rawMovers = movers;
       console.timeEnd('[Scan] universe-building');
@@ -241,18 +253,19 @@
       el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
       console.timeEnd('[Scan] top-strip-rendering');
 
-      // 4. Narrative coin sourcing (gated specifically by includeNarrativeSectors)
+      // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
+      // meaningful when the crypto spot pool it injects into is itself enabled)
       console.time('[Scan] narrative-sourcing');
       const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
-      if (narrativeEnabled && sectorPerf && sectorPerf.length) {
+      if (narrativeEnabled && state.settings.includeCryptoSpot && sectorPerf && sectorPerf.length) {
         const volumeSymbols = new Set(
           universes.flatMap(u => u.universe.map(b => b.symbol))
         );
         const narrativeCandidates = Api.topNarrativeCandidates(sectorPerf);
         const newCandidates = narrativeCandidates.filter(c => !volumeSymbols.has(c.symbol));
         if (newCandidates.length > 0) {
-          const spotEntry = universes.find(u => u.category === 'spot');
-          if (spotEntry) spotEntry.universe.push(...newCandidates);
+          const cryptoSpotEntry = universes.find(u => u.category === 'spot' && u.assetFilter === 'crypto');
+          if (cryptoSpotEntry) cryptoSpotEntry.universe.push(...newCandidates);
         }
       }
       console.timeEnd('[Scan] narrative-sourcing');
@@ -369,14 +382,23 @@
   function getFilteredCoins() {
     let list = state.coins;
 
-    // primary group — OR within, AND across
-    const prim = state.activeFilters.primary;
-    if (prim.size > 0) {
+    // market group — OR within (a coin can only be one), AND across groups.
+    // Split out from quality so "Spot" + "3TF aligned" means their
+    // INTERSECTION, not the union the old combined "primary" group gave.
+    const market = state.activeFilters.market;
+    if (market.size > 0) {
       list = list.filter(c =>
-        (prim.has('3tf')        && c.alignCount === 3) ||
-        (prim.has('spot')       && c.market === 'SPOT') ||
-        (prim.has('perp')       && c.market === 'PERP') ||
-        (prim.has('divergence') && c.divergenceOverall !== 'none')
+        (market.has('spot') && c.market === 'SPOT') ||
+        (market.has('perp') && c.market === 'PERP')
+      );
+    }
+
+    // quality group — OR within, AND across groups
+    const quality = state.activeFilters.quality;
+    if (quality.size > 0) {
+      list = list.filter(c =>
+        (quality.has('3tf')        && c.alignCount === 3) ||
+        (quality.has('divergence') && c.divergenceOverall !== 'none')
       );
     }
 
@@ -526,7 +548,9 @@
   function openSettings() {
     el.universeInput.value = state.settings.universeSize;
     el.refreshInput.value = state.settings.refreshIntervalSec;
-    el.perpToggle.checked = state.settings.showPerps;
+    el.cryptoSpotToggle.checked = state.settings.includeCryptoSpot;
+    el.stocksToggle.checked = state.settings.includeStocks;
+    el.perpToggle.checked = state.settings.includePerps;
     el.narrativeToggle.checked = state.settings.includeNarrativeSectors !== false;
     el.maxAgeInput.value = state.settings.maxAgeMinutes;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
@@ -537,7 +561,9 @@
   function closeSettings() {
     state.settings.universeSize = Math.max(10, Math.min(80, parseInt(el.universeInput.value) || 30));
     state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
-    state.settings.showPerps = el.perpToggle.checked;
+    state.settings.includeCryptoSpot = el.cryptoSpotToggle.checked;
+    state.settings.includeStocks = el.stocksToggle.checked;
+    state.settings.includePerps = el.perpToggle.checked;
     state.settings.includeNarrativeSectors = el.narrativeToggle.checked;
     state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));

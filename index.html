@@ -47,12 +47,15 @@
 
   <!-- Filters -->
   <section id="filter-bar" class="filter-bar" aria-label="Filters">
-    <!-- Row 1: primary filters (multi-select) -->
-    <div class="filter-row" data-group="primary" role="group" aria-label="Primary filters">
-      <button class="chip" data-group="primary" data-filter="3tf">3 TF aligned</button>
-      <button class="chip" data-group="primary" data-filter="spot">Spot</button>
-      <button class="chip" data-group="primary" data-filter="perp">Perps</button>
-      <button class="chip" data-group="primary" data-filter="divergence">Divergence</button>
+    <!-- Row 1a: market-type filters (multi-select within group, ANDed with quality group) -->
+    <div class="filter-row" data-group="market" role="group" aria-label="Market filters">
+      <button class="chip" data-group="market" data-filter="spot">Spot</button>
+      <button class="chip" data-group="market" data-filter="perp">Perps</button>
+    </div>
+    <!-- Row 1b: quality filters (multi-select within group, ANDed with market group) -->
+    <div class="filter-row" data-group="quality" role="group" aria-label="Quality filters">
+      <button class="chip" data-group="quality" data-filter="3tf">3 TF aligned</button>
+      <button class="chip" data-group="quality" data-filter="divergence">Divergence</button>
     </div>
     <!-- Row 2: Band + Side groups -->
     <div class="filter-row" aria-label="Band and side filters">
@@ -109,14 +112,36 @@
   </div>
 
   <div class="settings-field">
-    <div class="settings-label">Include perpetual futures</div>
-    <label class="toggle-switch" for="setting-perps">
-      <input id="setting-perps" type="checkbox">
+    <div class="settings-label">Include crypto spot</div>
+    <label class="toggle-switch" for="setting-crypto-spot">
+      <input id="setting-crypto-spot" type="checkbox" checked>
       <span class="toggle-track">
         <span class="toggle-thumb"></span>
       </span>
     </label>
-    <div class="settings-hint">Off by default. Adds a second data pass per scan.</div>
+    <div class="settings-hint">On by default. Scans top-volume crypto USDT spot pairs.</div>
+  </div>
+
+  <div class="settings-field">
+    <div class="settings-label">Include tokenized stocks (xStocks)</div>
+    <label class="toggle-switch" for="setting-stocks">
+      <input id="setting-stocks" type="checkbox">
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+    <div class="settings-hint">Off by default. Spot-only — no leverage available on Bybit.</div>
+  </div>
+
+  <div class="settings-field">
+    <div class="settings-label">Include perpetual futures</div>
+    <label class="toggle-switch" for="setting-perps">
+      <input id="setting-perps" type="checkbox" checked>
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+    <div class="settings-hint">On by default. Adds a second data pass per scan.</div>
   </div>
 
   <div class="settings-field">

@@ -145,6 +145,64 @@ const Indicators = (() => {
   }
 
   /**
+   * Divergent Bar (grigorykov's AFDSA) — a REVERSAL signal, not
+   * continuation. Fires bullish specifically when the Alligator is in
+   * BEARISH order (lips < teeth < jaw), catching the bar that dips
+   * furthest below a bearish mouth and snaps back (mirror for bearish DB
+   * in a bullish mouth). Runs on the same HA candles as the Alligator
+   * lines. Uses only the strict tier (the reference script's simple/medium
+   * tiers are intermediate steps toward it); the medium tier's "OR
+   * downFractal" branch is dropped since fractals are computed on real
+   * candles elsewhere in Wicktor and cross-referencing them here would mix
+   * two different candle bases for one signal — the `low <= low[2]` check
+   * alone still captures the core bar-shape condition.
+   * Returns { up, down } booleans for bar `i`.
+   */
+  function divergentBar(haCandles, jaw, teeth, lips, i) {
+    if (i < 2) return { up: false, down: false };
+    const jawV = jaw[i], teethV = teeth[i], lipsV = lips[i];
+    if (jawV == null || teethV == null || lipsV == null) return { up: false, down: false };
+
+    const bar = haCandles[i], prev1 = haCandles[i - 1], prev2 = haCandles[i - 2];
+    const hl2 = (bar.h + bar.l) / 2;
+
+    const simpleUp = bar.h < jawV && bar.h < teethV && bar.h < lipsV &&
+                      bar.l < prev1.l && bar.c > hl2;
+    const mediumUp = simpleUp && bar.l <= prev2.l;
+    const strictUp = mediumUp && lipsV < teethV && teethV < jawV;
+
+    const simpleDown = bar.l > jawV && bar.l > teethV && bar.l > lipsV &&
+                        bar.h > prev1.h && bar.c < hl2;
+    const mediumDown = simpleDown && bar.h >= prev2.h;
+    const strictDown = mediumDown && lipsV > teethV && teethV > jawV;
+
+    return { up: strictUp, down: strictDown };
+  }
+
+  /**
+   * Crossing Lips — an early, softer warning tier between "fully aligned"
+   * and jaw-touch invalidation: the Alligator is STILL in the original
+   * trend's order while price, having closed on the trend side of lips for
+   * 2 straight bars, just closed back through it. Non-invalidating by
+   * design — a UI-only warning flag, not wired into the alignment/
+   * touch-state logic (kept separate deliberately: see backlog notes).
+   * Returns { up, down } booleans for bar `i`.
+   */
+  function crossingLips(haCandles, jaw, teeth, lips, i) {
+    if (i < 2) return { up: false, down: false };
+    const teethV = teeth[i], jawV = jaw[i];
+    const l0 = lips[i], l1 = lips[i - 1], l2 = lips[i - 2];
+    if (l0 == null || l1 == null || l2 == null || teethV == null || jawV == null) {
+      return { up: false, down: false };
+    }
+    const c0 = haCandles[i].c, c1 = haCandles[i - 1].c, c2 = haCandles[i - 2].c;
+
+    const down = c0 < l0 && c1 > l1 && c2 > l2 && l0 > teethV && teethV > jawV;
+    const up   = c0 > l0 && c1 < l1 && c2 < l2 && l0 < teethV && teethV < jawV;
+    return { up, down };
+  }
+
+  /**
    * Awesome Oscillator: SMA(median,5) - SMA(median,34)
    * Operates on REAL candles — unchanged.
    */
@@ -158,26 +216,138 @@ const Indicators = (() => {
     });
   }
 
+  // SMA that treats a null anywhere in the window as "not enough data yet"
+  // rather than propagating NaN — needed for accelerator(), whose input
+  // (AO) itself starts with a run of nulls.
+  function smaSkipNulls(values, period) {
+    const out = new Array(values.length).fill(null);
+    for (let i = period - 1; i < values.length; i++) {
+      let sum = 0, ok = true;
+      for (let k = i - period + 1; k <= i; k++) {
+        if (values[k] == null) { ok = false; break; }
+        sum += values[k];
+      }
+      if (ok) out[i] = sum / period;
+    }
+    return out;
+  }
+
   /**
-   * Williams Fractals (classic 5-bar). A fractal at index i is only
-   * confirmed once bars i+1 and i+2 exist, so the last 2 bars can
-   * never have a confirmed fractal yet.
+   * Accelerator Oscillator (Bill Williams): AO - SMA(AO, 5). Measures
+   * whether AO's own momentum is accelerating/decelerating, catching a
+   * shift before AO itself crosses zero. Operates on REAL candles.
+   */
+  function acceleratorOscillator(candles) {
+    const aoSeries = awesomeOscillator(candles);
+    const aoSma5 = smaSkipNulls(aoSeries, 5);
+    return aoSeries.map((v, i) => (v == null || aoSma5[i] == null) ? null : v - aoSma5[i]);
+  }
+
+  /**
+   * Market Facilitation Index (Bill Williams): (high - low) / volume.
+   * Operates on REAL candles.
+   */
+  function mfi(candles) {
+    return candles.map(c => (c.v > 0 ? (c.h - c.l) / c.v : null));
+  }
+
+  /**
+   * Squat / Fake / Green bar classification (Bill Williams), from the
+   * 1-bar rate of change of MFI and of volume:
+   *   Squat = mfiDiff < 0 AND volumeDiff > 0   -> reversal warning
+   *   Fake  = mfiDiff > 0 AND volumeDiff < 0   -> weak/unconvincing move
+   *   Green = mfiDiff > 0 AND volumeDiff > 0   -> continuation confirmation
+   * The 4th combination (both falling) is labeled 'fade' — informational
+   * only, not fed into scoring.
+   * Returns an array of 'squat'|'fake'|'green'|'fade'|null aligned to candle index.
+   */
+  function mfiClassification(candles) {
+    const mfiSeries = mfi(candles);
+    const out = new Array(candles.length).fill(null);
+    for (let i = 1; i < candles.length; i++) {
+      if (mfiSeries[i] == null || mfiSeries[i - 1] == null) continue;
+      const mfiDiff = mfiSeries[i] - mfiSeries[i - 1];
+      const volumeDiff = candles[i].v - candles[i - 1].v;
+      if (mfiDiff < 0 && volumeDiff > 0) out[i] = 'squat';
+      else if (mfiDiff > 0 && volumeDiff < 0) out[i] = 'fake';
+      else if (mfiDiff > 0 && volumeDiff > 0) out[i] = 'green';
+      else out[i] = 'fade';
+    }
+    return out;
+  }
+
+  /**
+   * "Wiseman" AO-shape reversal signals — two independent patterns, keyed
+   * off AO's own shape alone (distinct from the Alligator-based Divergent
+   * Bar). Wiseman1: price makes a fresh 2-bar low but closes in the upper
+   * half of the bar while AO is still falling for 2 bars straight — a
+   * momentum/price disagreement. Wiseman2: AO is in a "trough, rise, dip,
+   * rise" shape below zero — a double-bottom in the histogram itself.
+   * Mirror conditions (Wiseman1/2 short) for the bearish case.
+   * Operates on REAL candles. Returns booleans for bar `i`.
+   */
+  function wisemanSignals(candles, aoSeries, i) {
+    const none = { long1: false, long2: false, short1: false, short2: false };
+    if (i < 4) return none;
+    const ao0 = aoSeries[i], ao1 = aoSeries[i - 1], ao2 = aoSeries[i - 2],
+          ao3 = aoSeries[i - 3], ao4 = aoSeries[i - 4];
+    if ([ao0, ao1, ao2, ao3, ao4].some(v => v == null)) return none;
+
+    const bar = candles[i], prev = candles[i - 1];
+    const ohlc4 = (bar.o + bar.h + bar.l + bar.c) / 4;
+    const lowest2 = Math.min(bar.l, prev.l);
+    const highest2 = Math.max(bar.h, prev.h);
+
+    return {
+      long1:  bar.c > ohlc4 && bar.l === lowest2 && ao0 < 0 && ao0 < ao1 && ao1 < ao2,
+      long2:  ao0 < 0 && ao0 > ao1 && ao1 > ao2 && ao2 > ao3 && ao3 < ao4,
+      short1: bar.c < ohlc4 && bar.h === highest2 && ao0 > 0 && ao0 > ao1 && ao1 > ao2,
+      short2: ao0 > 0 && ao0 < ao1 && ao1 < ao2 && ao2 < ao3 && ao3 > ao4
+    };
+  }
+
+  /**
+   * Williams Fractals (5-bar) with tie-tolerance. A run of equal
+   * high (or low) values up to `tolerance` bars wide is treated as a
+   * single peak/trough rather than blocking detection — ported from the
+   * AFDSA/AlFReSco reference scripts, since the original strict-inequality
+   * check could miss a real fractal on a tie. The plateau must still be
+   * flanked by 2 strictly lower (or higher) bars on both sides just
+   * outside the run, and is reported once, at the LAST bar of the tie
+   * (so it's still only confirmed once 2 bars exist after it — same
+   * confirmation-lag semantics as before). tolerance defaults to 5,
+   * matching the reference scripts; a plateau of 1 bar (no tie) reduces
+   * to the original classic strict 5-bar fractal test.
    * Returns { up: [indices], down: [indices] }
    * Operates on REAL candles — unchanged.
    */
-  function fractals(candles) {
+  function fractals(candles, tolerance = 5) {
+    const n = candles.length;
     const up = [];
     const down = [];
-    for (let i = 2; i < candles.length - 2; i++) {
-      const h = candles[i].h, l = candles[i].l;
-      const isUp = h > candles[i-2].h && h > candles[i-1].h &&
-                   h > candles[i+1].h && h > candles[i+2].h;
-      const isDown = l < candles[i-2].l && l < candles[i-1].l &&
-                     l < candles[i+1].l && l < candles[i+2].l;
-      if (isUp) up.push(i);
-      if (isDown) down.push(i);
+    for (let i = 2; i < n - 2; i++) {
+      if (isFractalEdge(candles, i, 'h', tolerance, n, false)) up.push(i);
+      if (isFractalEdge(candles, i, 'l', tolerance, n, true)) down.push(i);
     }
     return { up, down };
+  }
+
+  function isFractalEdge(candles, i, key, tolerance, n, isLow) {
+    const v = candles[i][key];
+
+    // Walk across bars tied with the center value (the plateau), capped
+    // at `tolerance` bars from i on each side.
+    let left = i;
+    while (left > 0 && candles[left - 1][key] === v && (i - (left - 1)) <= tolerance) left--;
+    let right = i;
+    while (right < n - 1 && candles[right + 1][key] === v && ((right + 1) - i) <= tolerance) right++;
+
+    // Only flag once, at the plateau's rightmost bar.
+    if (i !== right) return false;
+    if (left < 2 || right > n - 3) return false;
+
+    const outer = [candles[left - 2][key], candles[left - 1][key], candles[right + 1][key], candles[right + 2][key]];
+    return isLow ? outer.every(x => x > v) : outer.every(x => x < v);
   }
 
   function lastFractal(fractalIndices, beforeIndex) {
@@ -185,6 +355,77 @@ const Indicators = (() => {
       if (fractalIndices[i] <= beforeIndex) return fractalIndices[i];
     }
     return null;
+  }
+
+  /**
+   * True Range and Wilder-smoothed ATR. Operates on REAL candles.
+   */
+  function trueRange(candles) {
+    const out = new Array(candles.length).fill(null);
+    for (let i = 0; i < candles.length; i++) {
+      if (i === 0) { out[i] = candles[i].h - candles[i].l; continue; }
+      const prevClose = candles[i - 1].c;
+      out[i] = Math.max(
+        candles[i].h - candles[i].l,
+        Math.abs(candles[i].h - prevClose),
+        Math.abs(candles[i].l - prevClose)
+      );
+    }
+    return out;
+  }
+
+  function atr(candles, period = 14) {
+    return smma(trueRange(candles), period);
+  }
+
+  // ATR expressed as a fraction of price, bucketed into discrete steps
+  // (0.1% / 0.2% / 0.3% / 0.5% / 0.75% / 1%) rather than used as a raw
+  // continuous value — reduces noise-driven jitter in anything derived
+  // from it (Skyrexio pattern). Fractions, not fixed dollar steps, so it
+  // scales across assets from micro-cap tokens to BTC. Snaps UP to the
+  // nearest bucket at or above the raw ratio; ratios beyond the largest
+  // bucket are left unbucketed (real high-volatility conditions, not noise).
+  const ATR_PCT_BUCKETS = [0.001, 0.002, 0.003, 0.005, 0.0075, 0.01];
+
+  function bucketedAtr(atrValue, price) {
+    if (atrValue == null || !price) return atrValue;
+    const ratio = atrValue / price;
+    const bucket = ATR_PCT_BUCKETS.find(b => ratio <= b);
+    return (bucket != null ? bucket : ratio) * price;
+  }
+
+  /**
+   * Nearest-fractal support/resistance around the current price — reuses the
+   * same fractal set as the jaw-touch SL / "last opposing fractal" logic
+   * elsewhere, rather than introducing a second unrelated notion of "level".
+   * Resistance = nearest fractal high above price; Support = nearest
+   * fractal low below price, both within `lookback` bars of the latest bar.
+   * Falls back to a bucketed-ATR-scaled buffer when no fractal exists on
+   * that side (e.g. price at a new high/low within the window).
+   */
+  function nearestLevels(candles, frac, price, atrValue, lookback = 150) {
+    const minIdx = Math.max(0, candles.length - 1 - lookback);
+
+    let resistance = null;
+    frac.up.forEach(i => {
+      if (i < minIdx) return;
+      const h = candles[i].h;
+      if (h > price && (resistance == null || h < resistance)) resistance = h;
+    });
+
+    let support = null;
+    frac.down.forEach(i => {
+      if (i < minIdx) return;
+      const l = candles[i].l;
+      if (l < price && (support == null || l > support)) support = l;
+    });
+
+    const atrBucketed = bucketedAtr(atrValue, price) ?? price * 0.01;
+    const atrBuffer = atrBucketed * 1.5;
+    if (resistance == null) resistance = price + atrBuffer;
+    if (support == null) support = price - atrBuffer;
+
+    return { resistance, support };
   }
 
   /**
@@ -287,23 +528,49 @@ const Indicators = (() => {
     const aoPrev = ao[lastIdx - 1];
     const aoRising = aoV != null && aoPrev != null && aoV > aoPrev;
 
+    const acSeries = acceleratorOscillator(candles);
+    const acV = acSeries[lastIdx];
+    const acPrev = acSeries[lastIdx - 1];
+    const acRising = acV != null && acPrev != null && acV > acPrev;
+
+    const mfiSignal = mfiClassification(candles)[lastIdx];
+
+    const db = divergentBar(haCandles, jaw, teeth, lips, lastIdx);
+    const crossLips = crossingLips(haCandles, jaw, teeth, lips, lastIdx);
+    const wiseman = wisemanSignals(candles, ao, lastIdx);
+
     const lastUpFrac = lastFractal(frac.up, lastIdx - 2);
     const lastDownFrac = lastFractal(frac.down, lastIdx - 2);
     const price = candles[lastIdx].c;
     const aboveUpFractal = lastUpFrac != null && price > candles[lastUpFrac].h;
     const belowDownFractal = lastDownFrac != null && price < candles[lastDownFrac].l;
 
+    const atrV = atr(candles)[lastIdx];
+    const { resistance, support } = nearestLevels(candles, frac, price, atrV);
+
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
       alligatorInvalidated,   // true if jaw-touch rule is currently active
       ao: aoV,
       aoRising,
+      ac: acV,
+      acRising,
+      mfiSignal,
+      divergentBarUp: db.up,
+      divergentBarDown: db.down,
+      crossingLipsUp: crossLips.up,
+      crossingLipsDown: crossLips.down,
+      wisemanBullish: wiseman.long1 || wiseman.long2,
+      wisemanBearish: wiseman.short1 || wiseman.short2,
       rsi: rsiSeries[lastIdx],
       divergence: div,
       lastUpFractal: lastUpFrac != null ? candles[lastUpFrac].h : null,
       lastDownFractal: lastDownFrac != null ? candles[lastDownFrac].l : null,
       aboveUpFractal,
       belowDownFractal,
+      atr: atrV,
+      resistance,
+      support,
       close: price
     };
   }
@@ -311,8 +578,10 @@ const Indicators = (() => {
   return {
     medianPrice, sma, smma, shiftForward,
     heikinAshi, alligator, alligatorTouchState,
-    awesomeOscillator, fractals, rsi, divergence,
-    lastFractal, analyzeTimeframe
+    divergentBar, crossingLips,
+    awesomeOscillator, acceleratorOscillator, wisemanSignals, mfi, mfiClassification,
+    fractals, rsi, divergence,
+    lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe
   };
 })();
 

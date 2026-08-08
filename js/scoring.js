@@ -44,6 +44,10 @@ const Scoring = (() => {
       } else if (bias === -1 && primary.belowDownFractal) {
         items.push(['Below last down fractal', 15]); score += 15;
       }
+
+      if (primary.mfiSignal === 'green') {
+        items.push(['MFI Green (volume + range confirm)', 8]); score += 8;
+      }
     }
 
     return { score: Math.min(65, score), items };
@@ -62,6 +66,17 @@ const Scoring = (() => {
     if (primary && primary.rsi != null && primary.rsi >= 75) {
       items.push(['1H RSI extreme', 15]); score += 15;
     }
+
+    // Accelerator Oscillator: momentum-of-momentum decelerating ahead of
+    // AO's own zero-cross — catches exhaustion earlier than AO alone.
+    if (primary && primary.ac != null && primary.ao != null) {
+      if (primary.ao > 0 && !primary.acRising) {
+        items.push(['1H AC decelerating (bullish momentum fading)', 12]); score += 12;
+      } else if (primary.ao < 0 && primary.acRising) {
+        items.push(['1H AC decelerating (bearish momentum fading)', 12]); score += 12;
+      }
+    }
+
     return { score: Math.min(40, Math.max(0, score)), items };
   }
 
@@ -78,6 +93,34 @@ const Scoring = (() => {
         items.push([`Bullish RSI divergence ${labels[idx]}`, 20]); score += 20;
       }
     });
+
+    // MFI Squat: falling range-per-volume with rising volume — a generic
+    // reversal warning, independent of which way the current bias points.
+    const primary = tfSnapshots[0];
+    if (primary && primary.mfiSignal === 'squat') {
+      items.push(['1H MFI Squat (reversal warning)', 10]); score += 10;
+    }
+
+    // Divergent Bar: fires when the Alligator is in the OPPOSITE order to
+    // the current bias — i.e. it's a warning that bias may be about to
+    // reverse, not a continuation signal. divergentBarUp needs a bearish
+    // mouth (warns against bias === -1); divergentBarDown needs a bullish
+    // mouth (warns against bias === 1).
+    if (primary) {
+      if (bias === -1 && primary.divergentBarUp) {
+        items.push(['1H Divergent Bar (bullish reversal)', 15]); score += 15;
+      } else if (bias === 1 && primary.divergentBarDown) {
+        items.push(['1H Divergent Bar (bearish reversal)', 15]); score += 15;
+      }
+
+      // Wiseman AO-shape signals: same "warns against current bias" logic.
+      if (bias === -1 && primary.wisemanBullish) {
+        items.push(['1H Wiseman AO reversal (bullish)', 12]); score += 12;
+      } else if (bias === 1 && primary.wisemanBearish) {
+        items.push(['1H Wiseman AO reversal (bearish)', 12]); score += 12;
+      }
+    }
+
     return { score: Math.min(50, score), items };
   }
 
@@ -169,10 +212,21 @@ const Scoring = (() => {
     const regime = regimeLabel(dir, count);
     const score = tradeQualityScore({ bias, count, continuation, exhaustion, reversal, tfSnapshots });
 
+    // Crossing Lips: a non-invalidating, UI-only early-warning flag — the
+    // Alligator is still in the current trend's order but price just
+    // closed back through lips after 2 bars on the trend side. Deliberately
+    // NOT wired into alignment/touch-state (see backlog notes).
+    const primary = tfSnapshots[0];
+    const crossingLipsWarning = !!(primary && (
+      (bias === 1 && primary.crossingLipsDown) ||
+      (bias === -1 && primary.crossingLipsUp)
+    ));
+
     return {
       bias, alignCount: count, tfSnapshots,
       direction: dir, regime, score,
       continuation, exhaustion, reversal,
+      crossingLipsWarning,
       rsiByTf: tfSnapshots.map(s => s ? Math.round(s.rsi) : null),
       tfAlignment: tfSnapshots.map(s => s ? s.alignment : 0),
       divergenceOverall: tfSnapshots[0] && tfSnapshots[0].divergence !== 'none'

@@ -72,6 +72,11 @@ const Render = (() => {
     return `<span class="info-chip" style="color:${color}">Div: ${text}</span>`;
   }
 
+  function crossingLipsChipHtml(warn) {
+    if (!warn) return '';
+    return `<span class="info-chip" style="color:var(--gold-text)">&#9888; Lips cross</span>`;
+  }
+
   function volChipHtml(vol) {
     const color = (vol === 'High' || vol === 'Extreme') ? 'var(--red-text)' : 'var(--text2)';
     return `<span class="info-chip" style="color:${color}">Vol: ${vol}</span>`;
@@ -145,6 +150,7 @@ const Render = (() => {
       </div>
       <div class="chip-row">
         ${divChipHtml(coin.divergenceOverall)}
+        ${crossingLipsChipHtml(coin.crossingLipsWarning)}
         ${volChipHtml(coin.volatility)}
         ${unlockChipHtml(coin.unlock)}
       </div>
