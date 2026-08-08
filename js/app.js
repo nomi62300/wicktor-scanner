@@ -406,7 +406,7 @@
     const band = state.activeFilters.band;
     if (band.size > 0) {
       list = list.filter(c => {
-        const lbl = Scoring.bandLabel(c.score, c.unlock).text.toLowerCase();
+        const lbl = Scoring.bandLabel(c.score, c.unlock, c.ceiling).text.toLowerCase();
         return (band.has('excellent') && lbl === 'excellent') ||
                (band.has('watch')     && lbl === 'watch') ||
                (band.has('avoid')     && lbl === 'avoid');

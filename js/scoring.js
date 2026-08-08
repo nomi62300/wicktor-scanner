@@ -11,14 +11,43 @@
 const Scoring = (() => {
 
   // timeframes ordered as used everywhere: [1H, 15M, 5M]
+  //
+  // 1H alone sets the bias — NOT a majority vote across the three TFs.
+  // If 15M/5M happen to agree with each other but oppose 1H, that is still
+  // not a valid bias in their direction; 1H wins regardless. If 1H is
+  // sleeping (alignment 0), there is no bias at all, full stop — 15M/5M
+  // are not consulted. `count` is how many of the three TFs match the
+  // 1H-derived bias direction (1H always counts once it has a bias; 15M/5M
+  // add one each only if they "confirm", i.e. same alignment sign as 1H).
   function computeBias(tfSnapshots) {
-    const aligns = tfSnapshots.map(s => s ? s.alignment : 0);
-    const bullCount = aligns.filter(a => a === 1).length;
-    const bearCount = aligns.filter(a => a === -1).length;
-    if (bullCount >= bearCount && bullCount > 0) return { bias: 1, count: bullCount };
-    if (bearCount > bullCount) return { bias: -1, count: bearCount };
-    return { bias: 0, count: 0 };
+    const h1 = tfSnapshots[0];
+    const bias = h1 ? h1.alignment : 0;
+    if (bias === 0) return { bias: 0, count: 0 };
+
+    let count = 1;
+    const m15 = tfSnapshots[1];
+    const m5 = tfSnapshots[2];
+    if (m15 && m15.alignment === bias) count++;
+    if (m5 && m5.alignment === bias) count++;
+    return { bias, count };
   }
+
+  // Hard ceiling on band, derived from the 1H→15M→5M confirmation chain
+  // (see computeBias). 15M is a gate on 5M, not an independent vote: if 15M
+  // doesn't confirm 1H's bias, the result is 'avoid' regardless of what 5M
+  // shows — 5M only gets to choose between 'excellent' and 'watch' once 15M
+  // has already confirmed. "Confirms" means same alignment sign as 1H;
+  // opposite and sleeping (alignment 0) are treated identically as
+  // "does not confirm".
+  function alignmentCeiling(tfSnapshots, bias) {
+    if (bias === 0) return 'avoid';
+    const m15 = tfSnapshots[1];
+    if (!(m15 && m15.alignment === bias)) return 'avoid';
+    const m5 = tfSnapshots[2];
+    return (m5 && m5.alignment === bias) ? 'excellent' : 'watch';
+  }
+
+  const BAND_RANK = { avoid: 0, watch: 1, excellent: 2 };
 
   function buildContinuation(tfSnapshots, bias) {
     const items = [];
@@ -200,10 +229,23 @@ const Scoring = (() => {
     return Math.max(0, Math.min(100, Math.round(raw)));
   }
 
-  function bandLabel(score, unlock) {
+  /**
+   * `ceiling` ('excellent' | 'watch' | 'avoid', from alignmentCeiling()) is
+   * a hard cap on the score-derived band, never a floor \u2014 a numeric score
+   * of 90 with ceiling 'watch' is capped down to WATCH, but a numeric score
+   * of 40 with ceiling 'excellent' still shows AVOID/WATCH per the normal
+   * thresholds (the ceiling doesn't force the band up). Callers that omit
+   * `ceiling` get the old unrestricted score-only behavior.
+   */
+  function bandLabel(score, unlock, ceiling) {
     if (unlock && unlock.severity === 'red') return { text: '\u26A0 UNLOCK RISK', tone: 'red' };
-    if (score >= 80) return { text: 'EXCELLENT', tone: 'green' };
-    if (score >= 50) return { text: 'WATCH', tone: 'gold' };
+
+    const scoreBand = score >= 80 ? 'excellent' : score >= 50 ? 'watch' : 'avoid';
+    const cap = ceiling || 'excellent';
+    const finalBand = BAND_RANK[scoreBand] <= BAND_RANK[cap] ? scoreBand : cap;
+
+    if (finalBand === 'excellent') return { text: 'EXCELLENT', tone: 'green' };
+    if (finalBand === 'watch') return { text: 'WATCH', tone: 'gold' };
     return { text: 'AVOID', tone: 'grey' };
   }
 
@@ -220,6 +262,7 @@ const Scoring = (() => {
     if (!tfSnapshots[0]) return null; // need at least 1H data
 
     const { bias, count } = computeBias(tfSnapshots);
+    const ceiling = alignmentCeiling(tfSnapshots, bias);
     const continuation = buildContinuation(tfSnapshots, bias);
     const exhaustion = buildExhaustion(tfSnapshots);
     const reversal = buildReversal(tfSnapshots, bias);
@@ -238,7 +281,7 @@ const Scoring = (() => {
     ));
 
     return {
-      bias, alignCount: count, tfSnapshots,
+      bias, alignCount: count, ceiling, tfSnapshots,
       direction: dir, regime, score,
       continuation, exhaustion, reversal,
       crossingLipsWarning,
@@ -251,7 +294,7 @@ const Scoring = (() => {
     };
   }
 
-  return { computeBias, buildContinuation, buildExhaustion, buildReversal,
+  return { computeBias, alignmentCeiling, buildContinuation, buildExhaustion, buildReversal,
            directionValue, regimeLabel, tradeQualityScore, bandLabel, evaluate };
 })();
 

@@ -33,8 +33,8 @@ Open DevTools console for additional output if a suite crashes.</p>
 <div id="output"></div>
 
 <!-- Load the real source files (same order as index.html) -->
-<script src="js/indicators.js"></script>
-<script src="js/scoring.js"></script>
+<script src="../js/indicators.js"></script>
+<script src="../js/scoring.js"></script>
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,6 +273,77 @@ test('evaluate() exposes tfConfidence array of length 3', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Suite D3 — 1H-anchored bias + confirms/does-not-confirm alignment ceiling
+// (Priority 0: 1H alone sets bias; 15M gates 5M; ceiling only caps DOWN)
+// ─────────────────────────────────────────────────────────────────────────────
+suite('D3 — computeBias() / alignmentCeiling()');
+
+function fakeSnap(alignment) { return alignment == null ? null : { alignment }; }
+
+test('1H sleeping → bias=0, count=0, regardless of 15M/5M agreeing', () => {
+  const tf = [fakeSnap(0), fakeSnap(1), fakeSnap(1)];
+  const { bias, count } = Scoring.computeBias(tf);
+  assertEqual(bias, 0); assertEqual(count, 0);
+});
+
+test('15M+5M agree with each other but oppose 1H → bias follows 1H, not the pair', () => {
+  const tf = [fakeSnap(1), fakeSnap(-1), fakeSnap(-1)];
+  const { bias, count } = Scoring.computeBias(tf);
+  assertEqual(bias, 1, '1H must win regardless of 15M/5M majority');
+  assertEqual(count, 1, 'only 1H itself counts as confirming');
+});
+
+test('full 3TF confirm → count=3', () => {
+  const tf = [fakeSnap(1), fakeSnap(1), fakeSnap(1)];
+  assertEqual(Scoring.computeBias(tf).count, 3);
+});
+
+test('ceiling: 1H sleeping → avoid', () => {
+  const tf = [fakeSnap(0), fakeSnap(1), fakeSnap(1)];
+  assertEqual(Scoring.alignmentCeiling(tf, 0), 'avoid');
+});
+
+test('ceiling: 15M+5M both confirm → excellent', () => {
+  const tf = [fakeSnap(1), fakeSnap(1), fakeSnap(1)];
+  assertEqual(Scoring.alignmentCeiling(tf, 1), 'excellent');
+});
+
+test('ceiling: 15M confirms, 5M opposes → watch', () => {
+  const tf = [fakeSnap(1), fakeSnap(1), fakeSnap(-1)];
+  assertEqual(Scoring.alignmentCeiling(tf, 1), 'watch');
+});
+
+test('ceiling: 15M confirms, 5M sleeping → watch (sleeping treated as non-confirm, not a veto to avoid)', () => {
+  const tf = [fakeSnap(1), fakeSnap(1), fakeSnap(0)];
+  assertEqual(Scoring.alignmentCeiling(tf, 1), 'watch');
+});
+
+test('ceiling: 15M opposes 1H → avoid, even if 5M confirms (15M gates 5M)', () => {
+  const tf = [fakeSnap(1), fakeSnap(-1), fakeSnap(1)];
+  assertEqual(Scoring.alignmentCeiling(tf, 1), 'avoid');
+});
+
+test('ceiling: 15M sleeping (does not confirm) → avoid, even if 5M confirms', () => {
+  const tf = [fakeSnap(1), fakeSnap(0), fakeSnap(1)];
+  assertEqual(Scoring.alignmentCeiling(tf, 1), 'avoid');
+});
+
+test('ceiling: mirror bearish case, full confirm → excellent', () => {
+  const tf = [fakeSnap(-1), fakeSnap(-1), fakeSnap(-1)];
+  assertEqual(Scoring.alignmentCeiling(tf, -1), 'excellent');
+});
+
+test('evaluate(): flat 15M (sleeping) caps a strong uptrend to AVOID despite a decent score', () => {
+  const cs = uptrend(80);
+  const flat = [];
+  for (let i = 0; i < 80; i++) flat.push(flatCandle(i, 100));
+  const result = Scoring.evaluate({ h1: cs, m15: flat, m5: cs });
+  assertEqual(result.ceiling, 'avoid');
+  const band = Scoring.bandLabel(result.score, null, result.ceiling);
+  assertEqual(band.text, 'AVOID');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Suite E — Scoring.bandLabel() contract
 // ─────────────────────────────────────────────────────────────────────────────
 suite('E — Scoring.bandLabel()');
@@ -285,6 +356,22 @@ test('score 100 → EXCELLENT',   () => assertEqual(Scoring.bandLabel(100).text,
 test('unlock.severity=red overrides score', () => {
   const lbl = Scoring.bandLabel(90, { severity: 'red' });
   assert(lbl.text.includes('UNLOCK'), `expected UNLOCK label, got "${lbl.text}"`);
+});
+test('ceiling=watch caps score=90 down to WATCH', () => {
+  assertEqual(Scoring.bandLabel(90, null, 'watch').text, 'WATCH');
+});
+test('ceiling=avoid caps score=95 down to AVOID', () => {
+  assertEqual(Scoring.bandLabel(95, null, 'avoid').text, 'AVOID');
+});
+test('ceiling=excellent does not force a low score up (score=40 stays AVOID)', () => {
+  assertEqual(Scoring.bandLabel(40, null, 'excellent').text, 'AVOID');
+});
+test('unlock red overrides ceiling=excellent too', () => {
+  const lbl = Scoring.bandLabel(95, { severity: 'red' }, 'excellent');
+  assert(lbl.text.includes('UNLOCK'), `expected UNLOCK label, got "${lbl.text}"`);
+});
+test('omitting ceiling is back-compat (unrestricted, score-only)', () => {
+  assertEqual(Scoring.bandLabel(85, null).text, 'EXCELLENT');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

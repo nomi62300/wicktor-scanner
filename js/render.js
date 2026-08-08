@@ -112,7 +112,7 @@ const Render = (() => {
    * }
    */
   function cardHtml(coin, idx) {
-    const band = Scoring.bandLabel(coin.score, coin.unlock);
+    const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
     const tfRow = coin.tfConfidence.map((c, i) =>
       `<span class="tf-item">${TF_LABELS[i]} ${tfArrowHtml(c)}</span>`).join('');
     const rsiRow = coin.rsiByTf.map((v, i) =>
@@ -235,7 +235,7 @@ const Render = (() => {
   }
 
   function detailModalHtml(coin, newsResult) {
-    const band = Scoring.bandLabel(coin.score, coin.unlock);
+    const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
     const dirPct = ((coin.direction + 100) / 200 * 100).toFixed(0);
     const unlockBlock = coin.unlock ? `
       <div class="block${coin.unlock.severity === 'red' ? ' block-warn' : ''}" style="color:${coin.unlock.severity === 'red' ? 'var(--red-text)' : 'var(--gold-text)'};font-size:11px;">
