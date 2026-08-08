@@ -452,6 +452,8 @@ input:focus-visible {
 .tf-item { font-size: 10px; color: var(--text2); display: flex; align-items: center; gap: 3px; }
 .tf-up { color: var(--green); font-size: 9px; }
 .tf-down { color: var(--red); font-size: 9px; }
+.tf-weak-up { color: var(--green); opacity: 0.6; font-size: 9px; }
+.tf-weak-down { color: var(--red); opacity: 0.6; font-size: 9px; }
 .tf-flat { color: var(--text3); }
 
 .rsi-row { font-size: 10px; color: var(--text3); margin-bottom: 8px; }

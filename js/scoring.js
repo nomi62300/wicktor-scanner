@@ -25,9 +25,24 @@ const Scoring = (() => {
     let score = 0;
     const { count } = computeBias(tfSnapshots);
 
-    if (count === 3) { items.push(['3TF alligator aligned', 30]); score += 30; }
-    else if (count === 2) { items.push(['2TF alligator aligned', 18]); score += 18; }
-    else if (count === 1) { items.push(['1TF alligator aligned', 8]); score += 8; }
+    // 5-tier confidence grades HOW CLEAN each aligned TF is (no recent
+    // lips dips vs 1-2 weakening dips) — a TF counted in `count` can still
+    // be "weak_bull"/"weak_bear", so clean-3TF and weakening-3TF are no
+    // longer scored identically.
+    const weakCount = tfSnapshots.filter(s => s && (
+      (bias === 1 && s.confidence === 'weak_bull') ||
+      (bias === -1 && s.confidence === 'weak_bear')
+    )).length;
+
+    if (count === 3) {
+      if (weakCount === 0) { items.push(['3TF alligator aligned (clean)', 30]); score += 30; }
+      else { items.push([`3TF alligator aligned (${weakCount} weakening)`, 24]); score += 24; }
+    } else if (count === 2) {
+      if (weakCount === 0) { items.push(['2TF alligator aligned (clean)', 18]); score += 18; }
+      else { items.push([`2TF alligator aligned (${weakCount} weakening)`, 14]); score += 14; }
+    } else if (count === 1) {
+      items.push(['1TF alligator aligned', 8]); score += 8;
+    }
 
     const primary = tfSnapshots[0]; // 1H
     if (primary) {
@@ -229,6 +244,7 @@ const Scoring = (() => {
       crossingLipsWarning,
       rsiByTf: tfSnapshots.map(s => s ? Math.round(s.rsi) : null),
       tfAlignment: tfSnapshots.map(s => s ? s.alignment : 0),
+      tfConfidence: tfSnapshots.map(s => s ? s.confidence : 'neutral'),
       divergenceOverall: tfSnapshots[0] && tfSnapshots[0].divergence !== 'none'
         ? tfSnapshots[0].divergence
         : (tfSnapshots[1] && tfSnapshots[1].divergence !== 'none' ? tfSnapshots[1].divergence : 'none')

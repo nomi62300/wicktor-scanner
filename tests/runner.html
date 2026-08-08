@@ -227,6 +227,52 @@ test('fractal detection on real candles finds spike at bar 30', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Suite D2 — 5-tier tfConfidenceTier() / analyzeTimeframe().confidence
+// ─────────────────────────────────────────────────────────────────────────────
+suite('D2 — 5-tier per-TF confidence');
+
+test('clean uptrend: confidence = strong_bull', () => {
+  const snap = Indicators.analyzeTimeframe(uptrend(80));
+  assertEqual(snap.confidence, 'strong_bull');
+});
+
+test('clean downtrend: confidence = strong_bear', () => {
+  const snap = Indicators.analyzeTimeframe(downtrend(80));
+  assertEqual(snap.confidence, 'strong_bear');
+});
+
+test('flat/no alignment: confidence = neutral', () => {
+  const cs = [];
+  let p = 100;
+  for (let i = 0; i < 80; i++) { cs.push(flatCandle(i, p)); } // dead flat, no trend
+  const snap = Indicators.analyzeTimeframe(cs);
+  assertEqual(snap.alignment, 0, 'flat series should have alignment 0');
+  assertEqual(snap.confidence, 'neutral');
+});
+
+test('uptrend with a recent 1-bar dip below lips: confidence = weak_bull (still aligned)', () => {
+  const cs = uptrend(80);
+  const { lips } = Indicators.alligator(cs);
+  const lastIdx = cs.length - 1;
+  // Force the most recent HA close (all of o/h/l/c, not just close) to dip
+  // just under lips without breaking alignment or triggering jaw-touch.
+  const lipsV = lips[lastIdx];
+  assert(lipsV != null, 'lips should be defined by bar 79');
+  const dipPrice = lipsV * 0.995;
+  cs[lastIdx] = { t: lastIdx, o: dipPrice, h: dipPrice, l: dipPrice, c: dipPrice, v: 1000 };
+  const snap = Indicators.analyzeTimeframe(cs);
+  assertEqual(snap.alignment, 1, 'should still be bullish-aligned');
+  assertEqual(snap.confidence, 'weak_bull');
+});
+
+test('evaluate() exposes tfConfidence array of length 3', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assertEqual(result.tfConfidence.length, 3);
+  assertEqual(result.tfConfidence[0], 'strong_bull');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Suite E — Scoring.bandLabel() contract
 // ─────────────────────────────────────────────────────────────────────────────
 suite('E — Scoring.bandLabel()');

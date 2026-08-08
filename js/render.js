@@ -13,10 +13,14 @@ const Render = (() => {
     return d.innerHTML;
   }
 
-  function tfArrowHtml(v) {
-    if (v === 1) return '<span class="tf-up">&#9650;</span>';
-    if (v === -1) return '<span class="tf-down">&#9660;</span>';
-    return '<span class="tf-flat">&mdash;</span>';
+  function tfArrowHtml(confidence) {
+    switch (confidence) {
+      case 'strong_bull': return '<span class="tf-up" title="Clean uptrend">&#9650;</span>';
+      case 'weak_bull':   return '<span class="tf-weak-up" title="Weakening (recent lips dip)">&#8599;</span>';
+      case 'strong_bear': return '<span class="tf-down" title="Clean downtrend">&#9660;</span>';
+      case 'weak_bear':   return '<span class="tf-weak-down" title="Recovering (recent lips dip)">&#8600;</span>';
+      default:            return '<span class="tf-flat" title="Neutral / mixed">&mdash;</span>';
+    }
   }
 
   function rsiColor(v) {
@@ -103,14 +107,14 @@ const Render = (() => {
    * coin = {
    *   symbol, sector, price, market('SPOT'|'PERP'), side, discoveredAgo,
    *   mcap, volatility, unlock, newsMeta, watchlisted,
-   *   ...scoring result fields (score, regime, direction, tfAlignment, rsiByTf,
+   *   ...scoring result fields (score, regime, direction, tfConfidence, rsiByTf,
    *        divergenceOverall, continuation, exhaustion, reversal)
    * }
    */
   function cardHtml(coin, idx) {
     const band = Scoring.bandLabel(coin.score, coin.unlock);
-    const tfRow = coin.tfAlignment.map((v, i) =>
-      `<span class="tf-item">${TF_LABELS[i]} ${tfArrowHtml(v)}</span>`).join('');
+    const tfRow = coin.tfConfidence.map((c, i) =>
+      `<span class="tf-item">${TF_LABELS[i]} ${tfArrowHtml(c)}</span>`).join('');
     const rsiRow = coin.rsiByTf.map((v, i) =>
       `<span style="color:${rsiColor(v)}">${TF_LABELS[i]} ${v != null ? v : '--'}</span>`).join(' &middot; ');
     const unlockSevereCls = coin.unlock && coin.unlock.severity === 'red' ? ' unlock-severe' : '';

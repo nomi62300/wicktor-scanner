@@ -490,6 +490,31 @@ const Indicators = (() => {
   }
 
   /**
+   * 5-tier per-TF alignment confidence (Profitunity multi-timeframe
+   * screener), richer than the binary aligned/not-aligned `alignment`
+   * value: grades HOW CLEAN the current alignment is by checking whether
+   * any of the last 5 HA closes dipped back across lips against the
+   * trend (a weakening/recovering tell that precedes an actual jaw-touch
+   * invalidation). Only meaningful when `alignment` is already non-zero
+   * (jaw-touch already resets alignment to 0, so "opposite trend" here
+   * just falls out of alignment === -1 vs 1 — no separate case needed).
+   * Returns 'strong_bull' | 'weak_bull' | 'neutral' | 'weak_bear' | 'strong_bear'.
+   */
+  function tfConfidenceTier(haCandles, lips, alignment, lastIdx) {
+    if (alignment === 0) return 'neutral';
+    const from = Math.max(0, lastIdx - 4);
+    let wrongSideCount = 0;
+    for (let k = from; k <= lastIdx; k++) {
+      const lipsV = lips[k];
+      if (lipsV == null) continue;
+      if (alignment === 1 && haCandles[k].c < lipsV) wrongSideCount++;
+      else if (alignment === -1 && haCandles[k].c > lipsV) wrongSideCount++;
+    }
+    if (wrongSideCount === 0) return alignment === 1 ? 'strong_bull' : 'strong_bear';
+    return alignment === 1 ? 'weak_bull' : 'weak_bear';
+  }
+
+  /**
    * Convenience: compute everything for one timeframe's candles and
    * return a compact snapshot of the latest closed bar.
    *
@@ -524,6 +549,8 @@ const Indicators = (() => {
     // If the jaw was touched and not yet cleared, override alignment to 0
     if (alligatorInvalidated) alignment = 0;
 
+    const confidence = tfConfidenceTier(haCandles, lips, alignment, lastIdx);
+
     const aoV = ao[lastIdx];
     const aoPrev = ao[lastIdx - 1];
     const aoRising = aoV != null && aoPrev != null && aoV > aoPrev;
@@ -550,6 +577,7 @@ const Indicators = (() => {
 
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
+      confidence,             // 5-tier: strong_bull/weak_bull/neutral/weak_bear/strong_bear
       alligatorInvalidated,   // true if jaw-touch rule is currently active
       ao: aoV,
       aoRising,
@@ -580,7 +608,7 @@ const Indicators = (() => {
     heikinAshi, alligator, alligatorTouchState,
     divergentBar, crossingLips,
     awesomeOscillator, acceleratorOscillator, wisemanSignals, mfi, mfiClassification,
-    fractals, rsi, divergence,
+    fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe
   };
 })();
