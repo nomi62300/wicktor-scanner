@@ -360,7 +360,11 @@ const Api = (() => {
       const kwLower = kw.toLowerCase();
       const match = categoryList.find(c => c.name.toLowerCase().includes(kwLower));
       if (match) {
-        resolvedCategories.push({ id: match.id, name: kw });
+        // CoinGecko's /coins/categories/list returns `category_id`, not
+        // `id` — using the wrong field silently resolved every match to
+        // `id: undefined`, so every category request 404'd (`category=
+        // undefined`) with no warning, since the name match itself succeeded.
+        resolvedCategories.push({ id: match.category_id, name: kw });
       } else {
         console.warn(`[Api] narrative: no CoinGecko category match for keyword "${kw}"`);
       }

@@ -155,9 +155,18 @@ suite('C — jaw-touch → alignment=0, recovery → alignment=1');
 
 test('after jaw dip: alignment=0, alligatorInvalidated=true', () => {
   const cs = uptrend(80);
-  // At bar 70 insert a candle whose low hammers 50% below current price
+  // At bar 70 insert a candle whose low hammers 50% below current price,
+  // and whose close also drops (not just the wick) — bars 71-72 are then
+  // rebuilt from that depressed level too. Otherwise `cs[71]`/`cs[72]`
+  // keep their original pre-dip uptrend values (only bar 70 was
+  // overwritten), the HA close clears back above lips within one bar,
+  // and the sustained-invalidation window this test means to inspect
+  // (through bar 72) never actually happens.
   const dipPrice = cs[70].c;
-  cs[70] = { t: 70, o: dipPrice, h: dipPrice * 1.001, l: dipPrice * 0.30, c: dipPrice, v: 5000 };
+  const droppedPrice = dipPrice * 0.75;
+  cs[70] = { t: 70, o: dipPrice, h: dipPrice * 1.001, l: dipPrice * 0.30, c: droppedPrice, v: 5000 };
+  let p = droppedPrice;
+  for (let i = 71; i < 73; i++) { cs[i] = flatCandle(i, p); p *= 1.005; }
   const snap = Indicators.analyzeTimeframe(cs.slice(0, 73));
   assert(snap !== null, 'snapshot null');
   assertEqual(snap.alignment, 0, 'alignment after dip');

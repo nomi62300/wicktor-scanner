@@ -30,6 +30,7 @@
     coins: [],           // last computed, unfiltered
     renderedCoins: [],   // final capped+ordered list actually rendered
     narrativePerf: null, // top-4 sector objects [{name, weightedChange7d}] from last scan
+    marketBreadth: null, // { spot, perp } — top-strip Pulse, independent of scan toggles
     activeFilters: {
       market:  new Set(), // 'spot' | 'perp' — ANDed with quality, OR'd within itself
       quality: new Set(), // '3tf' | 'divergence' — ANDed with market, OR'd within itself
@@ -231,23 +232,29 @@
       if (state.settings.includeStocks) scanTargets.push({ category: 'spot', assetFilter: 'stock' });
       if (state.settings.includePerps) scanTargets.push({ category: 'linear', assetFilter: 'crypto' }); // stocks are spot-only, no leverage on Bybit
 
-      const movers = [];
+      // Top strip (Pulse Spot/Perp, Top Gainers/Losers) is a market-overview
+      // feature, not a reflection of the user's scan configuration — fetch
+      // both ticker sets unconditionally so it stays populated regardless of
+      // which Crypto Spot/Stocks/Perps toggles are on.
+      const [spotTickers, linearTickers] = await Promise.all([
+        Api.bybitTickers('spot'),
+        Api.bybitTickers('linear')
+      ]);
+      state.marketBreadth = {
+        spot: computeMarketBreadth(spotTickers),
+        perp: computeMarketBreadth(linearTickers)
+      };
+      state.rawMovers = buildMoversFromTickers(spotTickers, linearTickers);
+
       const universes = [];
       await Promise.all(scanTargets.map(async ({ category, assetFilter }) => {
         const universe = await Api.topUniverse(category, state.settings.universeSize, assetFilter);
         universes.push({ category, assetFilter, universe });
-        // Top Gainers/Losers strip stays crypto-only for a consistent meaning
-        // regardless of which toggles are enabled.
-        if (category === 'spot' && assetFilter === 'crypto') {
-          universe.forEach(u => {
-            movers.push({ symbol: u.symbol.replace(/USDT$/, ''), change: u.change24h });
-          });
-        }
       }));
-      state.rawMovers = movers;
       console.timeEnd('[Scan] universe-building');
 
-      // 3. Render the top strip early using pre-existing coins (for pulse) + new movers + new cg/fng/sector stats!
+      // 3. Render the top strip early — Pulse/Gainers/Losers are already
+      // populated from the ticker fetch above, independent of scan state.
       console.time('[Scan] top-strip-rendering');
       refreshTopStrip(globalData, fngData);
       el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
@@ -309,9 +316,9 @@
       state.coins = allCoins.sort((a, b) => b.score - a.score);
       console.timeEnd('[Scan] coin-analysis');
 
-      // 6. Refresh the top strip with updated scan results (pulse level) and render the cards
+      // 6. Render the card grid with the finished scan results — top strip
+      // data doesn't depend on state.coins anymore, so no need to recompute it.
       console.time('[Scan] final-rendering');
-      refreshTopStrip(globalData, fngData);
       renderAll();
       console.timeEnd('[Scan] final-rendering');
     } catch (err) {
@@ -345,18 +352,44 @@
   }
 
   // ------------------------------------------------------------- Top strip
-  function refreshTopStrip(global, fng) {
-    const spotCoins = state.coins.filter(c => c.market === 'SPOT');
-    const perpCoins = state.coins.filter(c => c.market === 'PERP');
-    const pulse = (list) => {
-      if (!list.length) return null;
-      const avg = list.reduce((sum, c) => sum + c.direction, 0) / list.length;
-      return Math.round(avg);
-    };
+  /**
+   * 24h market breadth (average % change across tradeable crypto USDT pairs
+   * in this category) computed directly from Bybit's tickers endpoint —
+   * cheap (no indicator computation) and always populated regardless of
+   * scan toggles, unlike deriving it from state.coins.
+   */
+  function computeMarketBreadth(tickers) {
+    const crypto = (tickers || []).filter(t =>
+      Api.isTradeableUsdtPair(t.symbol) && !Api.isXStock(t.symbol));
+    if (!crypto.length) return null;
+    const avg = crypto.reduce((sum, t) => sum + parseFloat(t.price24hPcnt) * 100, 0) / crypto.length;
+    return Math.round(avg);
+  }
 
+  /**
+   * Top Gainers/Losers source data — crypto-only tradeable pairs from both
+   * spot and linear (perp) tickers, independent of scan toggle state. A
+   * symbol can appear in both categories; keep whichever move is larger in
+   * magnitude, since this is a market-overview tile, not a scan reflection.
+   */
+  function buildMoversFromTickers(spotTickers, linearTickers) {
+    const combined = new Map();
+    [...(spotTickers || []), ...(linearTickers || [])].forEach(t => {
+      if (!Api.isTradeableUsdtPair(t.symbol) || Api.isXStock(t.symbol)) return;
+      const change = parseFloat(t.price24hPcnt) * 100;
+      const symbol = t.symbol.replace(/USDT$/, '');
+      const existing = combined.get(symbol);
+      if (!existing || Math.abs(change) > Math.abs(existing.change)) {
+        combined.set(symbol, { symbol, change });
+      }
+    });
+    return [...combined.values()];
+  }
+
+  function refreshTopStrip(global, fng) {
     state.topStripData = {
-      pulseSpot: pulse(spotCoins),
-      pulsePerp: pulse(perpCoins),
+      pulseSpot: state.marketBreadth ? state.marketBreadth.spot : null,
+      pulsePerp: state.marketBreadth ? state.marketBreadth.perp : null,
       fearGreed: fng,
       btcDominance: global ? global.market_cap_percentage.btc : null,
       mcap: global ? Api.formatMcap(global.total_market_cap.usd) : null,

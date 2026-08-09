@@ -13,14 +13,28 @@ const Render = (() => {
     return d.innerHTML;
   }
 
+  // Fixed-size SVG icons for the 5-tier per-TF confidence state — Unicode
+  // arrow glyphs (▲/↗/▼/↘/—) render thin, low-contrast, or near-illegible
+  // at small sizes across different fonts/devices/OSes; explicit stroke
+  // width and sizing keeps every state visually distinct at a glance.
+  const TF_ICONS = {
+    strong_bull: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1.5l5 9h-10z"/></svg>',
+    weak_bull:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5L9.5 2.5M4.5 2.5H9.5V7.5"/></svg>',
+    strong_bear: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 10.5l-5-9h10z"/></svg>',
+    weak_bear:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5L9.5 9.5M4.5 9.5H9.5V4.5"/></svg>',
+    neutral:     '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6H10"/></svg>'
+  };
+  const TF_ICON_META = {
+    strong_bull: ['tf-up', 'Clean uptrend'],
+    weak_bull:   ['tf-weak-up', 'Weakening (recent lips dip)'],
+    strong_bear: ['tf-down', 'Clean downtrend'],
+    weak_bear:   ['tf-weak-down', 'Recovering (recent lips dip)'],
+    neutral:     ['tf-flat', 'Neutral / mixed']
+  };
   function tfArrowHtml(confidence) {
-    switch (confidence) {
-      case 'strong_bull': return '<span class="tf-up" title="Clean uptrend">&#9650;</span>';
-      case 'weak_bull':   return '<span class="tf-weak-up" title="Weakening (recent lips dip)">&#8599;</span>';
-      case 'strong_bear': return '<span class="tf-down" title="Clean downtrend">&#9660;</span>';
-      case 'weak_bear':   return '<span class="tf-weak-down" title="Recovering (recent lips dip)">&#8600;</span>';
-      default:            return '<span class="tf-flat" title="Neutral / mixed">&mdash;</span>';
-    }
+    const key = TF_ICON_META[confidence] ? confidence : 'neutral';
+    const [cls, title] = TF_ICON_META[key];
+    return `<span class="${cls}" title="${title}">${TF_ICONS[key]}</span>`;
   }
 
   function rsiColor(v) {

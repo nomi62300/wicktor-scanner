@@ -44,8 +44,14 @@ function buildUptrendWithDipAndRecover(n = 80, dipIdx = 60, recoverIdx = 75) {
   let price = 100;
   for (let i = 0; i < n; i++) {
     if (i === dipIdx) {
-      // A candle whose low hammers far below the jaw (jaw is ~100 area by now)
-      candles.push({ t: i, o: price, h: price * 1.002, l: price * 0.50, c: price, v: 1000 });
+      // A candle whose low hammers far below the jaw AND whose close also
+      // drops (not just the wick) — otherwise `price` snaps right back to
+      // its pre-dip level on the very next bar, the HA close clears back
+      // above lips within one bar, and the sustained-invalidation window
+      // this test means to exercise never actually happens.
+      const preDip = price;
+      candles.push({ t: i, o: preDip, h: preDip * 1.002, l: preDip * 0.50, c: preDip * 0.75, v: 1000 });
+      price = preDip * 0.75;
     } else if (i >= recoverIdx) {
       // Strong close well above where lips would be
       price = price * 1.05;
