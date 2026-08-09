@@ -278,16 +278,26 @@ const Api = (() => {
    * Filters a raw articles array to those mentioning `symbol` (uppercase
    * ticker match), sorts newest-first, maps sentiment, caps to 5 items.
    * Pure — no async, no side effects.
+   *
+   * `symbol` may still be a raw Bybit symbol (e.g. "AAPLxUSDT") rather than
+   * an already-stripped plain ticker — strip the tokenized-stock `x` marker
+   * (case-sensitive, before uppercasing, same convention as isXStock()) in
+   * addition to the USDT/USD/PERP suffixes, or stock tickers never match.
+   *
+   * CryptoFlash's `tickers` field occasionally comma-joins two tickers into
+   * one array element (e.g. "ADA,XRP") — split on commas so both still match.
    */
   function newsForSymbol(articles, symbol) {
     const clean = (symbol || '')
-      .toUpperCase()
       .replace(/USDT$|USD$|PERP$|-PERP$/i, '')
-      .replace(/^[$#]/, '');
+      .replace(/x$/, '')
+      .replace(/^[$#]/, '')
+      .toUpperCase();
 
     return (articles || [])
       .filter(a => Array.isArray(a.tickers) &&
-                   a.tickers.some(t => (t || '').toUpperCase() === clean))
+                   a.tickers.some(t => String(t || '').split(',')
+                     .some(part => part.trim().toUpperCase() === clean)))
       .sort((a, b) => new Date(b.published) - new Date(a.published))
       .slice(0, 5)
       .map(a => {
