@@ -7,8 +7,27 @@
     theme: 'wicktor:theme',
     watchlist: 'wicktor:watchlist',
     settings: 'wicktor:settings',
-    discovered: 'wicktor:discovered' // { "SYMBOL:MARKET": timestampMs }
+    discovered: 'wicktor:discovered', // { "SYMBOL:MARKET": timestampMs }
+    access: 'wicktor:access-granted'
   };
+
+  // Beta-tester access gate — narrow and explicit: keep the live URL from
+  // casual/random visitors, NOT real per-user accounts (no identities, no
+  // backend). Comparing a SHA-256 hash instead of a plaintext string only
+  // stops a casual glance at page source, nothing more — anyone opening dev
+  // tools can already read this file. That's an accepted limitation for
+  // this specific goal, not a gap to fix later; real access control would
+  // need a separate managed-auth-service path.
+  //
+  // To rotate the code: compute the new code's SHA-256 hex digest (e.g. in
+  // a console: crypto.subtle.digest('SHA-256', new TextEncoder().encode(
+  // 'new-code')).then(b => console.log(Array.from(new Uint8Array(b))
+  // .map(x => x.toString(16).padStart(2,'0')).join(''))) ), paste it below,
+  // and tell testers the new plaintext code.
+  //
+  // Default placeholder code is "wicktor-beta" — change this before real
+  // beta testers get the URL.
+  const ACCESS_CODE_HASH = 'e0c8f2ab8f66f8885cb468ba8b47a8330eab61ff40087ccf33ecf292cd2bc7fd';
 
   const DEFAULT_SETTINGS = {
     universeSize: 30,
@@ -81,7 +100,11 @@
     perpCapInput: document.getElementById('setting-perp-cap'),
     scanProgress: document.getElementById('scan-progress'),
     scanProgressFill: document.getElementById('scan-progress-fill'),
-    scanProgressLabel: document.getElementById('scan-progress-label')
+    scanProgressLabel: document.getElementById('scan-progress-label'),
+    accessGate: document.getElementById('access-gate'),
+    accessCodeInput: document.getElementById('access-code-input'),
+    accessCodeSubmit: document.getElementById('access-code-submit'),
+    accessCodeError: document.getElementById('access-code-error')
   };
 
   // ---------------------------------------------------------------- Theme
@@ -547,6 +570,12 @@
     const key = `${coin.rawSymbol}:${coin.market}`;
     if (state.watchlist.has(key)) state.watchlist.delete(key);
     else state.watchlist.add(key);
+    // coin.watchlisted is baked in once per scan (computeCoin) and this
+    // same object is shared by reference between state.coins and
+    // state.renderedCoins — without updating it here, the star's visual
+    // state stays stuck at its scan-time snapshot until the next rescan,
+    // even though state.watchlist itself is already correctly toggled.
+    coin.watchlisted = state.watchlist.has(key);
     saveJson(STORAGE_KEYS.watchlist, [...state.watchlist]);
     renderAll();
   }
@@ -651,12 +680,54 @@
     });
   }
 
+  // ------------------------------------------------------------- Access gate
+  async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function hasAccess() {
+    return localStorage.getItem(STORAGE_KEYS.access) === '1';
+  }
+
+  // Gates actual app rendering/scanning, not just a dismissible overlay —
+  // startApp() (the real init work) only runs once access is confirmed, so
+  // a visitor without the code never triggers a scan or sees rendered data.
+  function initAccessGate(startApp) {
+    if (hasAccess()) { startApp(); return; }
+
+    el.accessGate.classList.add('open');
+    el.accessCodeInput.focus();
+
+    async function attempt() {
+      const code = el.accessCodeInput.value.trim();
+      if (!code) return;
+      const hash = await sha256Hex(code);
+      if (hash === ACCESS_CODE_HASH) {
+        localStorage.setItem(STORAGE_KEYS.access, '1');
+        el.accessGate.classList.remove('open');
+        startApp();
+      } else {
+        el.accessCodeError.textContent = 'Incorrect code. Try again.';
+        el.accessCodeInput.value = '';
+        el.accessCodeInput.focus();
+      }
+    }
+
+    el.accessCodeSubmit.addEventListener('click', attempt);
+    el.accessCodeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') attempt();
+    });
+  }
+
   // ------------------------------------------------------------------ Init
   function init() {
     initTheme();
-    bindStaticEvents();
-    scheduleRefresh();
-    runScan();
+    initAccessGate(() => {
+      bindStaticEvents();
+      scheduleRefresh();
+      runScan();
+    });
   }
 
   document.addEventListener('DOMContentLoaded', init);

@@ -8,6 +8,20 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+
+<!-- Access gate: beta-tester code check, not real per-user auth. See
+     ACCESS_CODE_HASH in js/app.js for how to rotate the code. -->
+<div id="access-gate" class="access-gate">
+  <div class="access-gate-panel">
+    <img src="assets/logo.svg" alt="Wicktor" class="access-gate-logo">
+    <div class="access-gate-title">Beta Access</div>
+    <p class="access-gate-hint">Enter your access code to continue.</p>
+    <input id="access-code-input" type="password" autocomplete="off" placeholder="Access code" class="access-code-input" aria-label="Access code">
+    <button id="access-code-submit" class="btn btn-primary access-code-submit" type="button">Enter</button>
+    <div id="access-code-error" class="access-code-error" role="alert" aria-live="polite"></div>
+  </div>
+</div>
+
 <div class="app-shell">
 
   <!-- Top bar -->
