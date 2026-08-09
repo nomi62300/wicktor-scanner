@@ -25,9 +25,9 @@
   // .map(x => x.toString(16).padStart(2,'0')).join(''))) ), paste it below,
   // and tell testers the new plaintext code.
   //
-  // Default placeholder code is "wicktor-beta" — change this before real
+  // Default placeholder code is "cf5-scanner" — change this before real
   // beta testers get the URL.
-  const ACCESS_CODE_HASH = 'e0c8f2ab8f66f8885cb468ba8b47a8330eab61ff40087ccf33ecf292cd2bc7fd';
+  const ACCESS_CODE_HASH = '4c3db648edca70fed1f25ca58fb0effefb65f0a714b1c6747670c4b46c86a73c';
 
   const DEFAULT_SETTINGS = {
     universeSize: 30,
