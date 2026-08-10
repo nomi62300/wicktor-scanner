@@ -634,6 +634,22 @@ input:focus-visible {
 .settings-hint { font-size: 10px; color: var(--text3); margin-top: 4px; }
 .settings-hint a { color: var(--gold-text); text-decoration: underline; }
 
+.settings-links { display: flex; gap: 8px; margin-top: 14px; }
+.settings-link-btn {
+  flex: 1;
+  text-align: center;
+  background: var(--surf2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.settings-link-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.settings-version { font-size: 10px; color: var(--text3); margin-top: 12px; text-align: center; }
+
 /* ---- Toggle switch ---- */
 .toggle-switch {
   display: inline-flex;

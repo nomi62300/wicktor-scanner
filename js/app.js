@@ -3,12 +3,19 @@
    ========================================================================== */
 
 (() => {
+  // Bump on every deployed change — PATCH for fixes, MINOR for new
+  // features/priorities, MAJOR for breaking/fundamental behavior changes.
+  // Keep in sync with package.json's version and the git tag on this
+  // commit. See CHANGELOG.md for what changed at each version.
+  const APP_VERSION = '1.0.0';
+
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
     watchlist: 'wicktor:watchlist',
     settings: 'wicktor:settings',
     discovered: 'wicktor:discovered', // { "SYMBOL:MARKET": timestampMs }
-    access: 'wicktor:access-granted'
+    access: 'wicktor:access-granted',
+    tourSeen: 'wicktor:tour-seen'
   };
 
   // Beta-tester access gate — narrow and explicit: keep the live URL from
@@ -104,7 +111,9 @@
     accessGate: document.getElementById('access-gate'),
     accessCodeInput: document.getElementById('access-code-input'),
     accessCodeSubmit: document.getElementById('access-code-submit'),
-    accessCodeError: document.getElementById('access-code-error')
+    accessCodeError: document.getElementById('access-code-error'),
+    takeTourBtn: document.getElementById('take-tour-btn'),
+    appVersion: document.getElementById('app-version')
   };
 
   // ---------------------------------------------------------------- Theme
@@ -538,6 +547,7 @@
     state.renderedCoins = applyCardCaps(getFilteredCoins());
     Render.renderCardGrid(el.cardGrid, state.renderedCoins);
     bindCardEvents();
+    maybeAutoStartTour();
   }
 
   function bindCardEvents() {
@@ -720,9 +730,66 @@
     });
   }
 
+  // ------------------------------------------------------------------ Tour
+  // First-visit walkthrough via driver.js — vanilla JS, no build tooling,
+  // matches this project's "no framework" constraint. Card-referencing
+  // steps are dropped if no card exists yet (e.g. re-triggered from
+  // Settings before any scan has completed), so the tour never breaks on
+  // a missing element.
+  const TOUR_STEPS = [
+    { element: '.brand', popover: {
+      title: 'Welcome to Wicktor', description: 'A multi-timeframe crypto & tokenized-stock screener, built around one taught trading method. Quick tour of the main screen.' } },
+    { element: '.search-box', popover: {
+      title: 'Search', description: 'Filter the cards below by symbol at any time.' } },
+    { element: '#scan-btn', popover: {
+      title: 'Scan', description: 'Pulls fresh market data and re-scores every coin. Also runs automatically on your refresh interval.' } },
+    { element: '#top-strip', popover: {
+      title: 'Market overview', description: 'Always live regardless of what you’re scanning below — market pulse, Fear & Greed, dominance, and top movers.' } },
+    { element: '#filter-bar', popover: {
+      title: 'Filters', description: 'Combine Market, Quality, Band, Side, and MCap chips to narrow the grid to what you care about.' } },
+    { element: '.coin-card .card-head', popover: {
+      title: 'Score & band', description: 'The score ring and the EXCELLENT / WATCH / AVOID label just below it are the single most important thing to check first.' } },
+    { element: '.coin-card .cer-row', popover: {
+      title: 'The details', description: 'Active TF shows each timeframe’s trend, RSI shows momentum, and CONT/EXH/REV break down why the score is what it is.' } },
+    { element: '.coin-card .foot-actions', popover: {
+      title: 'Chart & watchlist', description: 'Open the coin on TradingView, or star it to save it to your watchlist.' } },
+    { element: '#settings-btn', popover: {
+      title: 'Settings', description: 'Spot/Stocks/Perps toggles and everything technical live here, out of your way on the main screen.' } },
+    { popover: {
+      title: 'That’s it', description: 'Found a bug or have feedback? There’s a Feedback link right here in Settings — we’d love to hear from you.' } }
+  ];
+
+  function hasSeenTour() {
+    return localStorage.getItem(STORAGE_KEYS.tourSeen) === '1';
+  }
+
+  function startTour() {
+    if (typeof window.driver === 'undefined' || !window.driver.js) return; // CDN unavailable — fail soft
+    const hasCards = !!document.querySelector('.coin-card');
+    const steps = hasCards ? TOUR_STEPS : TOUR_STEPS.filter(s => !s.element || !s.element.startsWith('.coin-card'));
+    const { driver } = window.driver.js;
+    driver({ showProgress: true, steps }).drive();
+  }
+
+  // Auto-trigger once per browser, only once at least one card exists so
+  // the card-detail steps have something to point at — called after every
+  // renderAll(), but hasSeenTour() makes every call after the first a no-op.
+  function maybeAutoStartTour() {
+    if (hasSeenTour()) return;
+    if (!document.querySelector('.coin-card')) return;
+    localStorage.setItem(STORAGE_KEYS.tourSeen, '1');
+    startTour();
+  }
+
   // ------------------------------------------------------------------ Init
   function init() {
     initTheme();
+    el.appVersion.textContent = `Wicktor v${APP_VERSION}`;
+    el.takeTourBtn.addEventListener('click', () => {
+      el.settingsBackdrop.classList.remove('open');
+      el.settingsPanel.classList.remove('open');
+      startTour();
+    });
     initAccessGate(() => {
       bindStaticEvents();
       scheduleRefresh();

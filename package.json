@@ -1,0 +1,10 @@
+{
+  "name": "wicktor-scanner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-timeframe crypto + tokenized-stock (xStocks) screener. Plain HTML/CSS/JS, no build step.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nomi62300/wicktor-scanner.git"
+  }
+}

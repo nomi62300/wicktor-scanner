@@ -6,6 +6,7 @@
 <title>Wicktor — Multi-timeframe crypto screener</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
 </head>
 <body>
 
@@ -188,8 +189,15 @@
   </div>
 
   <div class="settings-hint" style="margin-top:8px;">Changes apply and re-scan automatically when you close this panel.</div>
+
+  <div class="settings-links">
+    <button id="take-tour-btn" class="settings-link-btn" type="button">Take the tour</button>
+    <a href="https://app.youform.com/forms/qhosm8ii" target="_blank" rel="noopener noreferrer" class="settings-link-btn">Feedback</a>
+  </div>
+  <div id="app-version" class="settings-version"></div>
 </aside>
 
+<script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js"></script>
 <script src="js/indicators.js"></script>
 <script src="js/scoring.js"></script>
 <script src="js/api.js"></script>
