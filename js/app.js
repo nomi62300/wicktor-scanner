@@ -178,7 +178,7 @@
     // display symbol without USDT suffix, and without trailing x for stocks (kept as-is with x for clarity)
     const displaySymbol = base.symbol.replace(/USDT$/, '');
 
-    const cleanSym = displaySymbol.replace(/x$/, '');
+    const cleanSym = displaySymbol.replace(/x$/i, '');
     const rawMcap = mcapMap[cleanSym.toUpperCase()];
 
     let unlock = null; // populated lazily/best-effort in a later pass if desired
@@ -236,13 +236,16 @@
     setLoading(true);
     try {
       // 1. Fetch market data, news, sector rankings, global stats, FNG in parallel!
+      // refreshXStockSet() populates Api.isXStock()'s live symbol set (no-ops
+      // within its 24h TTL) — must complete before any isXStock() call below.
       console.time('[Scan] parallel-fetches');
       const [mcapMap, newsData, sectorPerf, globalData, fngData] = await Promise.all([
         Api.coingeckoMarketCaps().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
         Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
         Api.sectorPerformance7d().catch(e => { console.warn('[App] sector performance fetch failed', e); return []; }),
         Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
-        Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; })
+        Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
+        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); })
       ]);
       console.timeEnd('[Scan] parallel-fetches');
 

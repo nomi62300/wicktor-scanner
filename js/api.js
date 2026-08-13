@@ -97,8 +97,45 @@ const Api = (() => {
     return true;
   }
 
+  // A "symbol ends in X" regex can't reliably distinguish tokenized stocks
+  // (AAPLXUSDT) from ordinary crypto tickers that happen to end in X
+  // (AVAXUSDT, GMXUSDT, SNXUSDT, STXUSDT, TRXUSDT, ZRXUSDT, IMXUSDT,
+  // DYDXUSDT, FRAXUSDT, MPLXUSDT, ...). Bybit's own instruments-info
+  // response has an authoritative `symbolType: "xstocks"` field — use that
+  // instead. Seeded with the confirmed live list so isXStock() is correct
+  // even before the async refresh below completes or if it ever fails.
+  const KNOWN_XSTOCK_SYMBOLS = new Set([
+    'AAPLXUSDT', 'AMZNXUSDT', 'COINXUSDT', 'CRCLXUSDT', 'GOOGLXUSDT',
+    'HOODXUSDT', 'MCDXUSDT', 'METAXUSDT', 'NVDAXUSDT', 'SPCXXUSDT', 'TSLAXUSDT'
+  ]);
+  let _xstockSet = KNOWN_XSTOCK_SYMBOLS;
+  let _xstockSetTs = 0;
+  const XSTOCK_SET_TTL = 24 * 60 * 60 * 1000; // 24 hours — new listings are rare
+
+  /**
+   * Refreshes the live xStock symbol set from Bybit's instruments-info
+   * (symbolType === 'xstocks'). Call once near the start of a scan; safe to
+   * call repeatedly since it no-ops within XSTOCK_SET_TTL. Falls back to
+   * (and never shrinks below) KNOWN_XSTOCK_SYMBOLS on fetch failure.
+   */
+  async function refreshXStockSet() {
+    const now = Date.now();
+    if (now - _xstockSetTs < XSTOCK_SET_TTL) return _xstockSet;
+    const instruments = await bybitInstruments('spot');
+    if (instruments && instruments.length) {
+      const live = new Set(
+        instruments.filter(i => i.symbolType === 'xstocks').map(i => i.symbol)
+      );
+      if (live.size > 0) {
+        _xstockSet = live;
+        _xstockSetTs = now;
+      }
+    }
+    return _xstockSet;
+  }
+
   function isXStock(symbol) {
-    return /[A-Z]+xUSDT$/.test(symbol);
+    return _xstockSet.has(symbol);
   }
 
   /**
@@ -290,7 +327,7 @@ const Api = (() => {
   function newsForSymbol(articles, symbol) {
     const clean = (symbol || '')
       .replace(/USDT$|USD$|PERP$|-PERP$/i, '')
-      .replace(/x$/, '')
+      .replace(/x$/i, '')
       .replace(/^[$#]/, '')
       .toUpperCase();
 
@@ -459,7 +496,7 @@ const Api = (() => {
 
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
-    isTradeableUsdtPair, isXStock,
+    isTradeableUsdtPair, isXStock, refreshXStockSet,
     coingeckoGlobal, coingeckoMarketCaps, formatMcap,
     fearGreedIndex, unlockInfo,
     fetchAllNews, newsForSymbol, coinNews,
