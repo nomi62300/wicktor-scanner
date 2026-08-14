@@ -699,8 +699,12 @@
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  // Stores the hash of the code that granted access, not just a flat "1" —
+  // checked against the CURRENT ACCESS_CODE_HASH on every load, so rotating
+  // the code automatically revokes everyone granted under the old one and
+  // forces re-entry, rather than only gating new visitors.
   function hasAccess() {
-    return localStorage.getItem(STORAGE_KEYS.access) === '1';
+    return localStorage.getItem(STORAGE_KEYS.access) === ACCESS_CODE_HASH;
   }
 
   // Gates actual app rendering/scanning, not just a dismissible overlay —
@@ -717,7 +721,7 @@
       if (!code) return;
       const hash = await sha256Hex(code);
       if (hash === ACCESS_CODE_HASH) {
-        localStorage.setItem(STORAGE_KEYS.access, '1');
+        localStorage.setItem(STORAGE_KEYS.access, ACCESS_CODE_HASH);
         el.accessGate.classList.remove('open');
         startApp();
       } else {
