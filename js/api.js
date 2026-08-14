@@ -34,7 +34,13 @@ const Api = (() => {
   const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
   const FNG_BASE = 'https://api.alternative.me/fng/';
   const DEFILLAMA_BASE = 'https://api.llama.fi';
-  const NEWS_JSON_URL = 'https://nomi62300.github.io/crypto-news-bot/news.json';
+  // crypto-news-bot's Pages custom domain (snitch.wicktor.top) has a valid,
+  // approved HTTPS cert but "Enforce HTTPS" is off in that repo's Pages
+  // settings, so the old nomi62300.github.io/crypto-news-bot/ URL 301s to
+  // http:// (not https://) — a browser on this HTTPS-served page blocks
+  // that redirect as mixed content, silently failing every news fetch.
+  // Hitting the working HTTPS URL directly sidesteps the broken redirect.
+  const NEWS_JSON_URL = 'https://snitch.wicktor.top/news.json';
 
   async function safeFetch(url, opts) {
     try {
