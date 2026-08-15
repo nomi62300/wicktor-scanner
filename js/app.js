@@ -7,7 +7,7 @@
   // features/priorities, MAJOR for breaking/fundamental behavior changes.
   // Keep in sync with package.json's version and the git tag on this
   // commit. See CHANGELOG.md for what changed at each version.
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
 
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
