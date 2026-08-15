@@ -4,6 +4,20 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-08-15
+
+### Fixed
+- Top Sectors · 7D recurring "not loading" bug — root-caused via live
+  diagnosis (curl succeeded on the exact same CoinGecko request that had
+  just failed in-browser, confirming a transient rate-limit/CORS drop, not
+  a hard outage). Two compounding gaps: `cgCategoryList()` — a single
+  request every narrative keyword match depends on — had no retry, so one
+  transient failure zeroed out all matches at once; and
+  `sectorPerformance7d()` cached that empty result unconditionally for its
+  full 4h TTL, turning a one-off blip into a 4-hour outage instead of a
+  retry on the next scan a minute later. Added retry-with-backoff to both,
+  and stopped caching empty/failed results.
+
 ## [1.1.0] - 2026-08-15
 
 ### Added

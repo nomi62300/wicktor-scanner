@@ -376,8 +376,18 @@ const Api = (() => {
     if (_cgCategoryListCache.data && now - _cgCategoryListCache.ts < CG_CATEGORY_LIST_TTL) {
       return _cgCategoryListCache.data;
     }
-    const data = await safeFetch(`${COINGECKO_BASE}/coins/categories/list`);
-    if (data && Array.isArray(data)) {
+    // This single request gates every downstream category lookup in
+    // sectorPerformance7d() — a transient failure here silently zeroes out
+    // every narrative keyword match at once (confirmed live: CoinGecko's
+    // free tier drops this intermittently). Retry a couple times before
+    // giving up, same reasoning as the per-category retry below.
+    let data = null;
+    for (let attempt = 0; attempt <= 2 && !data; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 3000 + attempt * 2000));
+      const result = await safeFetch(`${COINGECKO_BASE}/coins/categories/list`);
+      if (result && Array.isArray(result) && result.length > 0) data = result;
+    }
+    if (data) {
       _cgCategoryListCache = { data, ts: now };
     }
     return _cgCategoryListCache.data || [];
@@ -423,12 +433,27 @@ const Api = (() => {
       }
     }
 
+    // A failed category fetch used to be dropped permanently for the whole
+    // 4h cache window with no retry — but live testing showed CoinGecko's
+    // free-tier rate limit gets tripped intermittently by this loop (curl
+    // succeeded seconds later on the exact same request that just failed
+    // in-browser), so most failures here are transient, not real 404s/
+    // missing categories. Retry each category up to 2 extra times with a
+    // longer backoff before giving up on it.
+    async function fetchCategoryWithRetry(catId, attempt = 0) {
+      const data = await safeFetch(
+        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
+      );
+      if (data && Array.isArray(data) && data.length > 0) return data;
+      if (attempt >= 2) return null;
+      await new Promise(r => setTimeout(r, 3000 + attempt * 2000));
+      return fetchCategoryWithRetry(catId, attempt + 1);
+    }
+
     const results = [];
     for (const cat of resolvedCategories) {
-      const data = await safeFetch(
-        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${cat.id}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
-      );
-      if (data && Array.isArray(data) && data.length > 0) {
+      const data = await fetchCategoryWithRetry(cat.id);
+      if (data) {
         let totalMcap = 0, weightedSum = 0;
         for (const coin of data) {
           const chg = coin.price_change_percentage_7d_in_currency;
@@ -439,12 +464,19 @@ const Api = (() => {
         const weightedChange7d = totalMcap > 0 ? weightedSum / totalMcap : 0;
         results.push({ categoryId: cat.id, name: cat.name, weightedChange7d, coins: data });
       }
-      // 1.5 s delay between calls — stays comfortably under CoinGecko free-tier rate limit
-      await new Promise(r => setTimeout(r, 1500));
+      // 2 s delay between calls — 1.5s wasn't leaving enough headroom under
+      // CoinGecko's free-tier rate limit in practice.
+      await new Promise(r => setTimeout(r, 2000));
     }
 
     console.timeEnd('sectorPerformance7d');
-    _sectorPerfCache = { data: results, ts: now };
+    // Only cache a genuine result. Caching an empty array unconditionally
+    // meant one transient upstream failure (e.g. cgCategoryList() dropping
+    // once) got locked in as "no sectors found" for the full 4h TTL,
+    // instead of just retrying fresh on the next scan a minute later.
+    if (results.length > 0) {
+      _sectorPerfCache = { data: results, ts: now };
+    }
     return results;
   }
 
