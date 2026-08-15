@@ -217,6 +217,18 @@ const Render = (() => {
     return `<span class="sent-tag ${cls}">${text}</span>`;
   }
 
+  // CryptoFlash sources tweets as items whose url is an x.com/twitter.com
+  // status link and whose `source` is the poster's @handle — flag those
+  // with a small X badge so they read visibly differently from articles.
+  function isTweetUrl(url) {
+    return /(?:twitter\.com|x\.com)\/[^/]+\/status\//i.test(url || '');
+  }
+  const TWEET_ICON = '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7.6 8.7L23.3 22h-7.1l-5.5-6.9L4 22H1l8.2-9.3L1 2h7.3l5 6.3L18.9 2zm-1.2 18h1.9L7.4 4H5.3l12.4 16z"/></svg>';
+  function tweetBadgeHtml(url) {
+    if (!isTweetUrl(url)) return '';
+    return `<span class="tweet-badge" title="Posted on X">${TWEET_ICON}</span>`;
+  }
+
   function timeAgo(iso) {
     if (!iso) return '';
     const diffMs = Date.now() - new Date(iso).getTime();
@@ -237,15 +249,25 @@ const Render = (() => {
     if (!newsResult.items || !newsResult.items.length) {
       return `<div class="news-section-label">Latest news &amp; reports</div><div class="empty-note">No recent news for this coin.</div>`;
     }
-    const rows = newsResult.items.map(n => `
+    const newsItemHtml = (n) => `
       <div class="news-item">
         <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" class="news-headline">${esc(n.headline)}</a>
         <div class="news-meta">
-          <span class="news-src">${esc(n.source)} &middot; ${timeAgo(n.time)} ago</span>
+          <span class="news-src">${tweetBadgeHtml(n.url)}${esc(n.source)} &middot; ${timeAgo(n.time)} ago</span>
           ${sentTagHtml(n.sentiment)}
         </div>
-      </div>`).join('');
-    return `<div class="news-section-label">Latest news &amp; reports</div>${rows}`;
+      </div>`;
+
+    // Always show the first 2 items at their natural height; anything past
+    // that sits in a fixed-height scrollable section revealed by "See
+    // more", so the modal's own footprint never grows with the news count.
+    const visible = newsResult.items.slice(0, 2).map(newsItemHtml).join('');
+    const rest = newsResult.items.slice(2);
+    const moreBlock = rest.length
+      ? `<div class="news-more" hidden>${rest.map(newsItemHtml).join('')}</div>
+         <button type="button" class="news-more-toggle" data-action="toggle-news-more" data-more-label="See ${rest.length} more" data-less-label="See less">See ${rest.length} more</button>`
+      : '';
+    return `<div class="news-section-label">Latest news &amp; reports</div><div class="news-visible">${visible}</div>${moreBlock}`;
   }
 
   function detailModalHtml(coin, newsResult) {
@@ -334,13 +356,21 @@ const Render = (() => {
         <div class="strip-value mono">${data.mcap || '--'} <span style="font-size:11px;color:${mcapChangeColor}">${mcapArrow} ${Math.abs(data.mcapChange24h || 0).toFixed(1)}%</span></div>
       </div>`;
 
-    const sectorColor = (data.topSector && data.topSector.change >= 0) ? 'var(--green-text)' : 'var(--red-text)';
-    const sectorSign = (data.topSector && data.topSector.change >= 0) ? '+' : '';
-    const sectorTile = `
-      <div class="strip-tile">
-        <div class="strip-label">Top Sector &middot; 7D</div>
-        <div class="strip-value" style="color:${sectorColor}">${data.topSector ? esc(data.topSector.name) + ' ' + sectorSign + data.topSector.change.toFixed(1) + '%' : '--'}</div>
-      </div>`;
+    const sectorTile = (data.topSectors && data.topSectors.length)
+      ? `<div class="strip-tile">
+          <div class="strip-label">Top Sectors &middot; 7D</div>
+          <div class="strip-list">
+            ${data.topSectors.map(s => {
+              const color = s.weightedChange7d >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+              const sign  = s.weightedChange7d >= 0 ? '+' : '';
+              return `<div><span>${esc(s.name)}</span><span style="color:${color}">${sign}${s.weightedChange7d.toFixed(1)}%</span></div>`;
+            }).join('')}
+          </div>
+        </div>`
+      : `<div class="strip-tile">
+          <div class="strip-label">Top Sectors &middot; 7D</div>
+          <div class="strip-value" style="color:var(--text3)">--</div>
+        </div>`;
 
     const listTile = (label, list, colorVar) => `
       <div class="strip-tile">

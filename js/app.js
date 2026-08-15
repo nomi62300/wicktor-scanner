@@ -429,9 +429,7 @@
       btcDominance: global ? global.market_cap_percentage.btc : null,
       mcap: global ? Api.formatMcap(global.total_market_cap.usd) : null,
       mcapChange24h: global ? global.market_cap_change_percentage_24h_usd : 0,
-      topSector: state.narrativePerf && state.narrativePerf[0]
-        ? { name: state.narrativePerf[0].name, change: state.narrativePerf[0].weightedChange7d }
-        : null,
+      topSectors: state.narrativePerf ? state.narrativePerf.slice(0, 3) : null,
       narrativeSectors: state.narrativePerf,
       gainers: buildMovers(true),
       losers: buildMovers(false)
@@ -613,6 +611,22 @@
   function bindModalCloseEvents() {
     const closeBtn = el.modalContent.querySelector('[data-action="close-modal"]');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
+
+    const newsMoreBtn = el.modalContent.querySelector('[data-action="toggle-news-more"]');
+    if (newsMoreBtn) {
+      newsMoreBtn.addEventListener('click', () => {
+        const moreBlock = el.modalContent.querySelector('.news-more');
+        if (!moreBlock) return;
+        const collapsed = moreBlock.hasAttribute('hidden');
+        if (collapsed) {
+          moreBlock.removeAttribute('hidden');
+          newsMoreBtn.textContent = newsMoreBtn.dataset.lessLabel;
+        } else {
+          moreBlock.setAttribute('hidden', '');
+          newsMoreBtn.textContent = newsMoreBtn.dataset.moreLabel;
+        }
+      });
+    }
   }
   function closeModal() {
     el.modalBackdrop.classList.remove('open');

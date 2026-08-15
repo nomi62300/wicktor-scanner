@@ -49,6 +49,9 @@ const Scoring = (() => {
 
   const BAND_RANK = { avoid: 0, watch: 1, excellent: 2 };
 
+  // tfSnapshots is always ordered [1H, 15M, 5M] — same order everywhere else.
+  const TF_LABELS = ['1H', '15M', '5M'];
+
   function buildContinuation(tfSnapshots, bias) {
     const items = [];
     let score = 0;
@@ -57,18 +60,22 @@ const Scoring = (() => {
     // 5-tier confidence grades HOW CLEAN each aligned TF is (no recent
     // lips dips vs 1-2 weakening dips) — a TF counted in `count` can still
     // be "weak_bull"/"weak_bear", so clean-3TF and weakening-3TF are no
-    // longer scored identically.
-    const weakCount = tfSnapshots.filter(s => s && (
-      (bias === 1 && s.confidence === 'weak_bull') ||
-      (bias === -1 && s.confidence === 'weak_bear')
-    )).length;
+    // longer scored identically. Named explicitly (not just a count) so the
+    // line item says which TF(s) to actually watch.
+    const weakLabels = tfSnapshots
+      .map((s, i) => (s && (
+        (bias === 1 && s.confidence === 'weak_bull') ||
+        (bias === -1 && s.confidence === 'weak_bear')
+      )) ? TF_LABELS[i] : null)
+      .filter(Boolean);
+    const weakCount = weakLabels.length;
 
     if (count === 3) {
       if (weakCount === 0) { items.push(['3TF alligator aligned (clean)', 30]); score += 30; }
-      else { items.push([`3TF alligator aligned (${weakCount} weakening)`, 24]); score += 24; }
+      else { items.push([`3TF alligator aligned (${weakLabels.join('/')} weakening)`, 24]); score += 24; }
     } else if (count === 2) {
       if (weakCount === 0) { items.push(['2TF alligator aligned (clean)', 18]); score += 18; }
-      else { items.push([`2TF alligator aligned (${weakCount} weakening)`, 14]); score += 14; }
+      else { items.push([`2TF alligator aligned (${weakLabels.join('/')} weakening)`, 14]); score += 14; }
     } else if (count === 1) {
       items.push(['1TF alligator aligned', 8]); score += 8;
     }
