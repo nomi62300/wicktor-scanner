@@ -7,7 +7,7 @@
   // features/priorities, MAJOR for breaking/fundamental behavior changes.
   // Keep in sync with package.json's version and the git tag on this
   // commit. See CHANGELOG.md for what changed at each version.
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.1.2';
 
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
@@ -15,8 +15,17 @@
     settings: 'wicktor:settings',
     discovered: 'wicktor:discovered', // { "SYMBOL:MARKET": timestampMs }
     access: 'wicktor:access-granted',
-    tourSeen: 'wicktor:tour-seen'
+    tourSeen: 'wicktor:tour-seen',
+    topStripFetchedAt: 'wicktor:top-strip-fetched-at'
   };
+
+  // Pulse Spot/Perp and Top Gainers/Losers come from raw Bybit ticker
+  // fetches with no caching of their own (unlike sectorPerformance7d/
+  // fearGreedIndex, which already cache more conservatively than this) —
+  // they don't meaningfully change minute-to-minute, so gate them to a
+  // 30-min cadence instead of refetching on every scan. Persisted so a
+  // page reload within the window doesn't immediately refetch either.
+  const TOP_STRIP_REFRESH_MS = 30 * 60 * 1000;
 
   // Beta-tester access gate — narrow and explicit: keep the live URL from
   // casual/random visitors, NOT real per-user accounts (no identities, no
@@ -57,6 +66,7 @@
     renderedCoins: [],   // final capped+ordered list actually rendered
     narrativePerf: null, // top-4 sector objects [{name, weightedChange7d}] from last scan
     marketBreadth: null, // { spot, perp } — top-strip Pulse, independent of scan toggles
+    topStripFetchedAt: loadJson(STORAGE_KEYS.topStripFetchedAt, 0),
     activeFilters: {
       market:  new Set(), // 'spot' | 'perp' — ANDed with quality, OR'd within itself
       quality: new Set(), // '3tf' | 'divergence' — ANDed with market, OR'd within itself
@@ -269,17 +279,25 @@
 
       // Top strip (Pulse Spot/Perp, Top Gainers/Losers) is a market-overview
       // feature, not a reflection of the user's scan configuration — fetch
-      // both ticker sets unconditionally so it stays populated regardless of
-      // which Crypto Spot/Stocks/Perps toggles are on.
-      const [spotTickers, linearTickers] = await Promise.all([
-        Api.bybitTickers('spot'),
-        Api.bybitTickers('linear')
-      ]);
-      state.marketBreadth = {
-        spot: computeMarketBreadth(spotTickers),
-        perp: computeMarketBreadth(linearTickers)
-      };
-      state.rawMovers = buildMoversFromTickers(spotTickers, linearTickers);
+      // both ticker sets independent of which Crypto Spot/Stocks/Perps
+      // toggles are on, but only once every 30 min (see TOP_STRIP_REFRESH_MS)
+      // rather than on every scan, since this data doesn't move minute-to-
+      // minute. state.marketBreadth/rawMovers just carry over unchanged
+      // otherwise, so the strip stays populated between refreshes.
+      const topStripStale = (Date.now() - state.topStripFetchedAt) >= TOP_STRIP_REFRESH_MS;
+      if (topStripStale || !state.marketBreadth) {
+        const [spotTickers, linearTickers] = await Promise.all([
+          Api.bybitTickers('spot'),
+          Api.bybitTickers('linear')
+        ]);
+        state.marketBreadth = {
+          spot: computeMarketBreadth(spotTickers),
+          perp: computeMarketBreadth(linearTickers)
+        };
+        state.rawMovers = buildMoversFromTickers(spotTickers, linearTickers);
+        state.topStripFetchedAt = Date.now();
+        saveJson(STORAGE_KEYS.topStripFetchedAt, state.topStripFetchedAt);
+      }
 
       const universes = [];
       await Promise.all(scanTargets.map(async ({ category, assetFilter }) => {

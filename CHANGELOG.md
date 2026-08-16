@@ -4,6 +4,29 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] - 2026-08-16
+
+### Fixed
+- Scans could feel "stuck" for 60+ seconds and climbing — a real regression
+  from v1.1.1's own retry logic. That fix assumed CoinGecko failures were
+  transient, but live testing showed a *sustained* bad stretch makes an
+  unbounded retry loop the problem: every one of the 16 sector categories
+  paying its own multi-attempt backoff compounds into minutes with zero
+  cards rendered. Added a circuit breaker (3 consecutive category failures
+  → stop retrying for the rest of that scan) and a hard 20s time budget on
+  the whole sector-fetch loop, so a bad CoinGecko day now degrades to
+  "fewer sectors this scan" instead of blocking the scan outright.
+  Verified live: a scan that previously exceeded 60s and hadn't finished
+  now completes in 38s total, with the breaker/budget logging exactly when
+  it engages.
+
+### Changed
+- Pulse Spot/Perp and Top Gainers/Losers (sourced from raw Bybit tickers,
+  previously refetched on every single scan with no caching) and global
+  mcap/dominance (previously a 5-min cache) now both follow a 30-min
+  refresh cadence instead — this data doesn't meaningfully move minute-to-
+  minute, and refetching it every scan was needless load with no benefit.
+
 ## [1.1.1] - 2026-08-15
 
 ### Fixed

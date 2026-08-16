@@ -183,7 +183,9 @@ const Api = (() => {
   // ----------------------------------------------------------- CoinGecko --
 
   let cgCache = { global: null, ts: 0 };
-  const CG_CACHE_MS = 5 * 60 * 1000;
+  // Global mcap/dominance doesn't meaningfully move minute-to-minute —
+  // matches the 30-min cadence applied to the rest of the top strip.
+  const CG_CACHE_MS = 30 * 60 * 1000;
 
   async function coingeckoGlobal() {
     const now = Date.now();
@@ -379,11 +381,13 @@ const Api = (() => {
     // This single request gates every downstream category lookup in
     // sectorPerformance7d() — a transient failure here silently zeroes out
     // every narrative keyword match at once (confirmed live: CoinGecko's
-    // free tier drops this intermittently). Retry a couple times before
-    // giving up, same reasoning as the per-category retry below.
+    // free tier drops this intermittently). One retry is enough to recover
+    // a genuine transient blip without adding much worst-case latency —
+    // see the circuit breaker below for why this stays cheap even when
+    // CoinGecko is having a sustained bad stretch, not just a blip.
     let data = null;
-    for (let attempt = 0; attempt <= 2 && !data; attempt++) {
-      if (attempt > 0) await new Promise(r => setTimeout(r, 3000 + attempt * 2000));
+    for (let attempt = 0; attempt <= 1 && !data; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
       const result = await safeFetch(`${COINGECKO_BASE}/coins/categories/list`);
       if (result && Array.isArray(result) && result.length > 0) data = result;
     }
@@ -435,25 +439,52 @@ const Api = (() => {
 
     // A failed category fetch used to be dropped permanently for the whole
     // 4h cache window with no retry — but live testing showed CoinGecko's
-    // free-tier rate limit gets tripped intermittently by this loop (curl
-    // succeeded seconds later on the exact same request that just failed
-    // in-browser), so most failures here are transient, not real 404s/
-    // missing categories. Retry each category up to 2 extra times with a
-    // longer backoff before giving up on it.
-    async function fetchCategoryWithRetry(catId, attempt = 0) {
+    // free-tier rate limit gets tripped intermittently (curl succeeded
+    // seconds later on the exact same request that had just failed
+    // in-browser). A single retry recovers that case cheaply.
+    //
+    // What a naive "always retry" loop gets wrong: when CoinGecko is having
+    // a genuinely SUSTAINED bad stretch (not a blip), retrying every one of
+    // 16 categories individually stops being a recovery mechanism and
+    // becomes the problem — confirmed live, a full scan sat unresponsive
+    // for 60+ seconds with zero cards rendered, entirely inside this loop.
+    // Two guards fix that without giving up the retry's real benefit:
+    //  - a circuit breaker: after 3 categories fail outright in a row,
+    //    stop retrying for the rest of this pass (single-shot only) —
+    //    that many consecutive failures is itself strong evidence this is
+    //    a sustained outage, not isolated blips worth waiting out;
+    //  - a hard overall deadline on the whole loop, so a bad CoinGecko day
+    //    degrades to "fewer sectors this scan" instead of "scan doesn't
+    //    finish." Sector/narrative data is a top-strip nice-to-have, not
+    //    the core scan result — it should never be able to block that.
+    const LOOP_DEADLINE_MS = 20000;
+    const loopStart = Date.now();
+    let consecutiveFailures = 0;
+    let circuitOpen = false;
+
+    async function fetchCategoryWithRetry(catId) {
       const data = await safeFetch(
         `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
       );
       if (data && Array.isArray(data) && data.length > 0) return data;
-      if (attempt >= 2) return null;
-      await new Promise(r => setTimeout(r, 3000 + attempt * 2000));
-      return fetchCategoryWithRetry(catId, attempt + 1);
+      if (circuitOpen) return null; // sustained failure already detected — don't wait out a retry
+      await new Promise(r => setTimeout(r, 2500));
+      const retryData = await safeFetch(
+        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
+      );
+      return (retryData && Array.isArray(retryData) && retryData.length > 0) ? retryData : null;
     }
 
     const results = [];
     for (const cat of resolvedCategories) {
+      if (Date.now() - loopStart > LOOP_DEADLINE_MS) {
+        console.warn(`[Api] sectorPerformance7d hit its time budget — stopping with ${results.length}/${resolvedCategories.length} sectors`);
+        break;
+      }
+
       const data = await fetchCategoryWithRetry(cat.id);
       if (data) {
+        consecutiveFailures = 0;
         let totalMcap = 0, weightedSum = 0;
         for (const coin of data) {
           const chg = coin.price_change_percentage_7d_in_currency;
@@ -463,9 +494,16 @@ const Api = (() => {
         }
         const weightedChange7d = totalMcap > 0 ? weightedSum / totalMcap : 0;
         results.push({ categoryId: cat.id, name: cat.name, weightedChange7d, coins: data });
+      } else {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 3 && !circuitOpen) {
+          circuitOpen = true;
+          console.warn('[Api] sectorPerformance7d: 3 consecutive category failures — treating as a sustained outage, skipping retries for the rest of this scan');
+        }
       }
-      // 2 s delay between calls — 1.5s wasn't leaving enough headroom under
-      // CoinGecko's free-tier rate limit in practice.
+      // 2 s delay between calls — stays comfortably under CoinGecko's
+      // free-tier rate limit once the circuit breaker is open; a still-
+      // healthy run pays this once per category same as before.
       await new Promise(r => setTimeout(r, 2000));
     }
 
