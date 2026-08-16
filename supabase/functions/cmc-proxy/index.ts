@@ -43,6 +43,17 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const path = url.searchParams.get("path");
+
+  // Health-check path for the keep-warm workflow (.github/workflows/
+  // keep-supabase-warm.yml) — invoking this function at all counts as
+  // project activity toward Supabase's 7-day free-tier inactivity pause,
+  // without calling CMC or spending any of the 15k/month credit budget.
+  if (path === "ping") {
+    return new Response(JSON.stringify({ status: "ok" }), {
+      headers: { ...headers, "content-type": "application/json" },
+    });
+  }
+
   if (!path || !ALLOWED_PATHS.has(path)) {
     return new Response(JSON.stringify({ error: "invalid or missing path" }), {
       status: 400,

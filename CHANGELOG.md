@@ -4,6 +4,17 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-08-16
+
+### Added
+- Keep-warm safeguard for the Supabase project backing the CMC proxy:
+  a scheduled GitHub Actions workflow (every 3 days) pings a new `ping`
+  path on the Edge Function, which returns immediately without calling
+  CMC or spending credits. The CMC fallback only fires when CoinGecko
+  fails, which is irregular — this keeps comfortable margin under
+  Supabase free tier's 7-day inactivity auto-pause so the fallback isn't
+  asleep exactly when an extended CoinGecko outage needs it.
+
 ## [1.2.0] - 2026-08-16
 
 ### Added
