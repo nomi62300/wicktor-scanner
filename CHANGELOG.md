@@ -4,6 +4,24 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-08-16
+
+### Added
+- CoinMarketCap fallback for global mcap/dominance and per-coin market
+  caps, used only when CoinGecko fails outright. Proxied through a
+  Supabase Edge Function (`supabase/functions/cmc-proxy`) so the real CMC
+  key never reaches client-side code — the function itself whitelists the
+  two allowed CMC endpoints and restricts CORS to Wicktor's real deployed
+  origins, so a leaked function URL can't be used to hit arbitrary CMC
+  endpoints or drain quota from an unrelated site. Verified live under
+  real, still-degraded CoinGecko conditions: both `coingeckoGlobal()` and
+  `coingeckoMarketCaps()` failed on every CoinGecko call and correctly
+  fell back to CMC, returning valid data (987 coins mapped, correct BTC
+  dominance and total market cap).
+- First backend component for Wicktor (a Supabase project) — the CMC
+  proxy is step one; the same project is intended to carry future auth/
+  paid-tier work rather than being single-purpose.
+
 ## [1.1.2] - 2026-08-16
 
 ### Fixed

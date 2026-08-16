@@ -1,0 +1,7 @@
+# cmc-proxy is called directly by Wicktor's static client-side JS, which has
+# no Supabase auth session to attach — disable Supabase's own JWT gateway
+# check for this function. Protection instead comes from the function's own
+# code: a whitelist of allowed CMC paths, and CORS restricted to Wicktor's
+# real deployed origins.
+[functions.cmc-proxy]
+verify_jwt = false

@@ -182,6 +182,19 @@ const Api = (() => {
 
   // ----------------------------------------------------------- CoinGecko --
 
+  // CoinMarketCap fallback, reached only when CoinGecko itself fails —
+  // proxied through a Supabase Edge Function so the real CMC key never
+  // reaches client-side code. The function whitelists exactly these two
+  // paths itself; nothing else is forwarded even if requested.
+  const CMC_PROXY_URL = 'https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cmc-proxy';
+
+  async function cmcProxyFetch(path, params) {
+    const url = new URL(CMC_PROXY_URL);
+    url.searchParams.set('path', path);
+    Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+    return safeFetch(url.toString());
+  }
+
   let cgCache = { global: null, ts: 0 };
   // Global mcap/dominance doesn't meaningfully move minute-to-minute —
   // matches the 30-min cadence applied to the rest of the top strip.
@@ -190,9 +203,26 @@ const Api = (() => {
   async function coingeckoGlobal() {
     const now = Date.now();
     if (cgCache.global && now - cgCache.ts < CG_CACHE_MS) return cgCache.global;
+
     const data = await safeFetch(`${COINGECKO_BASE}/global`);
     if (data && data.data) {
       cgCache.global = data.data;
+      cgCache.ts = now;
+      return cgCache.global;
+    }
+
+    // CoinGecko failed outright — fall back to CMC via the proxy, reshaped
+    // to CoinGecko's field names so every caller (topStripData etc.) needs
+    // no changes regardless of which source actually answered.
+    console.warn('[Api] coingeckoGlobal failed, falling back to CMC proxy');
+    const cmcData = await cmcProxyFetch('/v1/global-metrics/quotes/latest');
+    if (cmcData && cmcData.data && cmcData.data.quote && cmcData.data.quote.USD) {
+      const usd = cmcData.data.quote.USD;
+      cgCache.global = {
+        market_cap_percentage: { btc: cmcData.data.btc_dominance },
+        total_market_cap: { usd: usd.total_market_cap },
+        market_cap_change_percentage_24h_usd: usd.total_market_cap_yesterday_percentage_change
+      };
       cgCache.ts = now;
     }
     return cgCache.global;
@@ -225,6 +255,21 @@ const Api = (() => {
       }
       if (page < 4) {
         await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    // All 4 pages came back empty — CoinGecko is down/rate-limited, not
+    // just missing a few coins. Fall back to a single CMC listings call
+    // (one request instead of 4, same 1000-coin depth) via the proxy.
+    if (Object.keys(map).length === 0) {
+      console.warn('[Api] coingeckoMarketCaps failed on every page, falling back to CMC proxy');
+      const cmcData = await cmcProxyFetch('/v1/cryptocurrency/listings/latest', { limit: 1000 });
+      if (cmcData && Array.isArray(cmcData.data)) {
+        cmcData.data.forEach(c => {
+          const sym = (c.symbol || '').toUpperCase();
+          const mcap = c.quote && c.quote.USD ? c.quote.USD.market_cap : null;
+          if (mcap != null && !(sym in map)) map[sym] = mcap;
+        });
       }
     }
 
