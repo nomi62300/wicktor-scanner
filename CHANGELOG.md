@@ -4,6 +4,15 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] - 2026-08-17
+
+### Fixed
+- "Top Sectors · 7D" and "Narratives · 7d" were two separate top-strip
+  tiles built from the exact same underlying sector-ranking data, just
+  sliced to different lengths (top 3 vs top 4) — genuinely redundant,
+  most visible when only 1-2 sectors resolve and both tiles show the
+  identical single entry. Consolidated into one "Top Sectors · 7D" tile.
+
 ## [1.2.2] - 2026-08-17
 
 ### Fixed

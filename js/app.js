@@ -7,7 +7,7 @@
   // features/priorities, MAJOR for breaking/fundamental behavior changes.
   // Keep in sync with package.json's version and the git tag on this
   // commit. See CHANGELOG.md for what changed at each version.
-  const APP_VERSION = '1.2.2';
+  const APP_VERSION = '1.2.3';
 
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
@@ -472,7 +472,6 @@
       btcDominance: global ? global.market_cap_percentage.btc : null,
       mcap: global ? Api.formatMcap(global.total_market_cap.usd) : null,
       mcapChange24h: global ? global.market_cap_change_percentage_24h_usd : 0,
-      topSectors: state.narrativePerf ? state.narrativePerf.slice(0, 3) : null,
       narrativeSectors: state.narrativePerf,
       gainers: buildMovers(true),
       losers: buildMovers(false)

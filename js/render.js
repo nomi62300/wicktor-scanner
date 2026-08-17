@@ -356,11 +356,16 @@ const Render = (() => {
         <div class="strip-value mono">${data.mcap || '--'} <span style="font-size:11px;color:${mcapChangeColor}">${mcapArrow} ${Math.abs(data.mcapChange24h || 0).toFixed(1)}%</span></div>
       </div>`;
 
-    const sectorTile = (data.topSectors && data.topSectors.length)
+    // Top Sectors and Narratives used to be two separate tiles built from
+    // the exact same state.narrativePerf array (just sliced to different
+    // lengths) — genuinely redundant, especially obvious when only 1-2
+    // sectors resolve and both tiles show the identical single entry.
+    // Consolidated into one.
+    const sectorTile = (data.narrativeSectors && data.narrativeSectors.length)
       ? `<div class="strip-tile">
           <div class="strip-label">Top Sectors &middot; 7D</div>
           <div class="strip-list">
-            ${data.topSectors.map(s => {
+            ${data.narrativeSectors.map(s => {
               const color = s.weightedChange7d >= 0 ? 'var(--green-text)' : 'var(--red-text)';
               const sign  = s.weightedChange7d >= 0 ? '+' : '';
               return `<div><span>${esc(s.name)}</span><span style="color:${color}">${sign}${s.weightedChange7d.toFixed(1)}%</span></div>`;
@@ -380,23 +385,10 @@ const Render = (() => {
         </div>
       </div>`;
 
-    const narrativeTile = (data.narrativeSectors && data.narrativeSectors.length)
-      ? `<div class="strip-tile">
-          <div class="strip-label">Narratives &middot; 7d</div>
-          <div class="strip-list">
-            ${data.narrativeSectors.map(s => {
-              const color = s.weightedChange7d >= 0 ? 'var(--green-text)' : 'var(--red-text)';
-              const sign  = s.weightedChange7d >= 0 ? '+' : '';
-              return `<div><span>${esc(s.name)}</span><span style="color:${color}">${sign}${s.weightedChange7d.toFixed(1)}%</span></div>`;
-            }).join('')}
-          </div>
-        </div>`
-      : '';
-
     return [
       pulseTile('Pulse Spot', data.pulseSpot),
       pulseTile('Pulse Perp', data.pulsePerp),
-      fngTile, domTile, mcapTile, sectorTile, narrativeTile,
+      fngTile, domTile, mcapTile, sectorTile,
       listTile('Top Gainers', data.gainers || [], 'var(--green-text)'),
       listTile('Top Losers', data.losers || [], 'var(--red-text)')
     ].join('');
