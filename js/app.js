@@ -7,7 +7,7 @@
   // features/priorities, MAJOR for breaking/fundamental behavior changes.
   // Keep in sync with package.json's version and the git tag on this
   // commit. See CHANGELOG.md for what changed at each version.
-  const APP_VERSION = '1.2.1';
+  const APP_VERSION = '1.2.2';
 
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
@@ -245,27 +245,48 @@
     console.time('[Scan] total');
     setLoading(true);
     try {
-      // 1. Fetch market data, news, sector rankings, global stats, FNG in parallel!
+      let globalData = null, fngData = null;
+
+      // Sector/narrative data is a top-strip enhancement (Top Sectors,
+      // Narratives tiles + optional coin-sourcing), not part of the core
+      // scan — it used to sit inside the blocking fetch below, so every
+      // scan paid up to sectorPerformance7d()'s own ~20s internal time
+      // budget before universe-building/coin-analysis (the actual
+      // card-grid work) even started, even though that budget's circuit
+      // breaker/deadline were firing exactly as designed on a bad
+      // CoinGecko day. Kick it off independently instead; it updates the
+      // top strip whenever it resolves (near-instant once cache-warm for
+      // 4h, up to ~20s cold) without blocking anything below. Narrative
+      // coin-sourcing (step 4) becomes best-effort: it only fires if this
+      // already resolved by the time universe-building finishes.
+      let sectorPerf = [];
+      const sectorPerfPromise = Api.sectorPerformance7d()
+        .catch(e => { console.warn('[App] sector performance fetch failed', e); return []; })
+        .then(result => {
+          sectorPerf = result;
+          state.narrativePerf = result && result.length
+            ? [...result].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
+            : null;
+          refreshTopStrip(globalData, fngData);
+          el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
+          return result;
+        });
+
+      // 1. Fetch market data, news, global stats, FNG in parallel — sector
+      // performance is intentionally excluded, see above.
       // refreshXStockSet() populates Api.isXStock()'s live symbol set (no-ops
       // within its 24h TTL) — must complete before any isXStock() call below.
       console.time('[Scan] parallel-fetches');
-      const [mcapMap, newsData, sectorPerf, globalData, fngData] = await Promise.all([
+      const [mcapMap, newsData, globalRes, fngRes] = await Promise.all([
         Api.coingeckoMarketCaps().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
         Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
-        Api.sectorPerformance7d().catch(e => { console.warn('[App] sector performance fetch failed', e); return []; }),
         Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
         Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
         Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); })
       ]);
+      globalData = globalRes;
+      fngData = fngRes;
       console.timeEnd('[Scan] parallel-fetches');
-
-      // Compute sector ranking and save it in state.narrativePerf
-      state.narrativePerf = null;
-      if (sectorPerf && sectorPerf.length) {
-        state.narrativePerf = [...sectorPerf]
-          .sort((a, b) => b.weightedChange7d - a.weightedChange7d)
-          .slice(0, 4);
-      }
 
       // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
       console.time('[Scan] universe-building');
@@ -314,7 +335,11 @@
       console.timeEnd('[Scan] top-strip-rendering');
 
       // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
-      // meaningful when the crypto spot pool it injects into is itself enabled)
+      // meaningful when the crypto spot pool it injects into is itself enabled).
+      // Best-effort: `sectorPerf` is only populated if sectorPerfPromise (kicked
+      // off independently above) has already resolved by this point — on a
+      // cold sector cache it usually hasn't yet, so this scan just skips
+      // injection rather than waiting; the next scan picks it up once cached.
       console.time('[Scan] narrative-sourcing');
       const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
       if (narrativeEnabled && state.settings.includeCryptoSpot && sectorPerf && sectorPerf.length) {

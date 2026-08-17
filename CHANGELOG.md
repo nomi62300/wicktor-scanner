@@ -4,6 +4,25 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-08-17
+
+### Fixed
+- Scans were still taking 30-40+ seconds even after v1.1.2's circuit
+  breaker/time-budget fix — that fix correctly *bounded* the sector-fetch
+  loop instead of letting it stall forever, but it was still sitting
+  inside the scan's initial blocking `Promise.all`, so every scan paid up
+  to its full ~20s budget before the actual card-grid work (universe
+  building + coin analysis, which only takes ~5-8s on its own) even
+  started. Decoupled sector/narrative fetching from the scan's critical
+  path entirely — it now resolves independently and updates the top strip
+  whenever it's ready, without blocking anything else. Narrative coin-
+  sourcing becomes best-effort (only fires if sector data already resolved
+  by the time universe-building finishes; picked up on the next scan
+  otherwise). Verified live: scans now complete in ~13-19s total even
+  while CoinGecko's sector endpoint was independently confirmed fully down
+  (0/16 categories succeeding) in the same test — the core scan no longer
+  waits on it at all.
+
 ## [1.2.1] - 2026-08-16
 
 ### Added
