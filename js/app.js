@@ -54,8 +54,8 @@
   const MAINTENANCE_MODE = true;
 
   const DEFAULT_SETTINGS = {
-    universeSize: 30,
-    refreshIntervalSec: 60,
+    universeSize: 120,
+    refreshIntervalSec: 300,
     includeCryptoSpot: true,
     includeStocks: false,
     includePerps: true,
@@ -105,6 +105,11 @@
     cardGrid: document.getElementById('card-grid'),
     topStrip: document.getElementById('top-strip'),
     filterBar: document.getElementById('filter-bar'),
+    navScanner: document.getElementById('nav-scanner'),
+    navDashboard: document.getElementById('nav-dashboard'),
+    viewScanner: document.getElementById('view-scanner'),
+    viewDashboard: document.getElementById('view-dashboard'),
+    dashboardGrid: document.getElementById('dashboard-grid'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -341,6 +346,7 @@
       console.time('[Scan] top-strip-rendering');
       refreshTopStrip(globalData, fngData);
       el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
+      if (dashboardLoaded) refreshDashboard();
       console.timeEnd('[Scan] top-strip-rendering');
 
       // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
@@ -687,7 +693,7 @@
   // -------------------------------------------------------------- Settings
   function openSettings() {
     el.universeInput.value = state.settings.universeSize;
-    el.refreshInput.value = state.settings.refreshIntervalSec;
+    el.refreshInput.value = Math.round(state.settings.refreshIntervalSec / 60);
     el.cryptoSpotToggle.checked = state.settings.includeCryptoSpot;
     el.stocksToggle.checked = state.settings.includeStocks;
     el.perpToggle.checked = state.settings.includePerps;
@@ -699,8 +705,8 @@
     el.settingsPanel.classList.add('open');
   }
   function closeSettings() {
-    state.settings.universeSize = Math.max(10, Math.min(80, parseInt(el.universeInput.value) || 30));
-    state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
+    state.settings.universeSize = Math.max(10, Math.min(120, parseInt(el.universeInput.value) || 120));
+    state.settings.refreshIntervalSec = Math.max(1, Math.min(10, parseInt(el.refreshInput.value) || 5)) * 60;
     state.settings.includeCryptoSpot = el.cryptoSpotToggle.checked;
     state.settings.includeStocks = el.stocksToggle.checked;
     state.settings.includePerps = el.perpToggle.checked;
@@ -756,6 +762,45 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { closeModal(); closeSettings(); }
     });
+    el.navScanner.addEventListener('click', () => switchTab('scanner'));
+    el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
+  }
+
+  // --------------------------------------------------------------- Tab nav
+  // Dashboard data is fetched lazily on first visit, not on every scan —
+  // it's supporting market context, not part of the scan cycle. Cached at
+  // the Api layer (topByMarketCap) so revisiting the tab within the cache
+  // window doesn't refetch.
+  let dashboardLoaded = false;
+
+  function switchTab(tab) {
+    const toDashboard = tab === 'dashboard';
+    el.navScanner.classList.toggle('active', !toDashboard);
+    el.navDashboard.classList.toggle('active', toDashboard);
+    el.navScanner.setAttribute('aria-selected', String(!toDashboard));
+    el.navDashboard.setAttribute('aria-selected', String(toDashboard));
+    el.viewScanner.hidden = toDashboard;
+    el.viewDashboard.hidden = !toDashboard;
+    if (toDashboard && !dashboardLoaded) {
+      dashboardLoaded = true;
+      refreshDashboard();
+    }
+  }
+
+  async function refreshDashboard() {
+    const top5 = await Api.topByMarketCap(5).catch(e => {
+      console.warn('[App] top5 market cap fetch failed', e);
+      return [];
+    });
+    const dashboardData = {
+      ...state.topStripData,
+      top5MarketCap: top5,
+      gainers10: (state.rawMovers || [])
+        .filter(x => x.change > 0).sort((a, b) => b.change - a.change).slice(0, 10),
+      losers10: (state.rawMovers || [])
+        .filter(x => x.change < 0).sort((a, b) => a.change - b.change).slice(0, 10)
+    };
+    el.dashboardGrid.innerHTML = Render.dashboardHtml(dashboardData);
   }
 
   // ------------------------------------------------------------- Access gate

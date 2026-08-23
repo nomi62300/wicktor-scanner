@@ -72,43 +72,57 @@
   <!-- Top strip: market pulse, fear & greed, dominance, mcap, sector, movers -->
   <section id="top-strip" class="top-strip" aria-label="Market overview"></section>
 
-  <!-- Filters -->
-  <section id="filter-bar" class="filter-bar" aria-label="Filters">
-    <!-- Row 1a: market-type filters (multi-select within group, ANDed with quality group) -->
-    <div class="filter-row" data-group="market" role="group" aria-label="Market filters">
-      <button class="chip" data-group="market" data-filter="spot">Spot</button>
-      <button class="chip" data-group="market" data-filter="perp">Perps</button>
-    </div>
-    <!-- Row 1b: quality filters (multi-select within group, ANDed with market group) -->
-    <div class="filter-row" data-group="quality" role="group" aria-label="Quality filters">
-      <button class="chip" data-group="quality" data-filter="3tf">3 TF aligned</button>
-      <button class="chip" data-group="quality" data-filter="divergence">Divergence</button>
-    </div>
-    <!-- Row 2: Band + Side groups -->
-    <div class="filter-row" aria-label="Band and side filters">
-      <span class="filter-row-label">Band</span>
-      <button class="chip chip--excellent" data-group="band" data-filter="excellent">Excellent</button>
-      <button class="chip chip--watch"     data-group="band" data-filter="watch">Watch</button>
-      <button class="chip chip--avoid"     data-group="band" data-filter="avoid">Avoid</button>
-      <span class="filter-row-sep"></span>
-      <span class="filter-row-label">Side</span>
-      <button class="chip chip--buy"  data-group="side" data-filter="buy">Buy · Long</button>
-      <button class="chip chip--sell" data-group="side" data-filter="sell">Sell · Short</button>
-    </div>
-    <!-- Row 3: MCap group -->
-    <div class="filter-row" aria-label="Market Cap filters">
-      <span class="filter-row-label">MCap</span>
-      <button class="chip" data-group="mcap" data-filter="micro">Micro (&lt; $150M)</button>
-      <button class="chip" data-group="mcap" data-filter="small">$150M – $500M</button>
-      <button class="chip" data-group="mcap" data-filter="mid">$500M – $1B</button>
-      <button class="chip" data-group="mcap" data-filter="large">&gt; $1B</button>
-    </div>
-  </section>
+  <!-- Main nav: Scanner (default) vs Dashboard tabs -->
+  <nav class="main-nav" role="tablist" aria-label="Main sections">
+    <button id="nav-scanner" class="main-nav-tab active" role="tab" aria-selected="true" aria-controls="view-scanner">Scanner</button>
+    <button id="nav-dashboard" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-dashboard">Dashboard</button>
+  </nav>
 
-  <!-- Card grid -->
-  <main id="card-grid" class="card-grid" aria-label="Scan results">
-    <div class="loading-state">Scanning the market...</div>
-  </main>
+  <div id="view-scanner" role="tabpanel" aria-labelledby="nav-scanner">
+    <!-- Filters -->
+    <section id="filter-bar" class="filter-bar" aria-label="Filters">
+      <!-- Row 1a: market-type filters (multi-select within group, ANDed with quality group) -->
+      <div class="filter-row" data-group="market" role="group" aria-label="Market filters">
+        <button class="chip" data-group="market" data-filter="spot">Spot</button>
+        <button class="chip" data-group="market" data-filter="perp">Perps</button>
+      </div>
+      <!-- Row 1b: quality filters (multi-select within group, ANDed with market group) -->
+      <div class="filter-row" data-group="quality" role="group" aria-label="Quality filters">
+        <button class="chip" data-group="quality" data-filter="3tf">3 TF aligned</button>
+        <button class="chip" data-group="quality" data-filter="divergence">Divergence</button>
+      </div>
+      <!-- Row 2: Band + Side groups -->
+      <div class="filter-row" aria-label="Band and side filters">
+        <span class="filter-row-label">Band</span>
+        <button class="chip chip--excellent" data-group="band" data-filter="excellent">Excellent</button>
+        <button class="chip chip--watch"     data-group="band" data-filter="watch">Watch</button>
+        <button class="chip chip--avoid"     data-group="band" data-filter="avoid">Avoid</button>
+        <span class="filter-row-sep"></span>
+        <span class="filter-row-label">Side</span>
+        <button class="chip chip--buy"  data-group="side" data-filter="buy">Buy · Long</button>
+        <button class="chip chip--sell" data-group="side" data-filter="sell">Sell · Short</button>
+      </div>
+      <!-- Row 3: MCap group -->
+      <div class="filter-row" aria-label="Market Cap filters">
+        <span class="filter-row-label">MCap</span>
+        <button class="chip" data-group="mcap" data-filter="micro">Micro (&lt; $150M)</button>
+        <button class="chip" data-group="mcap" data-filter="small">$150M – $500M</button>
+        <button class="chip" data-group="mcap" data-filter="mid">$500M – $1B</button>
+        <button class="chip" data-group="mcap" data-filter="large">&gt; $1B</button>
+      </div>
+    </section>
+
+    <!-- Card grid -->
+    <main id="card-grid" class="card-grid" aria-label="Scan results">
+      <div class="loading-state">Scanning the market...</div>
+    </main>
+  </div>
+
+  <div id="view-dashboard" role="tabpanel" aria-labelledby="nav-dashboard" hidden>
+    <section id="dashboard-grid" class="top-strip" aria-label="Dashboard">
+      <div class="loading-state">Loading dashboard...</div>
+    </section>
+  </div>
 
 </div>
 
@@ -129,13 +143,14 @@
 
   <div class="settings-field">
     <label class="settings-label" for="setting-universe">Coin universe size</label>
-    <input id="setting-universe" type="number" min="10" max="80" value="30">
-    <div class="settings-hint">How many top-volume USDT pairs to scan (10–80). Larger = more thorough, slower refresh.</div>
+    <input id="setting-universe" type="number" min="10" max="120" value="120">
+    <div class="settings-hint">How many top-volume USDT pairs to scan (10–120). Larger = more thorough, slower refresh.</div>
   </div>
 
   <div class="settings-field">
-    <label class="settings-label" for="setting-refresh">Refresh interval (seconds)</label>
-    <input id="setting-refresh" type="number" min="20" value="60">
+    <label class="settings-label" for="setting-refresh">Refresh interval (minutes)</label>
+    <input id="setting-refresh" type="number" min="1" max="10" value="5">
+    <div class="settings-hint">1–10 minutes between scans. Default 5 aligns with the 5M candle boundary.</div>
   </div>
 
   <div class="settings-field">

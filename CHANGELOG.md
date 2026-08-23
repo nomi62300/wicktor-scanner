@@ -4,6 +4,55 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] - on branch `terminal-build/phase-0-1`
+
+Phase 0 + Phase 1 of the terminal-build roadmap, done unsupervised
+overnight while the owner was unavailable — deliberately left unmerged on
+a branch pending review, per standing branch discipline (`main` auto-
+deploys live). Not version-bumped or tagged; that happens at merge time.
+
+### Added
+- New "Dashboard" tab alongside the existing Scanner view: BTC dominance,
+  market cap + 24h%, Fear & Greed, Top Sectors (reused from the existing
+  top strip), a new Top 5 by Market Cap tile, and Top 10 Gainers/Losers
+  (vs. the compact strip's top 3). Lazily fetched on first visit, refreshed
+  alongside subsequent scans once visited.
+- `Api.topByMarketCap(n)` — new lightweight CoinGecko `/coins/markets` call
+  (10-min cache) powering the Dashboard's Top 5 tile.
+- Refresh-interval setting is now minutes-based (1-10 min, default 5,
+  aligned to the 5M candle boundary) instead of raw seconds.
+
+### Changed
+- Default coin universe size raised from 30 to 120 (confirmed level per
+  backlog); settings clamp raised from 10-80 to 10-120 to match.
+
+### Investigated, not changed (flagged for owner review)
+- **Priority-0 gating audit (the WIF case)**: confirmed the actual
+  mechanism. `alignmentCeiling()` in `js/scoring.js` only checks
+  `.alignment` (coarse -1/0/1 direction), never `.confidence` (the 5-tier
+  state that drives the "weakening" arrow in the UI). A `weak_bull`/
+  `weak_bear` 5M still satisfies the ceiling's alignment check, so
+  EXCELLENT can still be reached with a visually "weakening" 5M —
+  confidence only reduces point value inside `buildContinuation` (30→24
+  pts), never the band cap itself. This may be working as designed (the
+  score penalty already reflects weakness) or may be the actual bug the
+  WIF case pointed at — genuine product-intent call, left for the owner
+  rather than changed unilaterally since it affects live signal output.
+- **wicktor-bot-cc scoring-drift audit**: confirmed real, non-trivial
+  drift. The bot's `src/engine/scoring.js` is a manual snapshot from
+  2026-08-09 (commit `48bf029`) with its own Phase-4 bug fixes layered on
+  top (Buy/Sell RSI-threshold asymmetry fixes). The scanner's real
+  `js/scoring.js` has since added combined AO+AC confirmation scoring (16
+  vs 6 pts) and other changes the bot's copy doesn't have. `indicators.js`
+  drift is much smaller (~15 diff lines). Check/flag only, per standing
+  instruction not to touch `wicktor-bot-cc` without an explicit separate
+  ask.
+- **CMC proxy CORS cleanup**: removed the leftover `http://localhost:8000`
+  origin from `supabase/functions/cmc-proxy/index.ts` in this branch's
+  source, but did **not** run `supabase functions deploy` — that flips
+  live production CORS behavior immediately regardless of git branch, so
+  it's held for the owner to deploy after reviewing the diff.
+
 ## [1.3.0] - 2026-08-23
 
 ### Added

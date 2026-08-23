@@ -310,58 +310,67 @@ const Render = (() => {
 
   // ------------------------------------------------------------ Top strip
 
-  function topStripHtml(data) {
-    const pulseTile = (label, val) => {
-      if (val == null) {
-        return `
-        <div class="strip-tile">
-          <div class="strip-label">${label}</div>
-          <div class="strip-value" style="color:var(--text3)">No data</div>
-          <div class="gauge-track"><div class="gauge-dot" style="left:50%;opacity:0.3"></div></div>
-          <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
-        </div>`;
-      }
-      const biasLabel = val >= 0 ? 'Bullish' : 'Bearish';
-      const colorVar = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+  // Shared market-overview tile builders — used by both the always-visible
+  // top strip and the Dashboard tab, so the two stay visually consistent
+  // and never drift into duplicated markup.
+  function pulseTileHtml(label, val) {
+    if (val == null) {
       return `
-        <div class="strip-tile">
-          <div class="strip-label">${label}</div>
-          <div class="strip-value" style="color:${colorVar}">${biasLabel} ${Math.abs(val)}</div>
-          <div class="gauge-track"><div class="gauge-dot" style="left:${((val + 100) / 200 * 100).toFixed(0)}%"></div></div>
-          <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
-        </div>`;
-    };
+      <div class="strip-tile">
+        <div class="strip-label">${label}</div>
+        <div class="strip-value" style="color:var(--text3)">No data</div>
+        <div class="gauge-track"><div class="gauge-dot" style="left:50%;opacity:0.3"></div></div>
+        <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
+      </div>`;
+    }
+    const biasLabel = val >= 0 ? 'Bullish' : 'Bearish';
+    const colorVar = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+    return `
+      <div class="strip-tile">
+        <div class="strip-label">${label}</div>
+        <div class="strip-value" style="color:${colorVar}">${biasLabel} ${Math.abs(val)}</div>
+        <div class="gauge-track"><div class="gauge-dot" style="left:${((val + 100) / 200 * 100).toFixed(0)}%"></div></div>
+        <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
+      </div>`;
+  }
 
+  function fngTileHtml(data) {
     const fngVal = data.fearGreed ? data.fearGreed.value : null;
-    const fngTile = `
+    return `
       <div class="strip-tile">
         <div class="strip-label">Fear &amp; Greed</div>
         <div class="strip-value" style="color:var(--gold-text)">${fngVal != null ? fngVal + ' ' + data.fearGreed.label : '--'}</div>
         <div class="gauge-track fear-greed"><div class="gauge-dot" style="left:${fngVal != null ? fngVal : 50}%"></div></div>
         <div class="gauge-labels"><span>Fear</span><span>Greed</span></div>
       </div>`;
+  }
 
-    const domTile = `
+  function domTileHtml(data) {
+    return `
       <div class="strip-tile">
         <div class="strip-label">BTC Dominance</div>
         <div class="strip-value mono">${data.btcDominance != null ? data.btcDominance.toFixed(1) + '%' : '--'}</div>
         <div class="fill-bar"><div style="width:${data.btcDominance || 0}%"></div></div>
       </div>`;
+  }
 
+  function mcapTileHtml(data) {
     const mcapChangeColor = (data.mcapChange24h || 0) >= 0 ? 'var(--green-text)' : 'var(--red-text)';
     const mcapArrow = (data.mcapChange24h || 0) >= 0 ? '&#9650;' : '&#9660;';
-    const mcapTile = `
+    return `
       <div class="strip-tile">
         <div class="strip-label">Market Cap &middot; 24h</div>
         <div class="strip-value mono">${data.mcap || '--'} <span style="font-size:11px;color:${mcapChangeColor}">${mcapArrow} ${Math.abs(data.mcapChange24h || 0).toFixed(1)}%</span></div>
       </div>`;
+  }
 
-    // Top Sectors and Narratives used to be two separate tiles built from
-    // the exact same state.narrativePerf array (just sliced to different
-    // lengths) — genuinely redundant, especially obvious when only 1-2
-    // sectors resolve and both tiles show the identical single entry.
-    // Consolidated into one.
-    const sectorTile = (data.narrativeSectors && data.narrativeSectors.length)
+  // Top Sectors and Narratives used to be two separate tiles built from
+  // the exact same state.narrativePerf array (just sliced to different
+  // lengths) — genuinely redundant, especially obvious when only 1-2
+  // sectors resolve and both tiles show the identical single entry.
+  // Consolidated into one.
+  function sectorTileHtml(data) {
+    return (data.narrativeSectors && data.narrativeSectors.length)
       ? `<div class="strip-tile">
           <div class="strip-label">Top Sectors &middot; 7D</div>
           <div class="strip-list">
@@ -376,23 +385,67 @@ const Render = (() => {
           <div class="strip-label">Top Sectors &middot; 7D</div>
           <div class="strip-value" style="color:var(--text3)">--</div>
         </div>`;
+  }
 
-    const listTile = (label, list, colorVar) => `
+  function moversListTileHtml(label, list, colorVar) {
+    return `
       <div class="strip-tile">
         <div class="strip-label">${label} &middot; 24h</div>
         <div class="strip-list">
-          ${list.map(x => `<div><span>${esc(x.symbol)}</span><span style="color:${colorVar}">${x.change > 0 ? '+' : ''}${x.change.toFixed(1)}%</span></div>`).join('')}
+          ${(list || []).map(x => `<div><span>${esc(x.symbol)}</span><span style="color:${colorVar}">${x.change > 0 ? '+' : ''}${x.change.toFixed(1)}%</span></div>`).join('')}
         </div>
       </div>`;
+  }
 
+  function topStripHtml(data) {
     return [
-      pulseTile('Pulse Spot', data.pulseSpot),
-      pulseTile('Pulse Perp', data.pulsePerp),
-      fngTile, domTile, mcapTile, sectorTile,
-      listTile('Top Gainers', data.gainers || [], 'var(--green-text)'),
-      listTile('Top Losers', data.losers || [], 'var(--red-text)')
+      pulseTileHtml('Pulse Spot', data.pulseSpot),
+      pulseTileHtml('Pulse Perp', data.pulsePerp),
+      fngTileHtml(data), domTileHtml(data), mcapTileHtml(data), sectorTileHtml(data),
+      moversListTileHtml('Top Gainers', data.gainers || [], 'var(--green-text)'),
+      moversListTileHtml('Top Losers', data.losers || [], 'var(--red-text)')
     ].join('');
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, newsSectionHtml, esc };
+  // Dashboard tab (B1): the always-visible top strip's tiles at full
+  // depth — top 5 by market cap (new) and top 10 gainers/losers (vs the
+  // strip's compact top 3) — plus the same dominance/mcap/F&G/sectors
+  // tiles reused as-is. Altcoin Season Index is intentionally NOT built:
+  // CoinGecko's free /coins/markets `price_change_percentage` param only
+  // supports 1h/24h/7d/14d/30d/200d/1y, not a 90d window, so computing it
+  // accurately would mean ~50-100 individual per-coin market_chart calls —
+  // exactly the kind of load already producing live 429s/CORS failures on
+  // the existing endpoints. Flagged back rather than shipping a silent
+  // approximation on the wrong window.
+  function top5MarketCapTileHtml(list) {
+    if (!list || !list.length) {
+      return `<div class="strip-tile">
+          <div class="strip-label">Top 5 &middot; Market Cap</div>
+          <div class="strip-value" style="color:var(--text3)">--</div>
+        </div>`;
+    }
+    return `<div class="strip-tile">
+        <div class="strip-label">Top 5 &middot; Market Cap</div>
+        <div class="strip-list">
+          ${list.map(c => {
+            const chg = c.change24h;
+            const color = chg >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+            const sign = chg >= 0 ? '+' : '';
+            const price = c.price >= 1 ? c.price.toFixed(2) : c.price;
+            return `<div><span>${esc(c.symbol)} <span class="mono" style="color:var(--text3)">$${esc(String(price))}</span></span><span style="color:${color}">${chg != null ? sign + chg.toFixed(1) + '%' : '--'}</span></div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  function dashboardHtml(data) {
+    return [
+      domTileHtml(data), mcapTileHtml(data), fngTileHtml(data), sectorTileHtml(data),
+      top5MarketCapTileHtml(data.top5MarketCap),
+      moversListTileHtml('Top 10 Gainers', data.gainers10 || [], 'var(--green-text)'),
+      moversListTileHtml('Top 10 Losers', data.losers10 || [], 'var(--red-text)')
+    ].join('');
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, newsSectionHtml, esc };
 })();

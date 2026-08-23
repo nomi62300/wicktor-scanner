@@ -279,6 +279,33 @@ const Api = (() => {
     return mcapCache.map || map;
   }
 
+  // Top-N coins by market cap with price + 24h% — a single lightweight
+  // /coins/markets call (per_page=N), separate from coingeckoMarketCaps()'s
+  // 4-page/1000-coin symbol->mcap lookup above, which doesn't carry price or
+  // 24h change. Used by the Dashboard's "Top 5 by Market Cap" tile.
+  let top5Cache = { list: null, ts: 0 };
+  const TOP5_CACHE_MS = 10 * 60 * 1000; // 10 minutes
+
+  async function topByMarketCap(n) {
+    const now = Date.now();
+    if (top5Cache.list && now - top5Cache.ts < TOP5_CACHE_MS) return top5Cache.list;
+
+    const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${n}&page=1&price_change_percentage=24h`);
+    if (Array.isArray(data)) {
+      const list = data.map(c => ({
+        symbol: (c.symbol || '').toUpperCase(),
+        name: c.name,
+        price: c.current_price,
+        change24h: c.price_change_percentage_24h_in_currency != null
+          ? c.price_change_percentage_24h_in_currency
+          : c.price_change_percentage_24h
+      }));
+      top5Cache = { list, ts: now };
+      return list;
+    }
+    return top5Cache.list || [];
+  }
+
   function formatMcap(n) {
     if (n == null) return '—';
     if (n >= 1e12) return (n / 1e12).toFixed(2) + 'T';
@@ -618,7 +645,7 @@ const Api = (() => {
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
     isTradeableUsdtPair, isXStock, refreshXStockSet,
-    coingeckoGlobal, coingeckoMarketCaps, formatMcap,
+    coingeckoGlobal, coingeckoMarketCaps, topByMarketCap, formatMcap,
     fearGreedIndex, unlockInfo,
     fetchAllNews, newsForSymbol, coinNews,
     cgCategoryList, sectorPerformance7d, topNarrativeCandidates

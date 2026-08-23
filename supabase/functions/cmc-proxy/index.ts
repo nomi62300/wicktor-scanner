@@ -21,7 +21,6 @@ const ALLOWED_PATHS = new Set([
 const ALLOWED_ORIGINS = new Set([
   "https://nomi62300.github.io",
   "https://beta.wicktor.top",
-  "http://localhost:8000", // adjust/remove once done testing locally
 ]);
 
 function corsHeaders(origin: string | null) {

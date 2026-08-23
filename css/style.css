@@ -286,6 +286,33 @@ input:focus-visible {
 }
 .strip-list div:last-child { margin-bottom: 0; }
 
+/* ---- Main nav (Scanner / Dashboard tabs) ---- */
+.main-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.main-nav-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 4px 10px;
+  margin-right: 16px;
+  cursor: pointer;
+}
+
+.main-nav-tab:hover { color: var(--text); }
+
+.main-nav-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--gold);
+}
+
 /* ---- Filter bar ---- */
 .filter-bar {
   display: flex;
