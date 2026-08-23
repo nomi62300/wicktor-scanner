@@ -7,7 +7,7 @@
   // features/priorities, MAJOR for breaking/fundamental behavior changes.
   // Keep in sync with package.json's version and the git tag on this
   // commit. See CHANGELOG.md for what changed at each version.
-  const APP_VERSION = '1.2.3';
+  const APP_VERSION = '1.3.0';
 
   const STORAGE_KEYS = {
     theme: 'wicktor:theme',
@@ -41,9 +41,17 @@
   // .map(x => x.toString(16).padStart(2,'0')).join(''))) ), paste it below,
   // and tell testers the new plaintext code.
   //
-  // Default placeholder code is "cf5-scanner" — change this before real
-  // beta testers get the URL.
-  const ACCESS_CODE_HASH = '4c3db648edca70fed1f25ca58fb0effefb65f0a714b1c6747670c4b46c86a73c';
+  // Rotated 2026-08-24 as part of the maintenance-lockdown update — the
+  // new code is deliberately NOT distributed to testers yet (see
+  // MAINTENANCE_MODE below); this rotation exists to invalidate everyone
+  // previously granted access under the old code while maintenance is on.
+  const ACCESS_CODE_HASH = 'f226665e607a385afb535cd340ab5f756f9dccd4c3c21f3fa1fc2e01fa130c44';
+
+  // Hard gate shown to literally every visitor, checked before the access
+  // gate and before anything else in init() — even someone who already has
+  // the current valid code sees this, not the app. Flip to false (and
+  // redeploy) to reopen the scanner once maintenance work is done.
+  const MAINTENANCE_MODE = true;
 
   const DEFAULT_SETTINGS = {
     universeSize: 30,
@@ -118,6 +126,7 @@
     scanProgress: document.getElementById('scan-progress'),
     scanProgressFill: document.getElementById('scan-progress-fill'),
     scanProgressLabel: document.getElementById('scan-progress-label'),
+    maintenanceOverlay: document.getElementById('maintenance-overlay'),
     accessGate: document.getElementById('access-gate'),
     accessCodeInput: document.getElementById('access-code-input'),
     accessCodeSubmit: document.getElementById('access-code-submit'),
@@ -847,6 +856,10 @@
   // ------------------------------------------------------------------ Init
   function init() {
     initTheme();
+    if (MAINTENANCE_MODE) {
+      el.maintenanceOverlay.classList.add('open');
+      return; // nothing else runs — no access gate, no scan, nothing reachable
+    }
     el.appVersion.textContent = `Wicktor v${APP_VERSION}`;
     el.takeTourBtn.addEventListener('click', () => {
       el.settingsBackdrop.classList.remove('open');

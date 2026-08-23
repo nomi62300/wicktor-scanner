@@ -10,6 +10,18 @@
 </head>
 <body>
 
+<!-- Maintenance overlay: hard gate shown to EVERY visitor, checked before
+     the access gate below and before anything else — see MAINTENANCE_MODE
+     in js/app.js. Blocks the app even for someone with a currently-valid
+     access code; nothing behind it is reachable while it's showing. -->
+<div id="maintenance-overlay" class="access-gate">
+  <div class="access-gate-panel">
+    <img src="assets/logo.svg" alt="Wicktor" class="access-gate-logo">
+    <div class="access-gate-title">Under Maintenance</div>
+    <p class="access-gate-hint">Wicktor Scanner is undergoing scheduled maintenance. We'll be back shortly.</p>
+  </div>
+</div>
+
 <!-- Access gate: beta-tester code check, not real per-user auth. See
      ACCESS_CODE_HASH in js/app.js for how to rotate the code. -->
 <div id="access-gate" class="access-gate">

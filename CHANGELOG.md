@@ -4,6 +4,24 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-23
+
+### Added
+- Maintenance-mode overlay: a hard, full-screen gate shown to every
+  visitor, checked before and independent of the access-code gate — even
+  someone with a currently-valid code sees this, not the app. Controlled
+  by a single `MAINTENANCE_MODE` flag in `js/app.js`. Currently **on**,
+  as part of a planned lockdown ahead of a larger update — no scan, no
+  access gate, nothing reachable while it's active.
+
+### Changed
+- Rotated the beta access code as part of the same lockdown. The new code
+  is deliberately not distributed yet. Re-verified live (per standing
+  process, since this exact rotation had regressed silently once before):
+  the old code is rejected, a browser previously granted access under the
+  old code is correctly re-locked, and the new code grants access
+  correctly.
+
 ## [1.2.3] - 2026-08-17
 
 ### Fixed
