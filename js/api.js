@@ -241,6 +241,73 @@ const Api = (() => {
   // below — free and unlimited beats metered-and-last-resort.
   const COINPAPRIKA_BASE = 'https://api.coinpaprika.com/v1';
 
+  // Shared CoinPaprika bulk payload. ONE /tickers call (~818KB) serves
+  // three consumers — the symbol->mcap map, the Dashboard's Top-5 tile,
+  // and the fast sector builder — so none of them pays for its own
+  // request. Sorted market-cap descending on arrival because CoinPaprika
+  // returns *rank* order, which is not strictly market-cap order (182
+  // inversions measured live); the "first hit wins" logic below depends
+  // on largest-cap-first.
+  let paprikaTickersCache = { list: null, ts: 0 };
+  const PAPRIKA_TICKERS_TTL = 10 * 60 * 1000; // matches MCAP_CACHE_MS
+
+  async function paprikaTickers() {
+    const now = Date.now();
+    if (paprikaTickersCache.list && now - paprikaTickersCache.ts < PAPRIKA_TICKERS_TTL) {
+      return paprikaTickersCache.list;
+    }
+    const data = await safeFetch(`${COINPAPRIKA_BASE}/tickers?limit=1000`);
+    if (Array.isArray(data) && data.length) {
+      const sorted = data.slice().sort((a, b) => {
+        const am = (a.quotes && a.quotes.USD && a.quotes.USD.market_cap) || 0;
+        const bm = (b.quotes && b.quotes.USD && b.quotes.USD.market_cap) || 0;
+        return bm - am;
+      });
+      paprikaTickersCache = { list: sorted, ts: now };
+      return sorted;
+    }
+    return paprikaTickersCache.list || []; // fail soft: stale beats empty
+  }
+
+  // A symbol reaching the scan universe must look like a real ticker.
+  // CoinPaprika tag lists contain entries such as "\u5e01\u5b89\u4eba\u751f", which would
+  // otherwise become "...USDT", pass isTradeableUsdtPair(), and burn three
+  // Bybit kline round-trips per scan before failing soft.
+  const PLAUSIBLE_SYMBOL = /^[A-Z0-9]{2,15}$/;
+
+  /**
+   * Reshapes one CoinPaprika ticker into CoinGecko's field names — the
+   * same principle coingeckoGlobal()'s fallback already uses, so every
+   * caller works unchanged regardless of which provider answered.
+   *
+   * 30d/1y map to null, NOT to CoinPaprika's raw value: the free tier
+   * returns a literal 0 for every coin, and Render.pctCellHtml only
+   * renders "--" for null — passing 0 through would make every sector
+   * silently claim it was flat over those windows.
+   *
+   * Returns null for entries that fail the symbol guard or carry no
+   * market cap, so callers can filter them out in one step.
+   */
+  function normalizePaprikaCoin(t) {
+    const q = t && t.quotes && t.quotes.USD;
+    if (!q || q.market_cap == null) return null;
+    const sym = (t.symbol || '').toUpperCase();
+    if (!PLAUSIBLE_SYMBOL.test(sym)) return null;
+    return {
+      id: t.id,
+      symbol: (t.symbol || '').toLowerCase(), // CoinGecko convention; callers uppercase
+      name: t.name,
+      market_cap: q.market_cap,
+      current_price: q.price,
+      total_volume: q.volume_24h,
+      price_change_percentage_24h: q.percent_change_24h,
+      price_change_percentage_24h_in_currency: q.percent_change_24h,
+      price_change_percentage_7d_in_currency: q.percent_change_7d,
+      price_change_percentage_30d_in_currency: null,
+      price_change_percentage_1y_in_currency: null
+    };
+  }
+
   let cgCache = { global: null, ts: 0 };
   // Global mcap/dominance doesn't meaningfully move minute-to-minute —
   // matches the 30-min cadence applied to the rest of the top strip.
@@ -288,66 +355,65 @@ const Api = (() => {
   }
 
   /**
-   * Best-effort symbol -> market cap map from CoinGecko's top 250 by
-   * market cap. Matching by ticker symbol (not CoinGecko id) means a
-   * rare collision is possible when two listed projects share a
-   * ticker; in that case the larger-cap project wins since the list
-   * is already sorted by market cap descending. Coins outside the
-   * top 1000 simply won't have a match, and callers should show "—"
-   * rather than guess.
+   * Best-effort symbol -> market cap map. Tier order is CoinPaprika ->
+   * CoinGecko -> CMC proxy: CoinPaprika answers in ONE request where
+   * CoinGecko needs four paginated ones with delays, and it does not
+   * rate-limit (a 12-request burst returned all 200s in testing).
+   *
+   * KNOWN GAP: CoinPaprika has no tokenized-stock (xStock) coverage, so
+   * with the "Include tokenized stocks" setting on, those cards show "—"
+   * for MCap unless CoinPaprika is down and the CoinGecko tier runs.
+   * That setting is off by default, and "—" for an unmatched coin is
+   * already this function's documented behaviour rather than a new
+   * failure mode.
+   *
+   * Matching by ticker symbol means a rare collision is possible when two
+   * projects share a ticker; the larger-cap one wins because every source
+   * is market-cap-sorted before insertion. Coins outside the top 1000
+   * simply won't match, and callers should show "—" rather than guess.
    */
   let mcapCache = { map: null, ts: 0 };
   const MCAP_CACHE_MS = 10 * 60 * 1000; // 10 minutes
 
-  async function coingeckoMarketCaps() {
+  async function marketCapMap() {
     const now = Date.now();
     if (mcapCache.map && now - mcapCache.ts < MCAP_CACHE_MS) return mcapCache.map;
 
     const map = {};
-    for (let page = 1; page <= 4; page++) {
-      const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}`);
-      if (data && Array.isArray(data)) {
-        data.forEach(c => {
-          const sym = (c.symbol || '').toUpperCase();
-          if (!(sym in map)) map[sym] = c.market_cap; // first hit = highest mcap for that symbol
-        });
-      }
-      if (page < 4) {
-        await new Promise(r => setTimeout(r, 1500));
+    const put = (sym, mcap) => {
+      if (mcap != null && sym && !(sym in map)) map[sym] = mcap;
+    };
+
+    // Tier 1 — CoinPaprika: one request, already market-cap sorted.
+    (await paprikaTickers()).forEach(c => {
+      put((c.symbol || '').toUpperCase(), c.quotes && c.quotes.USD ? c.quotes.USD.market_cap : null);
+    });
+
+    // Tier 2 — CoinGecko: four paginated requests, only when Tier 1 gave
+    // us nothing at all (down / blocked), not merely to fill gaps.
+    if (Object.keys(map).length === 0) {
+      console.warn('[Api] marketCapMap: CoinPaprika empty, falling back to CoinGecko');
+      for (let page = 1; page <= 4; page++) {
+        const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}`);
+        if (data && Array.isArray(data)) {
+          data.forEach(c => put((c.symbol || '').toUpperCase(), c.market_cap));
+        }
+        if (page < 4) await new Promise(r => setTimeout(r, 1500));
       }
     }
 
-    // All 4 pages came back empty — CoinGecko is down/rate-limited, not
-    // just missing a few coins. Try CoinPaprika next (free, direct, one
-    // request for the same 1000-coin depth), then CMC via the proxy only
-    // as the last resort.
+    // Tier 3 — CMC via the proxy, metered, genuine last resort.
     if (Object.keys(map).length === 0) {
-      console.warn('[Api] coingeckoMarketCaps failed on every page, falling back to CoinPaprika');
-      const cpData = await safeFetch(`${COINPAPRIKA_BASE}/tickers?limit=1000`);
-      if (Array.isArray(cpData)) {
-        cpData.forEach(c => {
-          const sym = (c.symbol || '').toUpperCase();
-          const mcap = c.quotes && c.quotes.USD ? c.quotes.USD.market_cap : null;
-          if (mcap != null && !(sym in map)) map[sym] = mcap;
-        });
-      }
-    }
-
-    if (Object.keys(map).length === 0) {
-      console.warn('[Api] CoinPaprika also failed, falling back to CMC proxy');
+      console.warn('[Api] marketCapMap: CoinGecko also failed, falling back to CMC proxy');
       const cmcData = await cmcProxyFetch('/v1/cryptocurrency/listings/latest', { limit: 1000 });
       if (cmcData && Array.isArray(cmcData.data)) {
         cmcData.data.forEach(c => {
-          const sym = (c.symbol || '').toUpperCase();
-          const mcap = c.quote && c.quote.USD ? c.quote.USD.market_cap : null;
-          if (mcap != null && !(sym in map)) map[sym] = mcap;
+          put((c.symbol || '').toUpperCase(), c.quote && c.quote.USD ? c.quote.USD.market_cap : null);
         });
       }
     }
 
-    if (Object.keys(map).length > 0) {
-      mcapCache = { map, ts: now };
-    }
+    if (Object.keys(map).length > 0) mcapCache = { map, ts: now };
     return mcapCache.map || map;
   }
 
@@ -361,6 +427,23 @@ const Api = (() => {
   async function topByMarketCap(n) {
     const now = Date.now();
     if (top5Cache.list && now - top5Cache.ts < TOP5_CACHE_MS) return top5Cache.list;
+
+    // Derived from the shared CoinPaprika payload — zero extra requests,
+    // since paprikaTickers() is already sorted market-cap descending.
+    const cp = await paprikaTickers();
+    if (cp.length) {
+      const list = cp.slice(0, n).map(t => {
+        const q = t.quotes.USD;
+        return {
+          symbol: (t.symbol || '').toUpperCase(),
+          name: t.name,
+          price: q.price,
+          change24h: q.percent_change_24h
+        };
+      });
+      top5Cache = { list, ts: now };
+      return list;
+    }
 
     const data = await safeFetch(`${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${n}&page=1&price_change_percentage=24h`);
     if (Array.isArray(data)) {
@@ -770,7 +853,9 @@ const Api = (() => {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet, fetchExtendedTimeframes,
     openInterestChange15m,
     isTradeableUsdtPair, isXStock, refreshXStockSet,
-    coingeckoGlobal, coingeckoMarketCaps, topByMarketCap, formatMcap,
+    coingeckoGlobal, marketCapMap, coingeckoMarketCaps: marketCapMap,
+    paprikaTickers, normalizePaprikaCoin,
+    topByMarketCap, formatMcap,
     fearGreedIndex, unlockInfo,
     fetchAllNews, newsForSymbol, allNews, coinNews,
     cgCategoryList, sectorPerformance7d, topNarrativeCandidates

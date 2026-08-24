@@ -331,7 +331,7 @@
       // within its 24h TTL) — must complete before any isXStock() call below.
       console.time('[Scan] parallel-fetches');
       const [mcapMap, newsData, globalRes, fngRes] = await Promise.all([
-        Api.coingeckoMarketCaps().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
+        Api.marketCapMap().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
         Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
         Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
         Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
