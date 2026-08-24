@@ -682,6 +682,230 @@ const Indicators = (() => {
     };
   }
 
+  // ======================================================================
+  // Strategy-enrichment batch (Stage 0) — six new indicators, standard/
+  // textbook formulas only (Appel MACD, Bollinger BBands, Wilder ADX,
+  // Lane slow Stochastic, Hosoda Ichimoku, no proprietary variants), plus
+  // liquiditySweep(). Pure math only here — NOT wired into
+  // analyzeTimeframe()/scoring.js in this stage; app behavior is
+  // byte-identical to before this batch. See the paused backlog plan
+  // (~/.claude/plans/i-have-shifted-to-clever-hopcroft.md section 4) for
+  // the full per-strategy scoring design these feed in later stages.
+  // ======================================================================
+
+  /**
+   * Standard exponential moving average, seeded with an SMA over the
+   * first `period` values. Skips a leading run of nulls when seeding
+   * (same philosophy as smaSkipNulls) so it can operate on a series that
+   * itself starts null, e.g. MACD's signal line over the MACD line.
+   */
+  function ema(values, period) {
+    const out = new Array(values.length).fill(null);
+    const k = 2 / (period + 1);
+    let prev = null;
+    for (let i = 0; i < values.length; i++) {
+      if (prev == null) {
+        if (i < period - 1) continue;
+        let sum = 0, ok = true;
+        for (let j = i - period + 1; j <= i; j++) {
+          if (values[j] == null) { ok = false; break; }
+          sum += values[j];
+        }
+        if (!ok) continue;
+        prev = sum / period;
+        out[i] = prev;
+      } else if (values[i] == null) {
+        prev = null; // gap in the input — re-seed once real data resumes
+      } else {
+        prev = values[i] * k + prev * (1 - k);
+        out[i] = prev;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * MACD (Appel): EMA(close,12) - EMA(close,26), signal = EMA(MACD,9).
+   * Operates on REAL candles.
+   */
+  function macd(candles) {
+    const closes = candles.map(c => c.c);
+    const emaFast = ema(closes, 12);
+    const emaSlow = ema(closes, 26);
+    const macdLine = closes.map((_, i) => (emaFast[i] != null && emaSlow[i] != null) ? emaFast[i] - emaSlow[i] : null);
+    const signalLine = ema(macdLine, 9);
+    const histogram = macdLine.map((v, i) => (v != null && signalLine[i] != null) ? v - signalLine[i] : null);
+    return { macdLine, signalLine, histogram };
+  }
+
+  /**
+   * Bollinger Bands: SMA(period) +/- mult x population-stddev, plus
+   * %B (where close sits within the bands, 0-1) and bandwidth (relative
+   * band width, for squeeze detection). Operates on REAL candles.
+   */
+  function bollingerBands(candles, period = 20, mult = 2) {
+    const closes = candles.map(c => c.c);
+    const middle = sma(closes, period);
+    const n = closes.length;
+    const upper = new Array(n).fill(null);
+    const lower = new Array(n).fill(null);
+    const percentB = new Array(n).fill(null);
+    const bandwidth = new Array(n).fill(null);
+    for (let i = period - 1; i < n; i++) {
+      const mean = middle[i];
+      let sumSq = 0;
+      for (let j = i - period + 1; j <= i; j++) sumSq += (closes[j] - mean) ** 2;
+      const stddev = Math.sqrt(sumSq / period);
+      upper[i] = mean + mult * stddev;
+      lower[i] = mean - mult * stddev;
+      const width = upper[i] - lower[i];
+      percentB[i] = width !== 0 ? (closes[i] - lower[i]) / width : null;
+      bandwidth[i] = mean !== 0 ? width / mean : null;
+    }
+    return { middle, upper, lower, percentB, bandwidth };
+  }
+
+  /**
+   * ADX (Wilder): +DI/-DI from directional movement, Wilder-smoothed via
+   * the existing smma()/trueRange(), ADX = Wilder-smoothed DX. Reuses
+   * trueRange()/smma() directly per the plan rather than reimplementing
+   * Wilder's smoothing a second time. Operates on REAL candles.
+   */
+  function adx(candles, period = 14) {
+    const n = candles.length;
+    const plusDM = new Array(n).fill(0);
+    const minusDM = new Array(n).fill(0);
+    for (let i = 1; i < n; i++) {
+      const upMove = candles[i].h - candles[i - 1].h;
+      const downMove = candles[i - 1].l - candles[i].l;
+      plusDM[i] = (upMove > downMove && upMove > 0) ? upMove : 0;
+      minusDM[i] = (downMove > upMove && downMove > 0) ? downMove : 0;
+    }
+    const tr = trueRange(candles);
+    const smoothedTR = smma(tr, period);
+    const smoothedPlusDM = smma(plusDM, period);
+    const smoothedMinusDM = smma(minusDM, period);
+
+    const plusDI = new Array(n).fill(null);
+    const minusDI = new Array(n).fill(null);
+    const dx = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      if (smoothedTR[i] == null || smoothedTR[i] === 0) continue;
+      plusDI[i] = 100 * smoothedPlusDM[i] / smoothedTR[i];
+      minusDI[i] = 100 * smoothedMinusDM[i] / smoothedTR[i];
+      const sum = plusDI[i] + minusDI[i];
+      dx[i] = sum !== 0 ? 100 * Math.abs(plusDI[i] - minusDI[i]) / sum : 0;
+    }
+
+    // ADX = Wilder-smoothed DX. smma() doesn't skip nulls, so smooth only
+    // the valid tail of dx[] and place results back at the right offset.
+    const firstDxIdx = dx.findIndex(v => v != null);
+    const adxLine = new Array(n).fill(null);
+    if (firstDxIdx !== -1) {
+      const smoothed = smma(dx.slice(firstDxIdx), period);
+      smoothed.forEach((v, i) => { if (v != null) adxLine[firstDxIdx + i] = v; });
+    }
+
+    return { plusDI, minusDI, adx: adxLine };
+  }
+
+  /**
+   * Slow Stochastic (Lane): %K raw = 100 x (close - lowestLow) /
+   * (highestHigh - lowestLow) over kPeriod, slow %K = SMA(raw%K,
+   * kSmooth), %D = SMA(slow%K, dPeriod) — matches what the owner's
+   * strategies assume for crossover signals. Operates on REAL candles.
+   */
+  function stochastic(candles, kPeriod = 14, kSmooth = 3, dPeriod = 3) {
+    const n = candles.length;
+    const rawK = new Array(n).fill(null);
+    for (let i = kPeriod - 1; i < n; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = i - kPeriod + 1; j <= i; j++) {
+        if (candles[j].h > hh) hh = candles[j].h;
+        if (candles[j].l < ll) ll = candles[j].l;
+      }
+      rawK[i] = (hh - ll) !== 0 ? 100 * (candles[i].c - ll) / (hh - ll) : 50;
+    }
+    const k = smaSkipNulls(rawK, kSmooth);
+    const d = smaSkipNulls(k, dPeriod);
+    return { k, d };
+  }
+
+  /**
+   * Ichimoku (Hosoda): Tenkan(9)/Kijun(26) midpoints, Span A/B, Chikou.
+   * Snapshot-only design — no forward-plotting, since there's no future
+   * price series and the ~100-candle fetch window only leaves ~48 bars
+   * margin past Span B's 52-period lookback. `current*` fields are the
+   * -26-shifted READ matching what a real chart overlays on today's
+   * candle (the cloud boundary visible "now" was computed 26 bars ago),
+   * same displacement discipline as the existing Alligator
+   * shiftForward() — just read backward instead of plotted forward.
+   * Operates on REAL candles.
+   */
+  function ichimoku(candles) {
+    const n = candles.length;
+    function midpoint(period, endIdx) {
+      if (endIdx < period - 1) return null;
+      let hh = -Infinity, ll = Infinity;
+      for (let j = endIdx - period + 1; j <= endIdx; j++) {
+        if (candles[j].h > hh) hh = candles[j].h;
+        if (candles[j].l < ll) ll = candles[j].l;
+      }
+      return (hh + ll) / 2;
+    }
+    const tenkan = new Array(n).fill(null);
+    const kijun = new Array(n).fill(null);
+    const spanB = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      tenkan[i] = midpoint(9, i);
+      kijun[i] = midpoint(26, i);
+      spanB[i] = midpoint(52, i);
+    }
+    const spanA = tenkan.map((t, i) => (t != null && kijun[i] != null) ? (t + kijun[i]) / 2 : null);
+    const chikou = candles.map(c => c.c);
+
+    const lastIdx = n - 1;
+    const displacedIdx = lastIdx - 26;
+    const currentSpanA = displacedIdx >= 0 ? spanA[displacedIdx] : null;
+    const currentSpanB = displacedIdx >= 0 ? spanB[displacedIdx] : null;
+
+    return { tenkan, kijun, spanA, spanB, chikou, currentSpanA, currentSpanB };
+  }
+
+  /**
+   * Liquidity Sweep — wick-rejection pattern modeled directly on the
+   * existing divergentBar()'s shape: price wicks beyond a fractal-based
+   * level but closes back inside it, wick sized at least 1.5x ATR (a
+   * genuine sweep, not noise). Reuses fractals()/lastFractal() output —
+   * no new S/R notion, same levels the rest of the app already uses.
+   * `frac` is fractals(candles)'s output; `i` is the bar to test.
+   * Returns { up, down } — up = bullish reclaim below support (a
+   * downside sweep got rejected), down = bearish rejection above
+   * resistance. Operates on REAL candles.
+   */
+  function liquiditySweep(candles, frac, i, atrValue) {
+    if (i < 1 || atrValue == null || atrValue <= 0) return { up: false, down: false };
+    const bar = candles[i];
+    const lastUpFrac = lastFractal(frac.up, i - 1);
+    const lastDownFrac = lastFractal(frac.down, i - 1);
+
+    let down = false;
+    if (lastUpFrac != null) {
+      const level = candles[lastUpFrac].h;
+      const wickSize = bar.h - Math.max(bar.o, bar.c);
+      down = bar.h > level && bar.c < level && bar.o < level && wickSize >= 1.5 * atrValue;
+    }
+
+    let up = false;
+    if (lastDownFrac != null) {
+      const level = candles[lastDownFrac].l;
+      const wickSize = Math.min(bar.o, bar.c) - bar.l;
+      up = bar.l < level && bar.c > level && bar.o > level && wickSize >= 1.5 * atrValue;
+    }
+
+    return { up, down };
+  }
+
   return {
     medianPrice, sma, smma, shiftForward,
     heikinAshi, alligator, alligatorTouchState,
@@ -690,7 +914,8 @@ const Indicators = (() => {
     fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
     linearRegression, regressionChannelLevels,
-    breakoutProximityPct
+    breakoutProximityPct,
+    ema, macd, bollingerBands, adx, stochastic, ichimoku, liquiditySweep
   };
 })();
 

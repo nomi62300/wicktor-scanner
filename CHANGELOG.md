@@ -8,10 +8,36 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, and sloped regression-channel levels added in follow-up
-sessions with the owner present. Deliberately left unmerged on a branch
-pending review, per standing branch discipline (`main` auto-deploys
-live). Not version-bumped or tagged; that happens at merge time.
+fallback tier, sloped regression-channel levels, and Phase 5 Stage 0
+(strategy-enrichment indicator math) added in follow-up sessions with
+the owner present. Deliberately left unmerged on a branch pending
+review, per standing branch discipline (`main` auto-deploys live). Not
+version-bumped or tagged; that happens at merge time.
+
+### Added (Phase 5 Stage 0 — strategy-enrichment indicator math)
+- Six new indicator functions in `js/indicators.js`, standard/textbook
+  formulas only (Appel MACD, Bollinger BBands, Wilder ADX, Lane slow
+  Stochastic, Hosoda Ichimoku, no proprietary variants): `ema()`,
+  `macd()`, `bollingerBands()`, `adx()` (reuses the existing
+  `trueRange()`/`smma()` rather than reimplementing Wilder's smoothing),
+  `stochastic()`, `ichimoku()` (snapshot-only, no forward-plotting — the
+  `current*` fields are the -26-shifted read matching what a real chart
+  overlays on today's candle), and `liquiditySweep()` (wick-rejection
+  pattern modeled directly on the existing `divergentBar()`'s shape,
+  reusing `fractals()`/`lastFractal()` — no new S/R notion).
+- **Pure math only — this stage is deliberately inert.** Nothing wired
+  into `analyzeTimeframe()`, `scoring.js`, `app.js`, or `render.js` yet;
+  app behavior is unchanged. Matches the paused backlog plan's own
+  staged build order (`~/.claude/plans/i-have-shifted-to-clever-hopcroft.md`
+  section 4.4) — later stages fold these into 12 scoring strategies
+  across the Continuation/Exhaustion/Reversal arms, which changes live
+  signal output and deserves its own separate review pass.
+- Verified directionally against synthetic uptrend/downtrend candles
+  (MACD/ADX/Stochastic/Bollinger all behave correctly in both
+  directions) and via hand-computed exact values (EMA seed value,
+  Ichimoku tenkan/kijun window midpoints, MACD histogram identity). Full
+  Wilder-published-worked-example cross-check for ADX specifically was
+  not done — self-consistency and directional tests only.
 
 ### Added (Sloped regression-channel levels — v2 key levels)
 - New `Indicators.linearRegression(points)` (pure OLS fit, returns

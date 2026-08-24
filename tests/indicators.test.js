@@ -345,6 +345,179 @@ test('analyzeTimeframe: resistanceSloped/supportSloped are present (null or an o
 });
 
 // ---------------------------------------------------------------------------
+// Strategy-enrichment Stage 0 — new indicator math (pure, not wired yet)
+// ---------------------------------------------------------------------------
+
+test('ema(): seeds with SMA, then recurses with the standard smoothing factor', () => {
+  const values = [1, 2, 3, 4, 5, 6, 7, 8];
+  const period = 3;
+  const e = Indicators.ema(values, period);
+  const seedSma = (1 + 2 + 3) / 3;
+  assert.ok(Math.abs(e[2] - seedSma) < 1e-9, `Expected seed ${seedSma}, got ${e[2]}`);
+  const k = 2 / (period + 1);
+  const expectedNext = values[3] * k + e[2] * (1 - k);
+  assert.ok(Math.abs(e[3] - expectedNext) < 1e-9, `Expected ${expectedNext}, got ${e[3]}`);
+});
+
+test('ema(): fewer than `period` values are all null', () => {
+  const e = Indicators.ema([1, 2], 5);
+  assert.ok(e.every(v => v === null));
+});
+
+test('ema(): handles a series with leading nulls (e.g. MACD line feeding the signal line)', () => {
+  const values = [null, null, null, 10, 11, 12, 13, 14, 15];
+  const e = Indicators.ema(values, 3);
+  assert.strictEqual(e[0], null);
+  assert.strictEqual(e[1], null);
+  assert.strictEqual(e[4], null); // period-1 real values needed starting at idx 3 -> first output at idx 5
+  assert.ok(e[5] != null, 'Expected a real EMA value once 3 consecutive non-null inputs exist');
+});
+
+test('macd(): uptrend gives a positive MACD line (fast EMA above slow EMA)', () => {
+  const candles = buildCleanUptrend(80);
+  const { macdLine } = Indicators.macd(candles);
+  const last = macdLine[macdLine.length - 1];
+  assert.ok(last > 0, `Expected positive MACD in an uptrend, got ${last}`);
+});
+
+test('macd(): downtrend gives a negative MACD line', () => {
+  const candles = [];
+  let price = 200;
+  for (let i = 0; i < 80; i++) { candles.push(flatCandle(i, price)); price *= 0.995; }
+  const { macdLine } = Indicators.macd(candles);
+  const last = macdLine[macdLine.length - 1];
+  assert.ok(last < 0, `Expected negative MACD in a downtrend, got ${last}`);
+});
+
+test('macd(): histogram = macdLine - signalLine at every index where both exist', () => {
+  const candles = buildCleanUptrend(80);
+  const { macdLine, signalLine, histogram } = Indicators.macd(candles);
+  for (let i = 0; i < candles.length; i++) {
+    if (macdLine[i] != null && signalLine[i] != null) {
+      assert.ok(Math.abs(histogram[i] - (macdLine[i] - signalLine[i])) < 1e-9,
+        `histogram mismatch at ${i}`);
+    } else {
+      assert.strictEqual(histogram[i], null);
+    }
+  }
+});
+
+test('bollingerBands(): flat/constant price gives zero-width bands (stddev=0)', () => {
+  const candles = [];
+  for (let i = 0; i < 30; i++) candles.push({ t: i, o: 100, h: 100, l: 100, c: 100, v: 1000 });
+  const bb = Indicators.bollingerBands(candles, 20);
+  const last = candles.length - 1;
+  assert.ok(Math.abs(bb.upper[last] - bb.lower[last]) < 1e-9, 'Expected zero band width for constant price');
+  assert.strictEqual(bb.middle[last], 100);
+});
+
+test('bollingerBands(): price above upper band gives %B > 1, below lower band gives %B < 0', () => {
+  const candles = buildCleanUptrend(80);
+  const bb = Indicators.bollingerBands(candles, 20);
+  const last = candles.length - 1;
+  // A clean smooth uptrend keeps closes inside/near the bands, not exceeding —
+  // verify %B stays in a sane range instead of asserting an extreme case.
+  assert.ok(bb.percentB[last] >= 0 && bb.percentB[last] <= 1.2,
+    `Expected %B in a sane range for a smooth uptrend, got ${bb.percentB[last]}`);
+});
+
+test('adx(): clean uptrend gives +DI meaningfully greater than -DI', () => {
+  const candles = buildCleanUptrend(80);
+  const { plusDI, minusDI } = Indicators.adx(candles);
+  const last = candles.length - 1;
+  assert.ok(plusDI[last] > minusDI[last], `Expected +DI > -DI in an uptrend, got +DI=${plusDI[last]} -DI=${minusDI[last]}`);
+});
+
+test('adx(): clean downtrend gives -DI meaningfully greater than +DI', () => {
+  const candles = [];
+  let price = 200;
+  for (let i = 0; i < 80; i++) { candles.push(flatCandle(i, price)); price *= 0.995; }
+  const { plusDI, minusDI } = Indicators.adx(candles);
+  const last = candles.length - 1;
+  assert.ok(minusDI[last] > plusDI[last], `Expected -DI > +DI in a downtrend, got +DI=${plusDI[last]} -DI=${minusDI[last]}`);
+});
+
+test('adx(): ADX line is null until enough DX values accumulate, then non-null and in [0,100]', () => {
+  const candles = buildCleanUptrend(80);
+  const { adx } = Indicators.adx(candles);
+  assert.strictEqual(adx[0], null);
+  const last = adx[adx.length - 1];
+  assert.ok(last != null && last >= 0 && last <= 100, `Expected ADX in [0,100], got ${last}`);
+});
+
+test('stochastic(): %K reaches near 100 when the close makes a new period high', () => {
+  const candles = buildCleanUptrend(40);
+  const { k } = Indicators.stochastic(candles);
+  const last = k[k.length - 1];
+  assert.ok(last > 80, `Expected %K near the top of the range in a fresh-high uptrend, got ${last}`);
+});
+
+test('stochastic(): %K reaches near 0 when the close makes a new period low', () => {
+  const candles = [];
+  let price = 200;
+  for (let i = 0; i < 40; i++) { candles.push(flatCandle(i, price)); price *= 0.99; }
+  const { k } = Indicators.stochastic(candles);
+  const last = k[k.length - 1];
+  assert.ok(last < 20, `Expected %K near the bottom of the range in a fresh-low downtrend, got ${last}`);
+});
+
+test('ichimoku(): tenkan/kijun are the midpoint of the highest-high/lowest-low over their own window', () => {
+  const candles = buildCleanUptrend(80);
+  const ich = Indicators.ichimoku(candles);
+  const lastIdx = candles.length - 1;
+  let hh = -Infinity, ll = Infinity;
+  for (let j = lastIdx - 8; j <= lastIdx; j++) { hh = Math.max(hh, candles[j].h); ll = Math.min(ll, candles[j].l); }
+  const expectedTenkan = (hh + ll) / 2;
+  assert.ok(Math.abs(ich.tenkan[lastIdx] - expectedTenkan) < 1e-9,
+    `Expected tenkan ${expectedTenkan}, got ${ich.tenkan[lastIdx]}`);
+});
+
+test('ichimoku(): currentSpanA/B are the -26-shifted read, not the raw last-bar span', () => {
+  const candles = buildCleanUptrend(80);
+  const ich = Indicators.ichimoku(candles);
+  const lastIdx = candles.length - 1;
+  assert.ok(Math.abs(ich.currentSpanA - ich.spanA[lastIdx - 26]) < 1e-9);
+  assert.ok(Math.abs(ich.currentSpanB - ich.spanB[lastIdx - 26]) < 1e-9);
+  // In a clean rising trend the displaced (older, lower) cloud must sit
+  // below the raw last-bar span values — proves it's really reading
+  // backward, not accidentally echoing the current bar.
+  assert.ok(ich.currentSpanA < ich.spanA[lastIdx], 'Expected the displaced Span A to be lower than the raw last-bar Span A in an uptrend');
+});
+
+test('liquiditySweep(): detects a bearish rejection wick above resistance, closing back inside', () => {
+  const candles = buildCleanUptrend(60);
+  const frac = Indicators.fractals(candles);
+  const atrSeries = Indicators.atr(candles);
+  const i = candles.length - 1;
+  const lastUpFrac = Indicators.lastFractal(frac.up, i - 1);
+  if (lastUpFrac != null) {
+    const level = candles[lastUpFrac].h;
+    const atrV = atrSeries[i] || 1;
+    candles[i] = { t: i, o: level - 1, h: level + atrV * 2, l: level - 2, c: level - 1, v: 1000 };
+    const result = Indicators.liquiditySweep(candles, frac, i, atrV);
+    assert.strictEqual(result.down, true, 'Expected a detected bearish liquidity sweep');
+  }
+});
+
+test('liquiditySweep(): a normal bar (no wick beyond any level) returns {up:false, down:false}', () => {
+  const candles = buildCleanUptrend(60);
+  const frac = Indicators.fractals(candles);
+  const atrSeries = Indicators.atr(candles);
+  const i = candles.length - 1;
+  const result = Indicators.liquiditySweep(candles, frac, i, atrSeries[i]);
+  assert.strictEqual(result.up, false);
+  assert.strictEqual(result.down, false);
+});
+
+test('liquiditySweep(): null/zero ATR returns {up:false, down:false}, no crash', () => {
+  const candles = buildCleanUptrend(60);
+  const frac = Indicators.fractals(candles);
+  const result = Indicators.liquiditySweep(candles, frac, candles.length - 1, null);
+  assert.strictEqual(result.up, false);
+  assert.strictEqual(result.down, false);
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`);

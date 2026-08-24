@@ -726,6 +726,79 @@ test('analyzeTimeframe exposes resistanceSloped/supportSloped without throwing',
   assert('resistanceSloped' in snap && 'supportSloped' in snap);
 });
 
+suite('L — Strategy-enrichment Stage 0: new indicator math (pure, not wired yet)');
+
+test('ema(): seeds with SMA, then recurses with the standard smoothing factor', () => {
+  const e = Indicators.ema([1, 2, 3, 4, 5, 6, 7, 8], 3);
+  assert(Math.abs(e[2] - 2) < 1e-9);
+  const k = 2 / 4;
+  assert(Math.abs(e[3] - (4 * k + e[2] * (1 - k))) < 1e-9);
+});
+
+test('macd(): uptrend positive, downtrend negative, histogram = macdLine - signalLine', () => {
+  const up = Indicators.macd(uptrend(80));
+  assert(up.macdLine[79] > 0);
+  const down = Indicators.macd(downtrend(80));
+  assert(down.macdLine[79] < 0);
+  for (let i = 0; i < 80; i++) {
+    if (up.macdLine[i] != null && up.signalLine[i] != null) {
+      assert(Math.abs(up.histogram[i] - (up.macdLine[i] - up.signalLine[i])) < 1e-9);
+    }
+  }
+});
+
+test('bollingerBands(): constant price gives zero band width; %B stays sane in a smooth uptrend', () => {
+  const flat = [];
+  for (let i = 0; i < 30; i++) flat.push({ t: i, o: 100, h: 100, l: 100, c: 100, v: 1000 });
+  const bbFlat = Indicators.bollingerBands(flat, 20);
+  assert(Math.abs(bbFlat.upper[29] - bbFlat.lower[29]) < 1e-9);
+  const bb = Indicators.bollingerBands(uptrend(80), 20);
+  assert(bb.percentB[79] >= 0 && bb.percentB[79] <= 1.2);
+});
+
+test('adx(): +DI > -DI in an uptrend, -DI > +DI in a downtrend, ADX in [0,100]', () => {
+  const up = Indicators.adx(uptrend(80));
+  assert(up.plusDI[79] > up.minusDI[79]);
+  const down = Indicators.adx(downtrend(80));
+  assert(down.minusDI[79] > down.plusDI[79]);
+  assert(up.adx[79] >= 0 && up.adx[79] <= 100);
+});
+
+test('stochastic(): %K near 100 on a fresh high, near 0 on a fresh low', () => {
+  const up = Indicators.stochastic(uptrend(40));
+  assert(up.k[39] > 80);
+  const down = Indicators.stochastic(downtrend(40));
+  assert(down.k[39] < 20);
+});
+
+test('ichimoku(): tenkan matches its own window midpoint; currentSpanA/B are the -26-shifted read', () => {
+  const candles = uptrend(80);
+  const ich = Indicators.ichimoku(candles);
+  const lastIdx = candles.length - 1;
+  let hh = -Infinity, ll = Infinity;
+  for (let j = lastIdx - 8; j <= lastIdx; j++) { hh = Math.max(hh, candles[j].h); ll = Math.min(ll, candles[j].l); }
+  assert(Math.abs(ich.tenkan[lastIdx] - (hh + ll) / 2) < 1e-9);
+  assert(Math.abs(ich.currentSpanA - ich.spanA[lastIdx - 26]) < 1e-9);
+  assert(ich.currentSpanA < ich.spanA[lastIdx]);
+});
+
+test('liquiditySweep(): detects a bearish rejection wick above resistance; null ATR is safe', () => {
+  const candles = uptrend(60);
+  const frac = Indicators.fractals(candles);
+  const atrSeries = Indicators.atr(candles);
+  const i = candles.length - 1;
+  const lastUpFrac = Indicators.lastFractal(frac.up, i - 1);
+  if (lastUpFrac != null) {
+    const level = candles[lastUpFrac].h;
+    const atrV = atrSeries[i] || 1;
+    candles[i] = { t: i, o: level - 1, h: level + atrV * 2, l: level - 2, c: level - 1, v: 1000 };
+    const result = Indicators.liquiditySweep(candles, frac, i, atrV);
+    assert(result.down === true);
+  }
+  const safe = Indicators.liquiditySweep(candles, frac, i, null);
+  assert(safe.up === false && safe.down === false);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render results to DOM
 // ─────────────────────────────────────────────────────────────────────────────
