@@ -8,11 +8,23 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, and Phase 5 Stage 0
-(strategy-enrichment indicator math) added in follow-up sessions with
-the owner present. Deliberately left unmerged on a branch pending
-review, per standing branch discipline (`main` auto-deploys live). Not
-version-bumped or tagged; that happens at merge time.
+fallback tier, sloped regression-channel levels, Phase 5 Stage 0
+(strategy-enrichment indicator math), and a Flows 1Y column added in
+follow-up sessions with the owner present. Deliberately left unmerged on
+a branch pending review, per standing branch discipline (`main`
+auto-deploys live). Not version-bumped or tagged; that happens at merge
+time.
+
+### Added (Flows: 1Y column, MTD/YTD stand-in)
+- Added `1y` to `sectorPerformance7d()`'s existing `price_change_percentage`
+  request (verified live, same one-request-per-category cost as before)
+  and a matching 1Y column in the Flows table and its expanded coin list.
+  True calendar-anchored MTD/YTD would need per-coin historical lookups
+  (CoinGecko's rolling-window param has no "since a specific date"
+  option) — real new cost and complexity across ~a few hundred unique
+  coins. Owner's call: 30D (already shipped) + 1Y cover the same
+  medium/long-term intent without it. Fully additive — 24h/7d/30d
+  columns and all existing callers unchanged.
 
 ### Added (Phase 5 Stage 0 — strategy-enrichment indicator math)
 - Six new indicator functions in `js/indicators.js`, standard/textbook

@@ -610,7 +610,12 @@ const Api = (() => {
     // CoinGecko accepts multiple comma-separated windows in one request at
     // no extra cost (verified live), so this stays a single fetch per
     // category rather than needing a second pass or a snapshot job.
-    const CATEGORY_WINDOWS = '24h,7d,30d';
+    // 1y added alongside 24h/7d/30d as the MTD/YTD stand-in — true
+    // calendar-anchored MTD/YTD would need per-coin historical lookups
+    // (CoinGecko has no "since a specific date" rolling window), a real
+    // new cost/complexity the owner decided wasn't worth it. 30d/1y cover
+    // the same "medium/long term" intent without it.
+    const CATEGORY_WINDOWS = '24h,7d,30d,1y';
     async function fetchCategoryWithRetry(catId) {
       const data = await safeFetch(
         `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=${CATEGORY_WINDOWS}`
@@ -651,13 +656,14 @@ const Api = (() => {
         const weightedChange24h = weightedChangeFor(data, 'price_change_percentage_24h_in_currency');
         const weightedChange7d = weightedChangeFor(data, 'price_change_percentage_7d_in_currency');
         const weightedChange30d = weightedChangeFor(data, 'price_change_percentage_30d_in_currency');
+        const weightedChange1y = weightedChangeFor(data, 'price_change_percentage_1y_in_currency');
         // Sum of the top-50-by-mktcap coins actually fetched — a proxy for
         // the category's true total market cap (which could include coins
         // beyond the top 50), not a claim of exhaustive coverage.
         const mcap = data.reduce((sum, c) => sum + (c.market_cap || 0), 0);
         results.push({
           categoryId: cat.id, name: cat.name, mcap,
-          weightedChange24h, weightedChange7d, weightedChange30d,
+          weightedChange24h, weightedChange7d, weightedChange30d, weightedChange1y,
           coins: data
         });
       } else {

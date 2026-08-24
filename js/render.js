@@ -523,6 +523,7 @@ const Render = (() => {
               <td>${pctCellHtml(c.price_change_percentage_24h_in_currency)}</td>
               <td>${pctCellHtml(c.price_change_percentage_7d_in_currency)}</td>
               <td>${pctCellHtml(c.price_change_percentage_30d_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_1y_in_currency)}</td>
             </tr>`).join('')
         : '';
       return `
@@ -532,18 +533,19 @@ const Render = (() => {
           <td>${pctCellHtml(sector.weightedChange24h)}</td>
           <td>${pctCellHtml(sector.weightedChange7d)}</td>
           <td>${pctCellHtml(sector.weightedChange30d)}</td>
+          <td>${pctCellHtml(sector.weightedChange1y)}</td>
         </tr>
-        ${isOpen ? `<tr class="flows-coins-wrap"><td colspan="5">
+        ${isOpen ? `<tr class="flows-coins-wrap"><td colspan="6">
           <table class="flows-coins-table"><thead><tr>
-            <th>Coin</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th>
+            <th>Coin</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th><th>1y</th>
           </tr></thead><tbody>${coinRows}</tbody></table>
         </td></tr>` : ''}`;
     }).join('');
 
     return `
-      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins.</div>
+      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins. (MTD/YTD would need per-coin calendar-anchored history CoinGecko's rolling windows can't provide — 30D/1Y stand in instead.)</div>
       <table class="flows-table">
-        <thead><tr><th>Category</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th></tr></thead>
+        <thead><tr><th>Category</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th><th>1y</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
   }
