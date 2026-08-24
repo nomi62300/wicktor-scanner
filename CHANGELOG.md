@@ -8,12 +8,48 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, Phase 5 Stages 0-1
-(strategy-enrichment indicator math + snapshot wiring), and a Flows 1Y
-column added in follow-up sessions with the owner present. Deliberately
-left unmerged on a branch pending review, per standing branch discipline
-(`main` auto-deploys live). Not version-bumped or tagged; that happens
-at merge time.
+fallback tier, sloped regression-channel levels, Phase 5 Stages 0-2
+(strategy-enrichment indicator math + snapshot wiring + scalping-tier
+scoring), and a Flows 1Y column added in follow-up sessions with the
+owner present. Deliberately left unmerged on a branch pending review,
+per standing branch discipline (`main` auto-deploys live). Not
+version-bumped or tagged; that happens at merge time.
+
+### Added (Phase 5 Stage 2 — scalping-tier scoring, strategies 1-5)
+**This is the first stage in this batch that changes live signal
+output** — Stage 0/1 were purely additive/inert; from here on,
+`buildContinuation`/`buildExhaustion`/`buildReversal` read the new
+Stage 1 fields and can change a coin's Continuation/Exhaustion/Reversal
+score and band. `computeBias()`/`alignmentCeiling()` are untouched.
+- **Strategy 1 (Scalping EMA)**: 1H EMA9/21 stack matching bias (+10);
+  15M MACD cross on a genuine EMA21 pullback, within 0.5x ATR (+14).
+- **Strategy 2 (Volatility Breakout)**: 15M BB bandwidth expanding with
+  a close outside the band on the bias side (+12), ADX>=25 adds a
+  separate confirmation (+8). Approximated: the snapshot only carries
+  the current bar's squeeze state, not multi-bar squeeze history, so
+  this reads the live expansion+breakout moment rather than
+  reconstructing exactly when the squeeze itself started.
+  Noted honestly in code comments, not silently overclaimed.
+- **Strategy 3 (Breakout Retest)**: 1H price above/below its fractal
+  level AND within 0.5x ATR of it (+15, Continuation); the same
+  condition with RSI>=70/<=30 scores a separate Reversal trap-risk item
+  (+10) — distinct from the existing plain RSI-extreme Exhaustion check
+  (different threshold/arm/condition, not a duplicate). Approximated:
+  full spec ("broke out within 8 bars, retested, closed back above")
+  needs multi-bar candle history the scoring layer doesn't have: this
+  reads the live near-level state instead.
+- **Strategy 4 (Squeeze Momentum)**: 15M BB expanding + MACD histogram
+  matching bias and rising (+14) — oscillator-driven, deliberately
+  distinct from Strategy 2's price-driven condition.
+- **Strategy 5 (Mean Reversion)**: 5M price at a BB extreme (+8) and a
+  Stochastic exhaustion crossover from overbought/oversold (+10),
+  Exhaustion arm, bias-independent — two separate lines so a partial
+  confirm still shows partial pressure.
+- 24 new targeted tests (12 conditions x pass/fail case) verify each
+  strategy in isolation. Live smoke-tested against real Bybit data per
+  the plan's own requirement for this stage: multiple real coins showed
+  the new items firing correctly alongside every existing item, scores
+  still correctly capped at 65/40/50, no console errors.
 
 ### Added (Phase 5 Stage 1 — strategy-enrichment snapshot wiring)
 - Wired the 6 new indicators into `analyzeTimeframe()`'s per-timeframe

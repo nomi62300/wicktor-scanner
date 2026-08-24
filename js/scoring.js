@@ -139,6 +139,84 @@ const Scoring = (() => {
       score += 8;
     }
 
+    // ====================================================================
+    // Phase 5 Stage 2 — scalping-tier strategies 1-5 (see the paused
+    // backlog plan section 4.3 for the full owner-provided definitions).
+    // computeBias()/alignmentCeiling() are never touched by this batch —
+    // everything below only adds/subtracts Continuation/Exhaustion/
+    // Reversal points, same as every existing item in this function.
+    // ====================================================================
+
+    // Strategy 1 (Scalping EMA).
+    if (primary) {
+      if (bias === 1 && primary.emaStackBullish) {
+        items.push(['1H EMA 9/21 bullish trend', 10]); score += 10;
+      } else if (bias === -1 && primary.ema9 != null && primary.ema21 != null && primary.ema9 < primary.ema21) {
+        items.push(['1H EMA 9/21 bearish trend', 10]); score += 10;
+      }
+    }
+    if (m15) {
+      // "Pullback to EMA21" = close within 0.5x ATR of EMA21 — same
+      // distance-in-ATR language used elsewhere in this file (breakout-
+      // proximity, OI significance), kept consistent across the batch.
+      const pulledBackToEma21 = m15.ema21 != null && m15.close != null && m15.atr != null &&
+        Math.abs(m15.close - m15.ema21) <= 0.5 * m15.atr;
+      if (bias === 1 && m15.macdBullishCross && pulledBackToEma21) {
+        items.push(['15M MACD bullish cross on EMA21 pullback', 14]); score += 14;
+      } else if (bias === -1 && m15.macdBearishCross && pulledBackToEma21) {
+        items.push(['15M MACD bearish cross on EMA21 pullback', 14]); score += 14;
+      }
+    }
+
+    // Strategy 2 (Volatility Breakout), 15M. "Squeeze -> expansion,
+    // breaks outside band" is approximated as expanding bandwidth + a
+    // close genuinely outside the band on the bias side — the snapshot
+    // only carries the current bar's squeeze state (is bandwidth the
+    // trailing-20 minimum right now), not a multi-bar "was squeezed a
+    // few bars ago" history, so this reads the live breakout moment
+    // rather than reconstructing the squeeze's own start.
+    if (m15) {
+      const breakoutUp = m15.bbUpper != null && m15.close > m15.bbUpper;
+      const breakoutDown = m15.bbLower != null && m15.close < m15.bbLower;
+      const brokeOut = (bias === 1 && breakoutUp) || (bias === -1 && breakoutDown);
+      if (m15.bbExpanding && brokeOut) {
+        items.push(['15M BB squeeze breakout', 12]); score += 12;
+        // Distinct specific-event confirmation, additive to the general
+        // ADX-as-Continuation-multiplier design (section 4.2) — this
+        // strategy's own ADX check, not the global multiplier.
+        if (m15.adx != null && m15.adx >= 25) {
+          items.push(['ADX confirms breakout strength', 8]); score += 8;
+        }
+      }
+    }
+
+    // Strategy 3 (Breakout Retest), 1H. Full spec ("broke out within 8
+    // bars, retested, closed back above") needs multi-bar candle history
+    // the scoring layer doesn't have — approximated using what the
+    // snapshot does carry: already above/below the fractal level AND
+    // sitting close to it (within 0.5x ATR), i.e. a live retest zone.
+    if (primary) {
+      const nearUpRetest = primary.lastUpFractal != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.lastUpFractal) <= 0.5 * primary.atr;
+      const nearDownRetest = primary.lastDownFractal != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.lastDownFractal) <= 0.5 * primary.atr;
+      if (bias === 1 && primary.aboveUpFractal && nearUpRetest) {
+        items.push(['1H Breakout retest held', 15]); score += 15;
+      } else if (bias === -1 && primary.belowDownFractal && nearDownRetest) {
+        items.push(['1H Breakout retest held', 15]); score += 15;
+      }
+    }
+
+    // Strategy 4 (Squeeze Momentum), 15M — distinct from Strategy 2:
+    // oscillator-driven (MACD histogram direction+momentum) rather than
+    // price-driven (an actual close outside the bands).
+    if (m15 && m15.macdHistogram != null) {
+      const histMatchesBias = (bias === 1 && m15.macdHistogram > 0) || (bias === -1 && m15.macdHistogram < 0);
+      if (m15.bbExpanding && histMatchesBias && m15.macdHistogramRising) {
+        items.push(['15M Squeeze momentum expansion (MACD confirm)', 14]); score += 14;
+      }
+    }
+
     return { score: Math.min(65, score), items };
   }
 
@@ -163,6 +241,18 @@ const Scoring = (() => {
         items.push(['1H AC decelerating (bullish momentum fading)', 12]); score += 12;
       } else if (primary.ao < 0 && primary.acRising) {
         items.push(['1H AC decelerating (bearish momentum fading)', 12]); score += 12;
+      }
+    }
+
+    // Strategy 5 (Mean Reversion), 5M — explicitly a reversal/exhaustion
+    // play, bias-independent like every other item in this function. Two
+    // separate lines so a partial confirm still shows partial pressure.
+    if (fast) {
+      if (fast.bbPercentB != null && (fast.bbPercentB >= 1 || fast.bbPercentB <= 0)) {
+        items.push(['5M Price at BB extreme', 8]); score += 8;
+      }
+      if (fast.stochBullishCrossFromOversold || fast.stochBearishCrossFromOverbought) {
+        items.push(['5M Stochastic exhaustion crossover', 10]); score += 10;
       }
     }
 
@@ -207,6 +297,21 @@ const Scoring = (() => {
         items.push(['1H Wiseman AO reversal (bullish)', 12]); score += 12;
       } else if (bias === 1 && primary.wisemanBearish) {
         items.push(['1H Wiseman AO reversal (bearish)', 12]); score += 12;
+      }
+
+      // Strategy 3 (Breakout Retest) trap-avoidance: a retest holding
+      // while RSI is already extended is a specific, riskier variant of
+      // "retest held" (scored in Continuation) — distinct from the plain
+      // RSI>=75 Exhaustion check above (different threshold, different
+      // arm, different condition, not a duplicate).
+      const nearUpRetest = primary.lastUpFractal != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.lastUpFractal) <= 0.5 * primary.atr;
+      const nearDownRetest = primary.lastDownFractal != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.lastDownFractal) <= 0.5 * primary.atr;
+      if (bias === 1 && primary.aboveUpFractal && nearUpRetest && primary.rsi != null && primary.rsi >= 70) {
+        items.push(['1H Retest into overbought (trap risk)', 10]); score += 10;
+      } else if (bias === -1 && primary.belowDownFractal && nearDownRetest && primary.rsi != null && primary.rsi <= 30) {
+        items.push(['1H Retest into oversold (trap risk)', 10]); score += 10;
       }
     }
 
