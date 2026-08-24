@@ -642,6 +642,55 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 5 Stage 3 — swing-tier strategies 6, 7, 8, 9, 11
+// ---------------------------------------------------------------------------
+
+test('Strategy 6 (Momentum Swing): above-cloud + stoch bullish entry both score; below-cloud in a bull bias does not', () => {
+  const primary = baseSnap({ ichimokuAboveCloud: true });
+  assert.ok(Scoring.buildContinuation([primary, null, null], 1).items.some(([l]) => l === '1H Price above Ichimoku cloud'));
+  const m15 = baseSnap({ stochBullishCrossFromOversold: true });
+  assert.ok(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Stochastic bullish entry (oversold cross)'));
+  const below = baseSnap({ ichimokuAboveCloud: false, ichimokuBelowCloud: true });
+  assert.ok(!Scoring.buildContinuation([below, null, null], 1).items.some(([l]) => l.includes('Ichimoku')));
+});
+
+test('Strategy 7 (Trend Following): plain MACD cross matching bias scores; EMA stack is NOT re-scored as a second line', () => {
+  const primary = baseSnap({ macdBullishCross: true, emaStackBullish: true });
+  const items = Scoring.buildContinuation([primary, null, null], 1).items;
+  assert.ok(items.some(([l]) => l === '1H MACD trend-following cross'));
+  assert.ok(!items.some(([l]) => l.includes('EMA stack')), 'EMA stack should not be a separate scoring line');
+});
+
+test('Strategy 8 (Trend Reversals): MACD cross against bias near a key level scores; far from any level does not', () => {
+  const primary = baseSnap({ macdBearishCross: true, resistance: 100, close: 100.5, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert.ok(Scoring.buildReversal([primary, null, null], 1).items.some(([l]) => l === '1H MACD reversal cross at key level'));
+  const far = baseSnap({ macdBearishCross: true, resistance: 100, close: 150, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert.ok(!Scoring.buildReversal([far, null, null], 1).items.some(([l]) => l.includes('MACD reversal cross')));
+});
+
+test('Strategy 9 (Divergence Play): MACD divergence (1H) and Stochastic divergence (15M) both score independently', () => {
+  const primary = baseSnap({ macdDivergence: 'bear', divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false });
+  assert.ok(Scoring.buildReversal([primary, null, null], 1).items.some(([l]) => l === '1H Bearish MACD divergence'));
+  const m15 = baseSnap({ stochDivergence: 'bear' });
+  assert.ok(Scoring.buildReversal([baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' }), m15, null], 1).items.some(([l]) => l === '15M Stochastic divergence'));
+});
+
+test('Strategy 11 (Range Bound): only fires when bias===0, mirrors correctly for oversold/overbought', () => {
+  const m5Oversold = baseSnap({ bbPercentB: 0.02, rsi: 30 });
+  const oversoldItems = Scoring.buildReversal([null, null, m5Oversold], 0).items;
+  assert.ok(oversoldItems.some(([l]) => l === '5M Range-bound bounce (support + RSI oversold)'));
+  const m5Overbought = baseSnap({ bbPercentB: 0.98, rsi: 70 });
+  const overboughtItems = Scoring.buildReversal([null, null, m5Overbought], 0).items;
+  assert.ok(overboughtItems.some(([l]) => l === '5M Range-bound fade (resistance + RSI overbought)'));
+});
+
+test('Strategy 11: does NOT fire when bias is non-zero, even with the same extreme readings', () => {
+  const m5 = baseSnap({ bbPercentB: 0.02, rsi: 30 });
+  const items = Scoring.buildReversal([baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' }), null, m5], 1).items;
+  assert.ok(!items.some(([l]) => l.includes('Range-bound')));
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`);

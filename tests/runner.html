@@ -867,6 +867,38 @@ test('Strategy 5: BB extreme + stochastic exhaustion cross both score independen
   assert(!Scoring.buildExhaustion([baseSnap({}), baseSnap({}), mid]).items.some(([l]) => l.includes('BB extreme') || l.includes('Stochastic exhaustion')));
 });
 
+suite('O — Phase 5 Stage 3: swing-tier strategies 6, 7, 8, 9, 11');
+
+test('Strategy 6/7: Ichimoku cloud + stoch entry score; plain MACD cross scores but EMA stack is not re-scored', () => {
+  const primary = baseSnap({ ichimokuAboveCloud: true, macdBullishCross: true, emaStackBullish: true });
+  const items = Scoring.buildContinuation([primary, null, null], 1).items;
+  assert(items.some(([l]) => l === '1H Price above Ichimoku cloud'));
+  assert(items.some(([l]) => l === '1H MACD trend-following cross'));
+  assert(!items.some(([l]) => l.includes('EMA stack')));
+  const m15 = baseSnap({ stochBullishCrossFromOversold: true });
+  assert(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Stochastic bullish entry (oversold cross)'));
+});
+
+test('Strategy 8/9: MACD reversal-at-level and MACD/Stochastic divergence score independently; far-from-level does not', () => {
+  const near = baseSnap({ macdBearishCross: true, resistance: 100, close: 100.5, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([near, null, null], 1).items.some(([l]) => l === '1H MACD reversal cross at key level'));
+  const far = baseSnap({ macdBearishCross: true, resistance: 100, close: 150, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert(!Scoring.buildReversal([far, null, null], 1).items.some(([l]) => l.includes('MACD reversal cross')));
+  const macdDiv = baseSnap({ macdDivergence: 'bear', divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false });
+  assert(Scoring.buildReversal([macdDiv, null, null], 1).items.some(([l]) => l === '1H Bearish MACD divergence'));
+  const stochDiv = baseSnap({ stochDivergence: 'bear' });
+  assert(Scoring.buildReversal([baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' }), stochDiv, null], 1).items.some(([l]) => l === '15M Stochastic divergence'));
+});
+
+test('Strategy 11: Range Bound fires only when bias===0, mirrors oversold/overbought correctly', () => {
+  const oversold = baseSnap({ bbPercentB: 0.02, rsi: 30 });
+  assert(Scoring.buildReversal([null, null, oversold], 0).items.some(([l]) => l === '5M Range-bound bounce (support + RSI oversold)'));
+  const overbought = baseSnap({ bbPercentB: 0.98, rsi: 70 });
+  assert(Scoring.buildReversal([null, null, overbought], 0).items.some(([l]) => l === '5M Range-bound fade (resistance + RSI overbought)'));
+  const nonZeroBias = baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert(!Scoring.buildReversal([nonZeroBias, null, oversold], 1).items.some(([l]) => l.includes('Range-bound')));
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render results to DOM
 // ─────────────────────────────────────────────────────────────────────────────

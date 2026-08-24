@@ -662,6 +662,13 @@ const Indicators = (() => {
 
     const sweep = liquiditySweep(candles, frac, lastIdx, atrV);
 
+    // MACD/Stochastic divergence (strategy-enrichment #9) — divergence()
+    // is already fully generic (never RSI-specific internally), so this
+    // reuses it directly against macdLine/stochK instead of a new
+    // "macdDivergence()" function, per Stage 1's own note.
+    const macdDivergenceV = divergence(candles, macdResult.macdLine, frac);
+    const stochDivergenceV = divergence(candles, stochResult.k, frac);
+
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
       confidence,             // 5-tier: strong_bull/weak_bull/neutral/weak_bear/strong_bear
@@ -704,7 +711,8 @@ const Indicators = (() => {
       stochBullishCrossFromOversold, stochBearishCrossFromOverbought,
       ichimokuAboveCloud, ichimokuBelowCloud, tenkan: tenkanV, kijun: kijunV,
       tenkanKijunBullishCross,
-      liquiditySweepUp: sweep.up, liquiditySweepDown: sweep.down
+      liquiditySweepUp: sweep.up, liquiditySweepDown: sweep.down,
+      macdDivergence: macdDivergenceV, stochDivergence: stochDivergenceV
     };
   }
 

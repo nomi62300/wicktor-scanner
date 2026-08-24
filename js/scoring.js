@@ -217,6 +217,40 @@ const Scoring = (() => {
       }
     }
 
+    // Strategy 6 (Momentum Swing).
+    if (primary) {
+      if (bias === 1 && primary.ichimokuAboveCloud) {
+        items.push(['1H Price above Ichimoku cloud', 12]); score += 12;
+      } else if (bias === -1 && primary.ichimokuBelowCloud) {
+        items.push(['1H Price below Ichimoku cloud', 12]); score += 12;
+      }
+    }
+    if (m15) {
+      if (bias === 1 && m15.stochBullishCrossFromOversold) {
+        items.push(['15M Stochastic bullish entry (oversold cross)', 10]); score += 10;
+      } else if (bias === -1 && m15.stochBearishCrossFromOverbought) {
+        items.push(['15M Stochastic bearish entry (overbought cross)', 10]); score += 10;
+      }
+    }
+
+    // Strategy 7 (Trend Following). "EMA stack aligned with bias" is the
+    // same underlying EMA9/21 condition as Strategy 1's "1H EMA 9/21
+    // bullish trend" (only two EMAs exist — 9/21 — nothing to form a
+    // genuinely distinct 3+-EMA "stack" from), so it is deliberately NOT
+    // re-scored as a second line here — same reuse-not-duplicate
+    // principle already used for RSI divergence (Strategy 9) elsewhere
+    // in this plan. Only the genuinely distinct condition (a plain
+    // directional MACD cross, no EMA21-pullback requirement — unlike
+    // Strategy 1) is scored. ADX is handled globally via the Q1
+    // multiplier design (section 4.2), not a redundant line here.
+    if (primary) {
+      if (bias === 1 && primary.macdBullishCross) {
+        items.push(['1H MACD trend-following cross', 12]); score += 12;
+      } else if (bias === -1 && primary.macdBearishCross) {
+        items.push(['1H MACD trend-following cross', 12]); score += 12;
+      }
+    }
+
     return { score: Math.min(65, score), items };
   }
 
@@ -312,6 +346,55 @@ const Scoring = (() => {
         items.push(['1H Retest into overbought (trap risk)', 10]); score += 10;
       } else if (bias === -1 && primary.belowDownFractal && nearDownRetest && primary.rsi != null && primary.rsi <= 30) {
         items.push(['1H Retest into oversold (trap risk)', 10]); score += 10;
+      }
+
+      // Strategy 8 (Trend Reversals): MACD turning against the current
+      // bias while price sits within 1x ATR of an existing fractal-based
+      // key level — a reversal at a level that actually matters, not
+      // just any MACD flip. RSI-divergence items above already cover
+      // this strategy's other listed signal; not duplicated here.
+      const nearResistance = primary.resistance != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.resistance) <= 1 * primary.atr;
+      const nearSupport = primary.support != null && primary.close != null && primary.atr != null &&
+        Math.abs(primary.close - primary.support) <= 1 * primary.atr;
+      if (bias === 1 && primary.macdBearishCross && nearResistance) {
+        items.push(['1H MACD reversal cross at key level', 15]); score += 15;
+      } else if (bias === -1 && primary.macdBullishCross && nearSupport) {
+        items.push(['1H MACD reversal cross at key level', 15]); score += 15;
+      }
+
+      // Strategy 9 (Divergence Play): MACD/Stochastic divergence, same
+      // pivot-pairing pattern as the existing RSI divergence above —
+      // both reuse the same generic divergence() function (see Stage 1),
+      // just fed a different oscillator series. Scored slightly below
+      // RSI's 20 since RSI is the primary taught signal.
+      if (bias === 1 && primary.macdDivergence === 'bear') {
+        items.push(['1H Bearish MACD divergence', 15]); score += 15;
+      } else if (bias === -1 && primary.macdDivergence === 'bull') {
+        items.push(['1H Bullish MACD divergence', 15]); score += 15;
+      }
+    }
+    const m15 = tfSnapshots[1];
+    if (m15) {
+      if (bias === 1 && m15.stochDivergence === 'bear') {
+        items.push(['15M Stochastic divergence', 10]); score += 10;
+      } else if (bias === -1 && m15.stochDivergence === 'bull') {
+        items.push(['15M Stochastic divergence', 10]); score += 10;
+      }
+    }
+
+    // Strategy 11 (Range Bound): explicitly a non-trending strategy —
+    // only fires when bias===0 (1H sleeping), and only in Reversal, never
+    // Continuation. Confirmed safe: buildReversal already computes
+    // unconditionally regardless of bias (only alignmentCeiling/
+    // tradeQualityScore treat bias===0 specially), so this doesn't touch
+    // computeBias()'s own bias===0 handling.
+    const m5 = tfSnapshots[2];
+    if (bias === 0 && m5 && m5.bbPercentB != null && m5.rsi != null) {
+      if (m5.bbPercentB <= 0.05 && m5.rsi <= 35) {
+        items.push(['5M Range-bound bounce (support + RSI oversold)', 12]); score += 12;
+      } else if (m5.bbPercentB >= 0.95 && m5.rsi >= 65) {
+        items.push(['5M Range-bound fade (resistance + RSI overbought)', 12]); score += 12;
       }
     }
 

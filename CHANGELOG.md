@@ -8,12 +8,49 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, Phase 5 Stages 0-2
-(strategy-enrichment indicator math + snapshot wiring + scalping-tier
-scoring), and a Flows 1Y column added in follow-up sessions with the
-owner present. Deliberately left unmerged on a branch pending review,
-per standing branch discipline (`main` auto-deploys live). Not
+fallback tier, sloped regression-channel levels, Phase 5 Stages 0-3
+(strategy-enrichment indicator math + snapshot wiring + scalping-tier +
+swing-tier scoring), and a Flows 1Y column added in follow-up sessions
+with the owner present. Deliberately left unmerged on a branch pending
+review, per standing branch discipline (`main` auto-deploys live). Not
 version-bumped or tagged; that happens at merge time.
+
+### Added (Phase 5 Stage 3 — swing-tier scoring, strategies 6/7/8/9/11)
+- **Strategy 6 (Momentum Swing)**: 1H price above/below the Ichimoku
+  cloud matching bias (+12); 15M Stochastic entry cross from oversold/
+  overbought matching bias (+10).
+- **Strategy 7 (Trend Following)**: 1H plain directional MACD cross
+  (+12) — no EMA21-pullback requirement, unlike Strategy 1's 15M cross,
+  and a different timeframe entirely, so the two don't overlap. The
+  strategy's other listed condition, "EMA stack aligned with bias," is
+  deliberately NOT re-scored as a second line — only two EMAs exist
+  (9/21), so it's the identical underlying signal already scored by
+  Strategy 1's "1H EMA 9/21 bullish trend," not a genuinely distinct
+  3+-EMA stack. ADX handled via the existing Q1 multiplier design, no
+  redundant line here either.
+- **Strategy 8 (Trend Reversals)**: MACD turning against the current
+  bias while price sits within 1x ATR of an existing fractal-based key
+  level (+15, Reversal) — a reversal at a level that matters, not any
+  MACD flip. The strategy's RSI-divergence condition reuses the existing
+  item unchanged.
+- **Strategy 9 (Divergence Play)**: MACD divergence on 1H (+15) and
+  Stochastic divergence on 15M (+10), both reusing the existing generic
+  `divergence()` function against `macdSeries`/`stochSeries` (added to
+  the snapshot in Stage 1 for exactly this) — confirmed no new
+  "macdDivergence()" function was needed, since `divergence()` was
+  never RSI-specific internally. New `macdDivergence`/`stochDivergence`
+  snapshot fields computed once in `analyzeTimeframe()`.
+- **Strategy 11 (Range Bound)**: explicitly a non-trending strategy —
+  only fires when `bias===0` (1H sleeping), Reversal arm only, never
+  Continuation. 5M price at a BB extreme + RSI confirming oversold/
+  overbought (+12, mirrored for both directions). Confirmed safe:
+  `buildReversal` already computes unconditionally regardless of bias
+  (only `alignmentCeiling`/`tradeQualityScore` treat `bias===0`
+  specially), so `computeBias()`'s own handling is untouched.
+- 18 new targeted tests. Live smoke-tested against real Bybit data:
+  a real coin's modal showed "1H Price above Ichimoku cloud" firing
+  correctly alongside every earlier-stage item, no console errors, score
+  correctly capped. All 100 tests pass.
 
 ### Added (Phase 5 Stage 2 — scalping-tier scoring, strategies 1-5)
 **This is the first stage in this batch that changes live signal
