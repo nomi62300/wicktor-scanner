@@ -635,6 +635,48 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase B3 — invalidation must not outlive the move that caused it
+// ---------------------------------------------------------------------------
+
+test('B3: a jaw touch in a bearish mouth is retired when the mouth flips bullish', () => {
+  const ha = [], jaw = [], teeth = [], lips = [];
+  for (let i = 0; i < 30; i++) {
+    const bearish = i < 15;
+    jaw.push(bearish ? 110 : 90); teeth.push(100); lips.push(bearish ? 90 : 110);
+    ha.push({ t: i, o: 100, h: i === 10 ? 115 : 101, l: 99, c: 100 });
+  }
+  const st = Indicators.alligatorTouchState(ha, jaw, teeth, lips);
+  assert.strictEqual(st[10], true, 'bearish jaw pierced -> invalidated');
+  assert.strictEqual(st[14], true, 'still the same bearish move -> still invalidated');
+  assert.strictEqual(st[15], false, 'mouth flipped bullish -> old invalidation must retire');
+  assert.ok(st.slice(16, 20).every(v => v === false));
+});
+
+test('B3: an invalidation within the SAME mouth still persists until price clears lips', () => {
+  const ha = [], jaw = [], teeth = [], lips = [];
+  for (let i = 0; i < 20; i++) {
+    jaw.push(90); teeth.push(100); lips.push(110);
+    ha.push({ t: i, o: 105, h: 112, l: i === 8 ? 89 : 104, c: 105 }); // close stays below lips
+  }
+  const st = Indicators.alligatorTouchState(ha, jaw, teeth, lips);
+  assert.strictEqual(st[8], true);
+  assert.ok(st.slice(9, 13).every(v => v === true), 'must not clear while close < lips');
+});
+
+test('B3: a flat/mixed mouth does NOT count as a context change', () => {
+  const ha = [], jaw = [], teeth = [], lips = [];
+  for (let i = 0; i < 20; i++) {
+    const flat = i >= 10 && i < 14;          // lines converge, no directional mouth
+    jaw.push(90); teeth.push(100); lips.push(flat ? 100 : 110);
+    ha.push({ t: i, o: 105, h: 112, l: i === 8 ? 89 : 104, c: 105 });
+  }
+  const st = Indicators.alligatorTouchState(ha, jaw, teeth, lips);
+  assert.strictEqual(st[8], true);
+  assert.ok(st.slice(10, 14).every(v => v === true),
+    'a temporary flattening is an undecided mouth, not a new trend — flag stays live');
+});
+
+// ---------------------------------------------------------------------------
 // Phase B2 — directional symmetry. These are invariants, not examples: a
 // long and its exact mirror-image short must score identically. Any future
 // rule added on one side only will break these rather than silently skew.

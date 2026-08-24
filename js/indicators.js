@@ -103,6 +103,13 @@ const Indicators = (() => {
     const n = haCandles.length;
     const invalidated = new Array(n).fill(false);
     let isInvalidated = false;
+    // Which mouth the active invalidation was earned in. Without this the
+    // flag leaked: a jaw touch during a BEARISH mouth stayed active after
+    // the mouth flipped bullish, and since analyzeTimeframe() forces
+    // alignment to 0 whenever the flag is set, a brand-new valid bullish
+    // setup was suppressed by an event from the opposite trend. An
+    // invalidation is a statement about one move, so it dies with it.
+    let invalidatedIn = null; // 'bull' | 'bear' | null
 
     for (let i = 0; i < n; i++) {
       const jawV   = jaw[i];
@@ -118,21 +125,32 @@ const Indicators = (() => {
       const bullish = lipsV > teethV && teethV > jawV;
       const bearish = lipsV < teethV && teethV < jawV;
 
+      // A directional mouth that disagrees with where the invalidation came
+      // from means the original move is over — retire the flag rather than
+      // carrying it into an unrelated trend. Mixed/flat bars are NOT treated
+      // as a context change; the mouth is simply undecided, and a temporary
+      // flattening shouldn't clear a still-live invalidation.
+      const ctx = bullish ? 'bull' : bearish ? 'bear' : null;
+      if (isInvalidated && ctx && invalidatedIn && ctx !== invalidatedIn) {
+        isInvalidated = false;
+        invalidatedIn = null;
+      }
+
       if (bullish) {
         if (isInvalidated) {
           // Clear condition: HA close back above lips
-          if (haCandles[i].c > lipsV) isInvalidated = false;
+          if (haCandles[i].c > lipsV) { isInvalidated = false; invalidatedIn = null; }
         } else {
           // Invalidate condition: HA low dips into or through jaw
-          if (haCandles[i].l <= jawV) isInvalidated = true;
+          if (haCandles[i].l <= jawV) { isInvalidated = true; invalidatedIn = 'bull'; }
         }
       } else if (bearish) {
         if (isInvalidated) {
           // Clear condition: HA close back below lips
-          if (haCandles[i].c < lipsV) isInvalidated = false;
+          if (haCandles[i].c < lipsV) { isInvalidated = false; invalidatedIn = null; }
         } else {
           // Invalidate condition: HA high touches or exceeds jaw
-          if (haCandles[i].h >= jawV) isInvalidated = true;
+          if (haCandles[i].h >= jawV) { isInvalidated = true; invalidatedIn = 'bear'; }
         }
       } else {
         // Mixed/flat: don't flip state, just carry forward
