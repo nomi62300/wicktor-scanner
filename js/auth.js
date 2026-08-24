@@ -14,18 +14,31 @@ const Auth = (() => {
   const SUPABASE_URL = 'https://fpyfetynfobfrpunnnhv.supabase.co';
   const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC';
 
-  const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  // Audit F4: window.supabase comes from a CDN <script> tag, which can be
+  // blocked (ad-blocker, offline, CDN outage). createClient() throwing here
+  // used to abort this whole IIFE, leaving the global `Auth` unassigned —
+  // every later `Auth.xxx` call site (star clicks, Watchlist tab, Account
+  // panel) then threw ReferenceError instead of degrading gracefully.
+  let client = null;
+  try {
+    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  } catch (e) {
+    console.warn('[Auth] Supabase client unavailable — CDN may be blocked; auth features disabled', e);
+  }
 
   let currentUser = null;
   const listeners = [];
 
-  client.auth.onAuthStateChange((_event, session) => {
-    currentUser = session ? session.user : null;
-    listeners.forEach(fn => fn(currentUser));
-  });
+  if (client) {
+    client.auth.onAuthStateChange((_event, session) => {
+      currentUser = session ? session.user : null;
+      listeners.forEach(fn => fn(currentUser));
+    });
+  }
 
   /** Call once on page load — resolves once the current session (if any) is known. */
   async function init() {
+    if (!client) return null;
     const { data } = await client.auth.getSession();
     currentUser = data.session ? data.session.user : null;
     return currentUser;
@@ -35,18 +48,21 @@ const Auth = (() => {
   function getUser() { return currentUser; }
 
   async function signUp(email, password) {
+    if (!client) throw new Error('Sign-up is unavailable right now — the auth service failed to load.');
     const { data, error } = await client.auth.signUp({ email, password });
     if (error) throw error;
     return data;
   }
 
   async function signIn(email, password) {
+    if (!client) throw new Error('Sign-in is unavailable right now — the auth service failed to load.');
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     return data;
   }
 
   async function signOut() {
+    if (!client) return;
     await client.auth.signOut();
   }
 

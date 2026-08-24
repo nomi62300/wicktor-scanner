@@ -34,6 +34,22 @@ source file before removal. Zero scoring/UI behavior change — verified
 pre-existing, unrelated `fractals`/`heikinAshi` case). Cuts ~563 KB/scan
 of retained-but-unused payload.
 
+### Fixed (Audit F4 — Auth hard-fails if the Supabase CDN is unavailable)
+`js/auth.js` called `window.supabase.createClient()` at module-load time
+with no guard. Verified: with `window.supabase` undefined (CDN blocked,
+offline, outage) it threw a `TypeError` that aborted the whole IIFE,
+leaving the global `Auth` unassigned — every later call site (star
+clicks, the Watchlist tab, the Account panel) then threw `ReferenceError`
+instead of degrading. The scanner itself only survived because the
+star-click throw happened to land after the localStorage write — luck of
+statement ordering, not design. Now wrapped in try/catch; on failure
+`Auth` still exists with a null client, `getUser()`/`init()` resolve to
+signed-out state, `signUp`/`signIn` reject with a catchable message the
+Account panel's existing error display already renders, and `signOut` is
+a no-op. Re-verified by re-running `js/auth.js` standalone under a
+`window` with no `supabase` global: `Auth` defines, no throw anywhere in
+the call chain.
+
 ### Changed (Provider split — CoinPaprika becomes the primary bulk source)
 CoinGecko's free tier rate-limits constantly, and that was **not
 cosmetic**: sector data feeds `topNarrativeCandidates()` into the scan
