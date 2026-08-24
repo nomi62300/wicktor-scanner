@@ -502,6 +502,30 @@ const Api = (() => {
   }
 
   /**
+   * Phase 8 News tab: every article, newest-first, same normalized shape
+   * as newsForSymbol() (reuses its exact sentiment-mapping logic) but
+   * without the per-symbol ticker filter. Pure — no async, no side
+   * effects, same as newsForSymbol().
+   */
+  function allNews(articles, limit = 100) {
+    return (articles || [])
+      .slice()
+      .sort((a, b) => new Date(b.published) - new Date(a.published))
+      .slice(0, limit)
+      .map(a => {
+        const s = (a.sentiment || '').toLowerCase();
+        return {
+          headline: a.title,
+          source:   a.source,
+          time:     a.published,
+          sentiment: s === 'bullish' ? 'bull' : s === 'bearish' ? 'bear' : 'neutral',
+          url:      a.url,
+          tickers:  a.tickers || []
+        };
+      });
+  }
+
+  /**
    * Returns { items } for the given symbol using the cached feed.
    * No apiKey parameter — feed is open CORS, no key required.
    */
@@ -748,7 +772,7 @@ const Api = (() => {
     isTradeableUsdtPair, isXStock, refreshXStockSet,
     coingeckoGlobal, coingeckoMarketCaps, topByMarketCap, formatMcap,
     fearGreedIndex, unlockInfo,
-    fetchAllNews, newsForSymbol, coinNews,
+    fetchAllNews, newsForSymbol, allNews, coinNews,
     cgCategoryList, sectorPerformance7d, topNarrativeCandidates
   };
 })();

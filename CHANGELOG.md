@@ -7,13 +7,41 @@ project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
-outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, all of Phase 5 Stages
-0-4 (strategy-enrichment indicator math through advanced-tier scoring —
-the full 12-strategy batch), and a Flows 1Y column added in follow-up
-sessions with the owner present. Deliberately left unmerged on a branch
-pending review, per standing branch discipline (`main` auto-deploys
-live). Not version-bumped or tagged; that happens at merge time.
+Phase 8, outcome-logging, OI 15m%, the extended 7-TF panel, the
+CoinPaprika fallback tier, sloped regression-channel levels, all of
+Phase 5 Stages 0-4 (strategy-enrichment indicator math through
+advanced-tier scoring — the full 12-strategy batch), and a Flows 1Y
+column added in follow-up sessions with the owner present. Deliberately
+left unmerged on a branch pending review, per standing branch discipline
+(`main` auto-deploys live). Not version-bumped or tagged; that happens
+at merge time.
+
+### Added (Phase 8 — News tab, roadmap complete)
+- New "News" tab: a plain dense list of the existing Snitch feed
+  (`snitch.wicktor.top/news.json`, already integrated for per-card
+  badges and the detail-modal's news section) as its own top-level
+  surface — confirmed scope with the owner: additional, not a
+  replacement. The existing per-card treatment is completely unchanged
+  and unaffected (verified live: badges and modal news section both
+  still render exactly as before).
+- New `Api.allNews(articles, limit=100)`: every article newest-first,
+  same normalized shape and sentiment-mapping as the existing
+  `newsForSymbol()`, just without the per-symbol ticker filter. New
+  `Render.newsFeedHtml()` reuses the exact same `tweetBadgeHtml()`/
+  `sentTagHtml()`/`timeAgo()` helpers the modal's news section already
+  uses, so both surfaces render news identically. No new fetch path —
+  reuses the same `fetchAllNews()` 5-min cache both surfaces already
+  share.
+- Live-verified: a real scan populated the News tab with real live
+  headlines, sources, timestamps, sentiment tags, and ticker tags; the
+  Scanner tab's per-card badges and detail-modal news section confirmed
+  unaffected; no console errors.
+
+**This completes the full priority list for tonight's session**:
+CoinPaprika fallback, sloped regression-channel levels, all of Phase 5
+(strategy-enrichment), and Phase 8 (News tab). Wyckoff tagging was
+explicitly deferred (parked alongside SMC, needs real research first —
+see memory).
 
 ### Added (Phase 5 Stage 4 — advanced-tier scoring, strategies 12/13 — batch complete)
 - **Strategy 12 (Pullback Retracements)**: 15M EMA trend match + a

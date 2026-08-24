@@ -601,5 +601,26 @@ const Render = (() => {
     return `<div class="heatmap-grid">${tiles}</div>`;
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsSectionHtml, esc };
+  // Phase 8 News tab: a plain dense list of the existing Snitch feed
+  // (already integrated for per-card badges/detail-modal sections) as
+  // its own top-level tab — confirmed scope with the owner: an
+  // additional surface, not a replacement for the existing per-card
+  // treatment, which stays exactly as-is. Reuses the same
+  // tweetBadgeHtml()/sentTagHtml()/timeAgo() helpers newsSectionHtml()
+  // already uses, so the two surfaces render news identically.
+  function newsFeedHtml(articles) {
+    if (!articles) return '<div class="loading-state">Loading news...</div>';
+    if (!articles.length) return '<div class="loading-state">No recent news.</div>';
+    const rows = articles.map(a => `
+      <div class="news-feed-item">
+        <a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" class="news-headline">${esc(a.headline)}</a>
+        <div class="news-meta">
+          <span class="news-src">${tweetBadgeHtml(a.url)}${esc(a.source)} &middot; ${timeAgo(a.time)} ago${a.tickers && a.tickers.length ? ' &middot; ' + esc(a.tickers.join(', ')) : ''}</span>
+          ${sentTagHtml(a.sentiment)}
+        </div>
+      </div>`).join('');
+    return `<div class="news-feed-list">${rows}</div>`;
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsFeedHtml, newsSectionHtml, esc };
 })();

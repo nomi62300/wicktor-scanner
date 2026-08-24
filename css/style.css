@@ -683,6 +683,11 @@ input:focus-visible {
 .news-section-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
 .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .news-item:last-child { border-bottom: none; }
+
+.news-feed-list { max-width: 720px; }
+.news-feed-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.news-feed-item .news-headline { font-size: 13px; margin-bottom: 6px; }
+.news-feed-item:last-child { border-bottom: none; }
 .news-headline { font-size: 11px; color: var(--text); line-height: 1.4; margin-bottom: 4px; display: block; text-decoration: none; }
 .news-headline:hover { text-decoration: underline; }
 .news-meta { display: flex; justify-content: space-between; align-items: center; }

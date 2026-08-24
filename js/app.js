@@ -110,13 +110,16 @@
     navDashboard: document.getElementById('nav-dashboard'),
     navFlows: document.getElementById('nav-flows'),
     navHeatmap: document.getElementById('nav-heatmap'),
+    navNews: document.getElementById('nav-news'),
     viewScanner: document.getElementById('view-scanner'),
     viewDashboard: document.getElementById('view-dashboard'),
     viewFlows: document.getElementById('view-flows'),
     viewHeatmap: document.getElementById('view-heatmap'),
+    viewNews: document.getElementById('view-news'),
     dashboardGrid: document.getElementById('dashboard-grid'),
     flowsGrid: document.getElementById('flows-grid'),
     heatmapGridContainer: document.getElementById('heatmap-grid-container'),
+    newsFeedContainer: document.getElementById('news-feed-container'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -810,6 +813,7 @@
     el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
     el.navFlows.addEventListener('click', () => switchTab('flows'));
     el.navHeatmap.addEventListener('click', () => switchTab('heatmap'));
+    el.navNews.addEventListener('click', () => switchTab('news'));
     el.flowsGrid.addEventListener('click', (e) => {
       const row = e.target.closest('.flows-row');
       if (row) toggleFlowsRow(row.dataset.categoryId);
@@ -826,9 +830,10 @@
   // scan — it's supporting market context, not part of the scan cycle.
   // Cached at the Api layer so revisiting a tab within the cache window
   // doesn't refetch.
-  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap'];
+  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap', 'news'];
   let dashboardLoaded = false;
   let flowsLoaded = false;
+  let newsLoaded = false;
   const flowsExpanded = new Set();
 
   function switchTab(tab) {
@@ -855,6 +860,10 @@
       } else {
         refreshHeatmap();
       }
+    }
+    if (tab === 'news' && !newsLoaded) {
+      newsLoaded = true;
+      refreshNews();
     }
   }
 
@@ -890,6 +899,18 @@
 
   function refreshHeatmap() {
     el.heatmapGridContainer.innerHTML = Render.heatmapHtml(state.flowsData);
+  }
+
+  // News tab reuses the same fetchAllNews() cache already populated by
+  // the per-card news badges/detail-modal (5-min TTL) — no new fetch
+  // path, just a different render of the same feed.
+  async function refreshNews() {
+    const data = await Api.fetchAllNews().catch(e => {
+      console.warn('[App] fetchAllNews failed (News tab)', e);
+      return null;
+    });
+    const articles = data ? Api.allNews(data.articles) : [];
+    el.newsFeedContainer.innerHTML = Render.newsFeedHtml(articles);
   }
 
   function toggleFlowsRow(categoryId) {
