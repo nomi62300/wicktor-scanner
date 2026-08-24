@@ -120,9 +120,11 @@ const Scoring = (() => {
     const primary = tfSnapshots[0]; // 1H
     if (primary) {
       if (primary.ao != null) {
+        // Same !aoRising correction as tradeQualityScore(): direction now
+        // has to be explicitly falling to confirm a bearish bias.
         const strongConfirm = (bias === 1 && primary.aoRising && primary.ao > 0) ||
-          (bias === -1 && !primary.aoRising && primary.ao < 0);
-        const weakConfirm = primary.aoRising === (bias === 1);
+          (bias === -1 && primary.aoFalling && primary.ao < 0);
+        const weakConfirm = (bias === 1 && primary.aoRising) || (bias === -1 && primary.aoFalling);
         if (strongConfirm) add(bias === 1 ? 'AO rising, bullish' : 'AO falling, bearish', 100, true);
         else if (weakConfirm) add('AO direction weak confirm', 45, true);
         else add('AO direction opposes bias', 0, true);
@@ -269,22 +271,55 @@ const Scoring = (() => {
     return { score, items };
   }
 
-  function buildExhaustion(tfSnapshots) {
+  /**
+   * Exhaustion = "the move behind the CURRENT bias is running out of road".
+   * That makes it inherently directional, but it used to be computed with
+   * no `bias` argument at all, so it fired on both extremes regardless:
+   * a short was penalised for the market being overbought, which is the
+   * condition that supports the short. Half of every exhaustion reading
+   * was pointing the wrong way.
+   *
+   * Now every threshold is evaluated against the bias it actually
+   * threatens. The mirror is done by folding RSI/%B for bearish bias
+   * (`100 - rsi`, `1 - percentB`) rather than by writing a second set of
+   * hand-tuned bearish thresholds — that guarantees exact symmetry instead
+   * of hoping two constants stay in sync.
+   *
+   * bias === 0 (no 1H alignment) keeps the old bias-agnostic behaviour and
+   * fires on both sides: with no directional trade to exhaust, extremes at
+   * either end are genuine mean-reversion information. Today TQS short-
+   * circuits before reading this, but the range-bound case is exactly what
+   * the regime work needs to keep.
+   */
+  function buildExhaustion(tfSnapshots, bias) {
     const items = [];
     let score = 0;
+    const both = bias === 0 || bias == null;
+    // Fold the reading so "high = exhausting the current bias" always holds.
+    const foldRsi = v => (v == null ? null : (bias === -1 ? 100 - v : v));
+    const foldPctB = v => (v == null ? null : (bias === -1 ? 1 - v : v));
+
     // fastest timeframe (5M) reaching RSI extremes is an exhaustion signal
     const fast = tfSnapshots[2]; // 5M
     if (fast && fast.rsi != null) {
-      if (fast.rsi >= 68) { items.push(['5M RSI approaching overbought', Math.round((fast.rsi - 60))]); score += Math.round(fast.rsi - 60); }
-      else if (fast.rsi <= 32) { items.push(['5M RSI approaching oversold', Math.round(40 - fast.rsi)]); score += Math.round(40 - fast.rsi); }
+      const r = foldRsi(fast.rsi);
+      const overLabel = bias === -1 ? '5M RSI approaching oversold' : '5M RSI approaching overbought';
+      const underLabel = bias === -1 ? '5M RSI approaching overbought' : '5M RSI approaching oversold';
+      if (r >= 68) { const p = Math.round(r - 60); items.push([overLabel, p]); score += p; }
+      else if (both && r <= 32) { const p = Math.round(40 - r); items.push([underLabel, p]); score += p; }
     }
     const primary = tfSnapshots[0];
-    if (primary && primary.rsi != null && primary.rsi >= 75) {
-      items.push(['1H RSI extreme', 15]); score += 15;
+    if (primary && primary.rsi != null) {
+      const r = foldRsi(primary.rsi);
+      // Previously long-only (rsi >= 75 with no bearish mirror), so a short
+      // could never be warned it was already overextended.
+      if (r >= 75) { items.push(['1H RSI extreme', 15]); score += 15; }
+      else if (both && r <= 25) { items.push(['1H RSI extreme', 15]); score += 15; }
     }
 
     // Accelerator Oscillator: momentum-of-momentum decelerating ahead of
     // AO's own zero-cross — catches exhaustion earlier than AO alone.
+    // Already symmetric: keyed off AO's own sign, not off bias.
     if (primary && primary.ac != null && primary.ao != null) {
       if (primary.ao > 0 && !primary.acRising) {
         items.push(['1H AC decelerating (bullish momentum fading)', 12]); score += 12;
@@ -293,14 +328,20 @@ const Scoring = (() => {
       }
     }
 
-    // Strategy 5 (Mean Reversion), 5M — explicitly a reversal/exhaustion
-    // play, bias-independent like every other item in this function. Two
-    // separate lines so a partial confirm still shows partial pressure.
+    // Strategy 5 (Mean Reversion), 5M. Two separate lines so a partial
+    // confirm still shows partial pressure.
     if (fast) {
-      if (fast.bbPercentB != null && (fast.bbPercentB >= 1 || fast.bbPercentB <= 0)) {
+      const pb = foldPctB(fast.bbPercentB);
+      if (pb != null && (pb >= 1 || (both && pb <= 0))) {
         items.push(['5M Price at BB extreme', 8]); score += 8;
       }
-      if (fast.stochBullishCrossFromOversold || fast.stochBearishCrossFromOverbought) {
+      // Only the crossover that turns AGAINST the bias is exhaustion: a
+      // bearish cross from overbought threatens a long, a bullish cross
+      // from oversold threatens a short.
+      const againstBias = bias === 1 ? fast.stochBearishCrossFromOverbought
+        : bias === -1 ? fast.stochBullishCrossFromOversold
+        : (fast.stochBullishCrossFromOversold || fast.stochBearishCrossFromOverbought);
+      if (againstBias) {
         items.push(['5M Stochastic exhaustion crossover', 10]); score += 10;
       }
     }
@@ -466,10 +507,20 @@ const Scoring = (() => {
     const primary = tfSnapshots[0];
     let momentumScore = 50;
     if (primary) {
-      const aoGood = (bias === 1 && primary.aoRising) || (bias === -1 && !primary.aoRising);
-      momentumScore = aoGood ? 75 : 35;
+      // Three-way, not two-way: !aoRising used to lump "AO falling" together
+      // with "AO flat or unavailable", handing bearish setups a confirmation
+      // they hadn't earned (measured at 12 free TQS points). Unknown momentum
+      // is now neutral rather than scored as agreement or disagreement.
+      const aoGood = (bias === 1 && primary.aoRising) || (bias === -1 && primary.aoFalling);
+      const aoOpposes = (bias === 1 && primary.aoFalling) || (bias === -1 && primary.aoRising);
+      momentumScore = aoGood ? 75 : aoOpposes ? 35 : 50;
       if (primary.rsi != null) {
-        const healthy = primary.rsi > 40 && primary.rsi < 75;
+        // The 40-75 "healthy" band is written from a long's point of view.
+        // Folding RSI for bearish bias applies the same band to the mirrored
+        // reading, so a short at RSI 30 (trending, not yet exhausted) scores
+        // like a long at RSI 70 instead of being penalised as if oversold.
+        const effRsi = bias === -1 ? 100 - primary.rsi : primary.rsi;
+        const healthy = effRsi > 40 && effRsi < 75;
         momentumScore += healthy ? 15 : -10;
       }
       // Audit F2: ADX is trend STRENGTH, not direction — it can't confirm
@@ -556,7 +607,7 @@ const Scoring = (() => {
     const { bias, count } = computeBias(tfSnapshots);
     const ceiling = alignmentCeiling(tfSnapshots, bias);
     const continuation = buildContinuation(tfSnapshots, bias, extras && extras.oiChange15m);
-    const exhaustion = buildExhaustion(tfSnapshots);
+    const exhaustion = buildExhaustion(tfSnapshots, bias);
     const reversal = buildReversal(tfSnapshots, bias);
     const dir = directionValue(tfSnapshots);
     const regime = regimeLabel(dir, count);

@@ -553,7 +553,12 @@ const Indicators = (() => {
 
     const aoV = ao[lastIdx];
     const aoPrev = ao[lastIdx - 1];
+    // aoRising alone can't be negated to mean "falling": !aoRising is also
+    // true when AO is exactly flat or not yet computable. Callers that used
+    // !aoRising as bearish confirmation were silently crediting missing
+    // data, so the falling case is now its own explicit reading.
     const aoRising = aoV != null && aoPrev != null && aoV > aoPrev;
+    const aoFalling = aoV != null && aoPrev != null && aoV < aoPrev;
 
     const acSeries = acceleratorOscillator(candles);
     const acV = acSeries[lastIdx];
@@ -653,6 +658,7 @@ const Indicators = (() => {
       alligatorInvalidated,   // true if jaw-touch rule is currently active
       ao: aoV,
       aoRising,
+      aoFalling,
       ac: acV,
       acRising,
       mfiSignal,

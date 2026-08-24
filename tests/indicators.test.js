@@ -635,6 +635,99 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase B2 — directional symmetry. These are invariants, not examples: a
+// long and its exact mirror-image short must score identically. Any future
+// rule added on one side only will break these rather than silently skew.
+// ---------------------------------------------------------------------------
+
+// baseSnap() is derived from a synthetic UPTREND, so its structural fields
+// (ichimokuAboveCloud, emaStackBullish, positive ao...) already favour longs.
+// Reusing it for both sides of a mirror test compares an uptrend against an
+// uptrend, not a long against its mirror-image short. neutralSnap() is
+// direction-free, and mirrorPair() flips every directional field explicitly.
+function neutralSnap(over) {
+  return Object.assign({
+    alignment: 1, confidence: 'strong_bull', alligatorInvalidated: false,
+    ao: null, aoRising: false, aoFalling: false, ac: null, acRising: false,
+    mfiSignal: null, divergentBarUp: false, divergentBarDown: false,
+    crossingLipsUp: false, crossingLipsDown: false,
+    wisemanBullish: false, wisemanBearish: false, rsi: 50, divergence: 'none',
+    lastUpFractal: null, lastDownFractal: null,
+    aboveUpFractal: false, belowDownFractal: false,
+    atr: 1, resistance: null, support: null, close: 100,
+    ema9: null, ema21: null, emaStackBullish: false,
+    macdHistogram: null, macdBullishCross: false, macdBearishCross: false,
+    macdHistogramRising: false,
+    bbUpper: null, bbLower: null, bbPercentB: null, bbExpanding: false, adx: null,
+    stochBullishCrossFromOversold: false, stochBearishCrossFromOverbought: false,
+    ichimokuAboveCloud: false, ichimokuBelowCloud: false,
+    liquiditySweepUp: false, liquiditySweepDown: false,
+    macdDivergence: 'none', stochDivergence: 'none'
+  }, over);
+}
+
+function mirrorPair(longOver, shortOver) {
+  const mk = (bias, over) => {
+    const p = neutralSnap(Object.assign(
+      { alignment: bias, confidence: bias === 1 ? 'strong_bull' : 'strong_bear' }, over));
+    const tf = [p, p, p];
+    return Scoring.tradeQualityScore({
+      bias, count: 3,
+      continuation: Scoring.buildContinuation(tf, bias),
+      exhaustion: Scoring.buildExhaustion(tf, bias),
+      reversal: Scoring.buildReversal(tf, bias),
+      tfSnapshots: tf
+    });
+  };
+  return [mk(1, longOver), mk(-1, shortOver)];
+}
+
+test('B2 symmetry: unavailable AO scores the same for long and short (no free bearish confirm)', () => {
+  const flat = { ao: null, aoRising: false, aoFalling: false };
+  const [l, s] = mirrorPair(flat, flat);
+  assert.strictEqual(l, s, `long ${l} vs short ${s} — !aoRising must not imply "falling"`);
+});
+
+test('B2 symmetry: RSI health band mirrors, so short@30 scores like long@70', () => {
+  [[30, 70], [40, 60], [50, 50], [70, 30], [80, 20]].forEach(([rl, rs]) => {
+    const [l, s] = mirrorPair(
+      { rsi: rl, ao: 1, aoRising: true, aoFalling: false },
+      { rsi: rs, ao: -1, aoRising: false, aoFalling: true }
+    );
+    assert.strictEqual(l, s, `long rsi=${rl} scored ${l}, mirrored short rsi=${rs} scored ${s}`);
+  });
+});
+
+test('B2: exhaustion RSI items only fire against the bias they actually threaten', () => {
+  const mid = neutralSnap({});
+  // Asserted on the RSI items specifically, not the total: "AC decelerating"
+  // is deliberately bias-independent (keyed off AO's own sign), so it can
+  // legitimately contribute to either side's total.
+  const rsiItems = (fastRsi, bias) => Scoring.buildExhaustion([mid, mid, neutralSnap({ rsi: fastRsi })], bias)
+    .items.filter(([l]) => l.includes('5M RSI')).map(([l]) => l);
+  assert.deepStrictEqual(rsiItems(80, 1), ['5M RSI approaching overbought']);
+  assert.deepStrictEqual(rsiItems(80, -1), [], 'overbought must not exhaust a short');
+  assert.deepStrictEqual(rsiItems(20, -1), ['5M RSI approaching oversold']);
+  assert.deepStrictEqual(rsiItems(20, 1), [], 'oversold must not exhaust a long');
+});
+
+test('B2: 1H RSI extreme has a bearish mirror (was long-only)', () => {
+  const mid = neutralSnap({});
+  const fires = (rsi, bias) => Scoring.buildExhaustion([neutralSnap({ rsi }), mid, mid], bias)
+    .items.some(([l]) => l === '1H RSI extreme');
+  assert.ok(fires(85, 1), 'overextended long should warn');
+  assert.ok(fires(15, -1), 'overextended short should warn');
+  assert.ok(!fires(15, 1));
+  assert.ok(!fires(85, -1));
+});
+
+test('B2: bias===0 keeps both-sided exhaustion (range-bound information)', () => {
+  const mid = neutralSnap({});
+  assert.ok(Scoring.buildExhaustion([mid, mid, neutralSnap({ rsi: 80 })], 0).score > 0);
+  assert.ok(Scoring.buildExhaustion([mid, mid, neutralSnap({ rsi: 20 })], 0).score > 0);
+});
+
+// ---------------------------------------------------------------------------
 // Phase 5 Stage 3 — swing-tier strategies 6, 7, 8, 9, 11
 // ---------------------------------------------------------------------------
 
