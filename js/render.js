@@ -543,7 +543,7 @@ const Render = (() => {
     }).join('');
 
     return `
-      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins. (MTD/YTD would need per-coin calendar-anchored history CoinGecko's rolling windows can't provide — 30D/1Y stand in instead.)</div>
+      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins. 30D/1Y come from a separate extended-window source and load a moment after the rest — a &quot;--&quot; there means that window isn&#39;t available for the sector, not that it&#39;s flat.</div>
       <table class="flows-table">
         <thead><tr><th>Category</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th><th>1y</th></tr></thead>
         <tbody>${rows}</tbody>

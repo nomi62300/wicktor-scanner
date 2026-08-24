@@ -17,6 +17,87 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Changed (Provider split — CoinPaprika becomes the primary bulk source)
+CoinGecko's free tier rate-limits constantly, and that was **not
+cosmetic**: sector data feeds `topNarrativeCandidates()` into the scan
+universe, so a throttled run silently shrank which coins got scanned. A
+live run was observed logging `stopping with 1/16 sectors`, and a patient
+out-of-band capture with 4s delays and 4 retries still only completed
+10/16. This is a signal-correctness fix.
+
+Split by **capability**, not by feature:
+- **CoinPaprika** — primary bulk source: symbol→mcap map, global metrics,
+  Dashboard Top-5, and a new fast sector engine feeding the scan
+  universe, Top Sectors strip tile, and Heatmap.
+- **CoinGecko** — specialist only: the Flows tab's 30D/1Y windows, now
+  fetched lazily on tab open instead of during every scan.
+- **CMC** — untouched emergency reserve. Its Edge Function was **not**
+  modified; it remains metered with a 2-path whitelist.
+
+**Measured result: a full cold scan now issues ZERO CoinGecko requests**
+(previously up to 23), replaced by 3 CoinPaprika calls. `marketCapMap()`
+cold: 1 request / ~600ms / 961 symbols, versus 4 paginated requests plus
+4.5s of inter-page delays. `fastSectorPerformance()`: 2 requests / ~1.1s
+for 13 sectors, versus 17 requests under a 20s deadline.
+
+Correctness cross-checks before switching:
+- Market-cap-weighted sector math agrees closely where both providers
+  returned data — 6 of 8 comparable sectors within 2.8pp (AI +1.7,
+  DePIN −0.3, Layer 1 −0.3, Layer 2 −2.0, Meme −2.8, Oracle +1.5).
+- Bybit top-120 symbols resolving to a market cap: CoinPaprika 107/120 in
+  one request vs CoinGecko 111/120 in four. Live, 18 of 20 rendered cards
+  resolve MCap.
+
+Deliberate behaviour changes, each verified rather than assumed:
+- **`Privacy` is excluded from the CoinPaprika path.** Its only
+  substantive tag, `privacy-security`, conflates privacy with security —
+  ZEC/XMR/DASH sit alongside LTC, WLD, FIL and VET, which inflated the
+  sector to #2 in the top-4 rotation on non-privacy coins' momentum. The
+  strict `privacy` tag is the opposite failure at 3 coins. Privacy still
+  works normally on the CoinGecko/Flows path.
+- **`Modular Blockchain` and `Data Availability` have no CoinPaprika
+  tag** and warn-and-skip, the same contract the CoinGecko path uses.
+- **Narrative candidates are now validated against Bybit's live spot
+  symbol set** before injection, using the instruments-info response
+  `refreshXStockSet()` already fetches (zero extra requests). A sector
+  tag is a claim about a token, not about where it trades: `BNSOLUSDT`
+  was caught live, and liquid-staking entries (METH/RSETH/CBETH/STETH/
+  MSOL) would otherwise pass `isTradeableUsdtPair()` purely because
+  "<SYMBOL>USDT" ends in USDT, then burn three Bybit round-trips each.
+- **Narrative injection now fires deterministically.** It was previously
+  best-effort and, on a cold cache, essentially never ran. The scan
+  universe therefore grows more reliably than before — intended, but it
+  does mean scans do more work.
+- **The candidate set changes materially.** Against the captured
+  CoinGecko baseline there was zero overlap, partly because CoinGecko
+  failed to fetch six sectors (RWA, Gaming, Metaverse, Liquid Staking,
+  Restaking, DeFi) that CoinPaprika returns reliably.
+- **Displayed global figures step** (BTC.D 57.0% vs 59.1%, total mcap
+  $2.80T vs $2.70T) — different coin coverage, both legitimate.
+
+Flows is now two-phase and merges rather than replaces: CoinPaprika rows
+render immediately, then CoinGecko's extended windows merge in per-sector
+keyed on name. Verified with CoinGecko fully blocked — Flows still
+rendered all 13 rows with `--` in 30D/1Y instead of collapsing to one
+row, and the scanner was unaffected. Its note copy now explains that a
+`--` means "window unavailable", not "flat".
+
+Known gap: CoinPaprika has no tokenized-stock coverage, so with the
+xStocks setting on those cards show `—` for MCap unless the CoinGecko
+tier runs. That setting is off by default and `—` is already documented
+behaviour for unmatched coins.
+
+Guards added: 30d/1y normalize to `null`, never CoinPaprika's literal
+`0`, since `pctCellHtml` only renders `--` for null and a raw 0 would
+claim every sector was flat. Implausible symbols (28 in the top 1000,
+e.g. `USDC.e`, `BTC.B`, `ZBCN ` with a trailing space) are rejected.
+Tag resolution ranks by coin-count rather than array order, which array
+order would have gotten wrong for `Infrastructure` (21-coin
+"Computing & Cloud Infrastructure" over the 71-coin "Infrastructure").
+
+`tests/runner.html` now loads `js/api.js` and covers all of the above:
+112 tests pass, up from 103.
+
 ### Added (Phase 3 — real Supabase Auth + account-scoped Watchlist)
 Scope explicitly excludes tiering (Phase 4) per the owner's call — no
 `tier` column, no gating logic, nothing tiering-shaped. This phase is

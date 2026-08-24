@@ -35,6 +35,7 @@ Open DevTools console for additional output if a suite crashes.</p>
 <!-- Load the real source files (same order as index.html) -->
 <script src="../js/indicators.js"></script>
 <script src="../js/scoring.js"></script>
+<script src="../js/api.js"></script>
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
@@ -923,6 +924,81 @@ test('Phase 5 complete: every arm stays within its cap even with every new-batch
   const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9 });
   assert(result.score >= 0 && result.score <= 100);
   assert(result.continuation.score <= 65 && result.exhaustion.score <= 40 && result.reversal.score <= 50);
+});
+
+suite('Q — Provider split: CoinPaprika normalization + tag resolution');
+
+// Minimal fixtures shaped like real CoinPaprika payloads.
+const cpCoin = (id, sym, mcap, c24, c7) => ({
+  id, name: sym, symbol: sym,
+  quotes: { USD: { price: 1, volume_24h: 10, market_cap: mcap,
+                   percent_change_24h: c24, percent_change_7d: c7,
+                   percent_change_30d: 0, percent_change_1y: 0 } }
+});
+
+test('normalizePaprikaCoin: 30d/1y become null, never CoinPaprika raw 0', () => {
+  const n = Indicators && Api.normalizePaprikaCoin(cpCoin('btc-bitcoin','BTC',1e12,1.5,20));
+  assert(n.price_change_percentage_30d_in_currency === null, '30d must be null');
+  assert(n.price_change_percentage_1y_in_currency === null, '1y must be null');
+});
+
+test('normalizePaprikaCoin: emits BOTH 24h key variants (different consumers read each)', () => {
+  const n = Api.normalizePaprikaCoin(cpCoin('btc-bitcoin','BTC',1e12,1.5,20));
+  assert(n.price_change_percentage_24h === 1.5, 'plain key for topNarrativeCandidates');
+  assert(n.price_change_percentage_24h_in_currency === 1.5, '_in_currency key for render');
+});
+
+test('normalizePaprikaCoin: rejects implausible symbols that would become <junk>USDT', () => {
+  assert(Api.normalizePaprikaCoin(cpCoin('x','\u5e01\u5b89\u4eba\u751f',1e9,1,1)) === null, 'non-ASCII rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','USDC.e',1e9,1,1)) === null, 'dotted rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','ZBCN ',1e9,1,1)) === null, 'trailing space rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','M',1e9,1,1)) === null, 'single char rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','BTC',1e9,1,1)) !== null, 'normal symbol kept');
+});
+
+test('normalizePaprikaCoin: null market cap is rejected', () => {
+  const bad = cpCoin('x','ABC',null,1,1);
+  assert(Api.normalizePaprikaCoin(bad) === null);
+});
+
+test('resolveNarrativeTags: picks the tag with the most coins, not array order', () => {
+  const tags = [
+    { id: 'computing-cloud-infrastructure', name: 'Computing & Cloud Infrastructure', coins: ['a','b'] },
+    { id: 'infrastructure',                 name: 'Infrastructure',                   coins: ['a','b','c','d'] }
+  ];
+  const r = Api.resolveNarrativeTags(tags).find(x => x.keyword === 'Infrastructure');
+  assert(r && r.tag.id === 'infrastructure',
+    'longest coin list must win; array order would pick the 2-coin tag');
+});
+
+test('resolveNarrativeTags: unmatched keywords are skipped, not fabricated', () => {
+  const r = Api.resolveNarrativeTags([{ id: 'defi', name: 'DeFi', coins: ['a'] }]);
+  assert(r.length === 1 && r[0].keyword === 'DeFi');
+  assert(!r.some(x => x.keyword === 'Modular Blockchain'), 'no CoinPaprika tag exists for it');
+});
+
+test('resolveNarrativeTags: Privacy is excluded from the fast path by design', () => {
+  const tags = [{ id: 'privacy-security', name: 'Privacy & Security', coins: ['a','b','c'] }];
+  const r = Api.resolveNarrativeTags(tags);
+  assert(!r.some(x => x.keyword === 'Privacy'),
+    'CoinPaprika conflates privacy with security (LTC/WLD/FIL/VET rank in it)');
+});
+
+test('weightedChangeFor: all-null input returns 0 rather than NaN', () => {
+  const coins = [{ market_cap: 100, price_change_percentage_7d_in_currency: null }];
+  assert(Api.weightedChangeFor(coins, 'price_change_percentage_7d_in_currency') === 0);
+});
+
+test('topNarrativeCandidates works against a CoinPaprika-shaped sector (cross-provider contract)', () => {
+  const coins = [
+    Api.normalizePaprikaCoin(cpCoin('eth-ethereum','ETH', 4e11, 2, 30)),
+    Api.normalizePaprikaCoin(cpCoin('tiny-tiny','TINY', 1e6, 9, 99))  // below the 350M floor
+  ];
+  const out = Api.topNarrativeCandidates([
+    { categoryId: 'l1', name: 'Layer 1', mcap: 4e11, weightedChange7d: 30, coins }
+  ]);
+  assert(out.some(c => c.symbol === 'ETHUSDT'), 'large cap promoted');
+  assert(!out.some(c => c.symbol === 'TINYUSDT'), 'sub-350M filtered out');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

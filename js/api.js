@@ -139,6 +139,11 @@ const Api = (() => {
   ]);
   let _xstockSet = KNOWN_XSTOCK_SYMBOLS;
   let _xstockSetTs = 0;
+  // Full Bybit spot symbol set, harvested from the SAME instruments-info
+  // response refreshXStockSet() already fetches — zero extra requests.
+  // Used to validate narrative-sourced candidates before they're injected
+  // into the scan universe.
+  let _spotSymbolSet = new Set();
   const XSTOCK_SET_TTL = 24 * 60 * 60 * 1000; // 24 hours — new listings are rare
 
   /**
@@ -152,6 +157,7 @@ const Api = (() => {
     if (now - _xstockSetTs < XSTOCK_SET_TTL) return _xstockSet;
     const instruments = await bybitInstruments('spot');
     if (instruments && instruments.length) {
+      _spotSymbolSet = new Set(instruments.map(i => i.symbol));
       const live = new Set(
         instruments.filter(i => i.symbolType === 'xstocks').map(i => i.symbol)
       );
@@ -161,6 +167,15 @@ const Api = (() => {
       }
     }
     return _xstockSet;
+  }
+
+  /**
+   * Every symbol Bybit lists on spot. Empty until refreshXStockSet() has
+   * run at least once — callers must treat an empty set as "unknown, do
+   * not filter" rather than "nothing is tradeable".
+   */
+  function spotSymbolSet() {
+    return _spotSymbolSet;
   }
 
   function isXStock(symbol) {
@@ -668,6 +683,21 @@ const Api = (() => {
   }
 
   /**
+   * Keywords deliberately skipped on the CoinPaprika path because its
+   * taxonomy has no clean equivalent, so including them would distort
+   * the top-4 sector rotation that feeds the scan universe.
+   *
+   * 'Privacy': CoinPaprika's only substantive match is 'privacy-security',
+   * which conflates privacy with security — its largest holdings are
+   * ZEC, XMR, LTC, WLD, FIL, DASH, VET, so LTC/WLD/FIL/VET (not privacy
+   * coins) drag a whole sector into the rotation on their own momentum.
+   * The strict 'privacy' tag is the opposite failure: only 3 coins, as
+   * thin and noisy as the 1-coin result CoinGecko was returning.
+   * Privacy still works normally on the CoinGecko/Flows path.
+   */
+  const FAST_SECTOR_EXCLUDED = new Set(['Privacy']);
+
+  /**
    * Maps each NARRATIVE_KEYWORDS entry onto a CoinPaprika tag.
    *
    * Five keywords match more than one tag, so the tiebreak matters:
@@ -683,6 +713,7 @@ const Api = (() => {
   function resolveNarrativeTags(tags) {
     const resolved = [];
     for (const kw of NARRATIVE_KEYWORDS) {
+      if (FAST_SECTOR_EXCLUDED.has(kw)) continue;
       const kwLower = kw.toLowerCase();
       const matches = (tags || []).filter(t => (t.name || '').toLowerCase().includes(kwLower));
       if (!matches.length) {
@@ -969,7 +1000,7 @@ const Api = (() => {
   return {
     bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet, fetchExtendedTimeframes,
     openInterestChange15m,
-    isTradeableUsdtPair, isXStock, refreshXStockSet,
+    isTradeableUsdtPair, isXStock, refreshXStockSet, spotSymbolSet,
     coingeckoGlobal, marketCapMap, coingeckoMarketCaps: marketCapMap,
     paprikaTickers, normalizePaprikaCoin,
     topByMarketCap, formatMcap,

@@ -20,7 +20,7 @@
   };
 
   // Pulse Spot/Perp and Top Gainers/Losers come from raw Bybit ticker
-  // fetches with no caching of their own (unlike sectorPerformance7d/
+  // fetches with no caching of their own (unlike fastSectorPerformance/
   // fearGreedIndex, which already cache more conservatively than this) —
   // they don't meaningfully change minute-to-minute, so gate them to a
   // 30-min cadence instead of refetching on every scan. Persisted so a
@@ -84,7 +84,8 @@
     },
     searchQuery: '',
     topStripData: {},
-    flowsData: [],
+    flowsData: [],   // CoinGecko-backed, Flows tab only (lazy)
+    fastSectors: [], // CoinPaprika-backed, shared by scan + strip + Heatmap
     rawMovers: [],
     refreshTimer: null,
     modalCoin: null,
@@ -300,45 +301,39 @@
     try {
       let globalData = null, fngData = null;
 
-      // Sector/narrative data is a top-strip enhancement (Top Sectors,
-      // Narratives tiles + optional coin-sourcing), not part of the core
-      // scan — it used to sit inside the blocking fetch below, so every
-      // scan paid up to sectorPerformance7d()'s own ~20s internal time
-      // budget before universe-building/coin-analysis (the actual
-      // card-grid work) even started, even though that budget's circuit
-      // breaker/deadline were firing exactly as designed on a bad
-      // CoinGecko day. Kick it off independently instead; it updates the
-      // top strip whenever it resolves (near-instant once cache-warm for
-      // 4h, up to ~20s cold) without blocking anything below. Narrative
-      // coin-sourcing (step 4) becomes best-effort: it only fires if this
-      // already resolved by the time universe-building finishes.
-      let sectorPerf = [];
-      const sectorPerfPromise = Api.sectorPerformance7d()
-        .catch(e => { console.warn('[App] sector performance fetch failed', e); return []; })
-        .then(result => {
-          sectorPerf = result;
-          state.narrativePerf = result && result.length
-            ? [...result].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
-            : null;
-          refreshTopStrip(globalData, fngData);
-          el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
-          return result;
-        });
-
+      // Sector/narrative data used to be a fire-and-forget promise: it sat
+      // in the blocking fetch below, paying sectorPerformance7d()'s ~20s
+      // CoinGecko time budget before the card grid even started, so it was
+      // decoupled and narrative coin-sourcing became best-effort — in
+      // practice it almost never resolved in time on a cold cache, and a
+      // rate-limited run returned as little as 1 of 16 sectors, silently
+      // shrinking the scan universe.
+      //
+      // fastSectorPerformance() is 2 CoinPaprika requests (~1.1s cold, 0ms
+      // warm) instead of 17 CoinGecko ones, so it can simply be awaited
+      // inline below. Narrative injection now fires deterministically
+      // rather than by luck.
       // 1. Fetch market data, news, global stats, FNG in parallel — sector
       // performance is intentionally excluded, see above.
       // refreshXStockSet() populates Api.isXStock()'s live symbol set (no-ops
       // within its 24h TTL) — must complete before any isXStock() call below.
       console.time('[Scan] parallel-fetches');
-      const [mcapMap, newsData, globalRes, fngRes] = await Promise.all([
+      const [mcapMap, newsData, globalRes, fngRes, sectorRes] = await Promise.all([
         Api.marketCapMap().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
         Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
         Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
         Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
-        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); })
+        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); }),
+        Api.fastSectorPerformance().catch(e => { console.warn('[App] fast sector fetch failed', e); return []; })
       ]);
       globalData = globalRes;
       fngData = fngRes;
+      const sectorPerf = sectorRes || [];
+      // Shared with the Heatmap tab so it never triggers its own fetch.
+      state.fastSectors = sectorPerf;
+      state.narrativePerf = sectorPerf.length
+        ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
+        : null;
       console.timeEnd('[Scan] parallel-fetches');
 
       // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
@@ -390,18 +385,33 @@
 
       // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
       // meaningful when the crypto spot pool it injects into is itself enabled).
-      // Best-effort: `sectorPerf` is only populated if sectorPerfPromise (kicked
-      // off independently above) has already resolved by this point — on a
-      // cold sector cache it usually hasn't yet, so this scan just skips
-      // injection rather than waiting; the next scan picks it up once cached.
+      // No longer best-effort: sectorPerf is awaited above, so this fires on
+      // every scan rather than only when a cached CoinGecko result happened
+      // to be warm.
       console.time('[Scan] narrative-sourcing');
       const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
       if (narrativeEnabled && state.settings.includeCryptoSpot && sectorPerf && sectorPerf.length) {
         const volumeSymbols = new Set(
           universes.flatMap(u => u.universe.map(b => b.symbol))
         );
+        // Only inject symbols Bybit actually lists as spot pairs. A sector
+        // tag is a claim about a token, not about where it trades: liquid-
+        // staking entries (METH, RSETH, CBETH, STETH, MSOL, SOLVBTC) and
+        // other untraded tokens otherwise pass isTradeableUsdtPair() purely
+        // because "<SYMBOL>USDT" ends in USDT, then burn three Bybit kline
+        // round-trips each before failing soft. spotTickerSymbols is built
+        // from the ticker fetch already performed above, so this costs
+        // nothing extra.
+        const spotTickerSymbols = Api.spotSymbolSet();
         const narrativeCandidates = Api.topNarrativeCandidates(sectorPerf);
-        const newCandidates = narrativeCandidates.filter(c => !volumeSymbols.has(c.symbol));
+        const newCandidates = narrativeCandidates.filter(c =>
+          !volumeSymbols.has(c.symbol) &&
+          (spotTickerSymbols.size === 0 || spotTickerSymbols.has(c.symbol))
+        );
+        const rejected = narrativeCandidates.length - newCandidates.length;
+        if (rejected > 0) {
+          console.log(`[Scan] narrative: ${rejected} candidate(s) skipped (already in universe or not a Bybit spot pair)`);
+        }
         if (newCandidates.length > 0) {
           const cryptoSpotEntry = universes.find(u => u.category === 'spot' && u.assetFilter === 'crypto');
           if (cryptoSpotEntry) cryptoSpotEntry.universe.push(...newCandidates);
@@ -931,13 +941,16 @@
       refreshFlows();
     }
     if (tab === 'heatmap') {
-      if (!flowsLoaded) {
-        // Heatmap reuses Flows' category data — share the one fetch
-        // instead of duplicating the same CoinGecko sequence.
-        flowsLoaded = true;
-        refreshFlows().then(refreshHeatmap);
-      } else {
+      // Reads the CoinPaprika-backed fast sectors the scan already
+      // populated. Previously this piggybacked on the Flows tab, so
+      // simply opening Heatmap fired CoinGecko's whole 17-request
+      // category sequence.
+      if (state.fastSectors && state.fastSectors.length) {
         refreshHeatmap();
+      } else {
+        Api.fastSectorPerformance()
+          .catch(e => { console.warn('[App] fast sector fetch failed (Heatmap)', e); return []; })
+          .then(s => { state.fastSectors = s; refreshHeatmap(); });
       }
     }
     if (tab === 'news' && !newsLoaded) {
@@ -967,20 +980,53 @@
     el.dashboardGrid.innerHTML = Render.dashboardHtml(dashboardData);
   }
 
+  /**
+   * Two-phase, so a CoinGecko rate-limit can never leave this tab nearly
+   * empty the way it used to:
+   *   1. render the CoinPaprika sectors immediately (always available,
+   *      already fetched by the scan) with 30D/1Y showing "--";
+   *   2. merge in CoinGecko's extended windows when they arrive.
+   *
+   * The merge is per-sector keyed on `name`, which is the shared
+   * NARRATIVE_KEYWORDS string and therefore a real join key across both
+   * providers. A CoinGecko row wins where present (it carries all four
+   * windows); CoinPaprika fills every gap. So Flows always shows a full
+   * sector list, and a "--" means "the extended-window source didn't
+   * return this one", never "broken".
+   *
+   * narrativePerf (the Top Sectors strip tile) is deliberately NOT set
+   * here — the scan's fast path owns it, or the strip would flip between
+   * two providers' numbers depending on whether this tab was opened.
+   */
   async function refreshFlows() {
-    const sectorPerf = await Api.sectorPerformance7d().catch(e => {
+    let fast = state.fastSectors;
+    if (!fast || !fast.length) {
+      fast = await Api.fastSectorPerformance().catch(e => {
+        console.warn('[App] fast sector fetch failed (Flows tab)', e);
+        return [];
+      });
+      state.fastSectors = fast;
+    }
+    if (fast.length) {
+      state.flowsData = fast;
+      el.flowsGrid.innerHTML = Render.marketFlowsHtml(fast, flowsExpanded);
+    }
+
+    const cg = await Api.sectorPerformance7d().catch(e => {
       console.warn('[App] sectorPerformance7d fetch failed (Flows tab)', e);
       return [];
     });
-    state.narrativePerf = state.narrativePerf || (sectorPerf && sectorPerf.length
-      ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
-      : null);
-    state.flowsData = sectorPerf;
-    el.flowsGrid.innerHTML = Render.marketFlowsHtml(sectorPerf, flowsExpanded);
+    if (!cg.length) return; // keep the fast render; nothing to merge
+
+    const byName = new Map(fast.map(s => [s.name, s]));
+    cg.forEach(s => byName.set(s.name, s)); // CoinGecko wins where present
+    const merged = [...byName.values()];
+    state.flowsData = merged;
+    el.flowsGrid.innerHTML = Render.marketFlowsHtml(merged, flowsExpanded);
   }
 
   function refreshHeatmap() {
-    el.heatmapGridContainer.innerHTML = Render.heatmapHtml(state.flowsData);
+    el.heatmapGridContainer.innerHTML = Render.heatmapHtml(state.fastSectors);
   }
 
   // News tab reuses the same fetchAllNews() cache already populated by
