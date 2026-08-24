@@ -578,6 +578,90 @@ const Indicators = (() => {
     // own doc comment for why this doesn't replace resistance/support above.
     const sloped = regressionChannelLevels(candles, frac, lastIdx);
 
+    // ====================================================================
+    // Strategy-enrichment Stage 1 — wire the 6 new indicators into the
+    // snapshot as last-bar readings + simple derived state (same style as
+    // the existing ao/aoRising, ac/acRising pattern above), still zero
+    // effect on scoring.js — buildContinuation/buildExhaustion/
+    // buildReversal don't read any of these fields yet. Strategy-specific
+    // combinations (e.g. "pullback within 0.3x ATR of EMA21") are
+    // deliberately NOT computed here — those belong in scoring.js in
+    // Stage 2+, combining these raw readings with a strategy's own
+    // threshold, not baked into the shared snapshot.
+    // ====================================================================
+    const closesReal = candles.map(c => c.c);
+    const ema9Series = ema(closesReal, 9);
+    const ema21Series = ema(closesReal, 21);
+    const ema9V = ema9Series[lastIdx];
+    const ema21V = ema21Series[lastIdx];
+    const emaStackBullish = ema9V != null && ema21V != null && ema9V > ema21V;
+
+    const macdResult = macd(candles);
+    const macdLineV = macdResult.macdLine[lastIdx];
+    const macdSignalV = macdResult.signalLine[lastIdx];
+    const macdHistV = macdResult.histogram[lastIdx];
+    const macdHistPrev = macdResult.histogram[lastIdx - 1];
+    const macdLinePrev = macdResult.macdLine[lastIdx - 1];
+    const macdSignalPrev = macdResult.signalLine[lastIdx - 1];
+    const macdBullishCross = macdLineV != null && macdSignalV != null && macdLinePrev != null && macdSignalPrev != null &&
+      macdLinePrev <= macdSignalPrev && macdLineV > macdSignalV;
+    const macdBearishCross = macdLineV != null && macdSignalV != null && macdLinePrev != null && macdSignalPrev != null &&
+      macdLinePrev >= macdSignalPrev && macdLineV < macdSignalV;
+    const macdHistogramRising = macdHistV != null && macdHistPrev != null && macdHistV > macdHistPrev;
+
+    const bb = bollingerBands(candles);
+    const bbUpperV = bb.upper[lastIdx];
+    const bbLowerV = bb.lower[lastIdx];
+    const bbMiddleV = bb.middle[lastIdx];
+    const bbPercentBV = bb.percentB[lastIdx];
+    const bbBandwidthV = bb.bandwidth[lastIdx];
+    // Squeeze = current bandwidth is the lowest of the trailing 20 bars —
+    // a relative, self-normalizing "tight" rather than a fixed threshold
+    // that would need per-symbol calibration.
+    let bbSqueeze = false;
+    {
+      const from = Math.max(0, lastIdx - 19);
+      let minBw = Infinity;
+      for (let k = from; k <= lastIdx; k++) {
+        if (bb.bandwidth[k] != null && bb.bandwidth[k] < minBw) minBw = bb.bandwidth[k];
+      }
+      bbSqueeze = bbBandwidthV != null && bbBandwidthV === minBw;
+    }
+    const bbExpanding = bbBandwidthV != null && bb.bandwidth[lastIdx - 1] != null && bbBandwidthV > bb.bandwidth[lastIdx - 1];
+
+    const adxResult = adx(candles);
+    const adxV = adxResult.adx[lastIdx];
+    const adxPrev = adxResult.adx[lastIdx - 1];
+    const plusDIV = adxResult.plusDI[lastIdx];
+    const minusDIV = adxResult.minusDI[lastIdx];
+
+    const stochResult = stochastic(candles);
+    const stochKV = stochResult.k[lastIdx];
+    const stochDV = stochResult.d[lastIdx];
+    const stochKPrev = stochResult.k[lastIdx - 1];
+    const stochDPrev = stochResult.d[lastIdx - 1];
+    // "Entry cross from oversold/overbought" per the strategy definitions
+    // (section 4.3, items 5/6) — the cross itself, gated on having been
+    // on the extreme side the bar before, not just any K/D cross anywhere.
+    const stochBullishCrossFromOversold = stochKV != null && stochDV != null && stochKPrev != null && stochDPrev != null &&
+      stochKPrev <= stochDPrev && stochKV > stochDV && stochKPrev < 20;
+    const stochBearishCrossFromOverbought = stochKV != null && stochDV != null && stochKPrev != null && stochDPrev != null &&
+      stochKPrev >= stochDPrev && stochKV < stochDV && stochKPrev > 80;
+
+    const ich = ichimoku(candles);
+    const ichimokuAboveCloud = ich.currentSpanA != null && ich.currentSpanB != null &&
+      price > ich.currentSpanA && price > ich.currentSpanB;
+    const ichimokuBelowCloud = ich.currentSpanA != null && ich.currentSpanB != null &&
+      price < ich.currentSpanA && price < ich.currentSpanB;
+    const tenkanV = ich.tenkan[lastIdx];
+    const kijunV = ich.kijun[lastIdx];
+    const tenkanPrev = ich.tenkan[lastIdx - 1];
+    const kijunPrev = ich.kijun[lastIdx - 1];
+    const tenkanKijunBullishCross = tenkanV != null && kijunV != null && tenkanPrev != null && kijunPrev != null &&
+      tenkanPrev <= kijunPrev && tenkanV > kijunV;
+
+    const sweep = liquiditySweep(candles, frac, lastIdx, atrV);
+
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
       confidence,             // 5-tier: strong_bull/weak_bull/neutral/weak_bear/strong_bear
@@ -604,7 +688,23 @@ const Indicators = (() => {
       support,
       resistanceSloped: sloped.resistance, // null unless a good-fit (r2 >= 0.6) regression exists
       supportSloped: sloped.support,
-      close: price
+      close: price,
+
+      // Strategy-enrichment Stage 1 — see the batch comment above this
+      // block for scope/rationale.
+      ema9: ema9V, ema21: ema21V, emaStackBullish,
+      macdLine: macdLineV, macdSignal: macdSignalV, macdHistogram: macdHistV,
+      macdSeries: macdResult.macdLine, // full series — Stage 2+ MACD-divergence reuses divergence()'s pivot-pairing, which needs the whole series, not just the last value
+      macdBullishCross, macdBearishCross, macdHistogramRising,
+      bbUpper: bbUpperV, bbLower: bbLowerV, bbMiddle: bbMiddleV,
+      bbPercentB: bbPercentBV, bbBandwidth: bbBandwidthV, bbSqueeze, bbExpanding,
+      adx: adxV, adxPrev, plusDI: plusDIV, minusDI: minusDIV,
+      stochK: stochKV, stochD: stochDV,
+      stochSeries: stochResult.k, // full series, same reason as macdSeries
+      stochBullishCrossFromOversold, stochBearishCrossFromOverbought,
+      ichimokuAboveCloud, ichimokuBelowCloud, tenkan: tenkanV, kijun: kijunV,
+      tenkanKijunBullishCross,
+      liquiditySweepUp: sweep.up, liquiditySweepDown: sweep.down
     };
   }
 

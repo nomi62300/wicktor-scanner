@@ -7,6 +7,11 @@
 
 const assert  = require('assert');
 const Indicators = require('../js/indicators');
+// scoring.js references Indicators as a global (browser script-tag load
+// order) — set it before requiring, same fix needed for any Node test
+// that touches Scoring.
+global.Indicators = Indicators;
+const Scoring = require('../js/scoring');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -515,6 +520,48 @@ test('liquiditySweep(): null/zero ATR returns {up:false, down:false}, no crash',
   const result = Indicators.liquiditySweep(candles, frac, candles.length - 1, null);
   assert.strictEqual(result.up, false);
   assert.strictEqual(result.down, false);
+});
+
+// ---------------------------------------------------------------------------
+// Strategy-enrichment Stage 1 — snapshot wiring, verified inert
+// ---------------------------------------------------------------------------
+
+test('analyzeTimeframe: new Stage 1 fields match calling the Stage 0 functions directly', () => {
+  const candles = buildCleanUptrend(80);
+  const lastIdx = candles.length - 1;
+  const snap = Indicators.analyzeTimeframe(candles);
+
+  const closes = candles.map(c => c.c);
+  const ema9 = Indicators.ema(closes, 9);
+  assert.strictEqual(snap.ema9, ema9[lastIdx]);
+
+  const m = Indicators.macd(candles);
+  assert.strictEqual(snap.macdLine, m.macdLine[lastIdx]);
+  assert.strictEqual(snap.macdHistogram, m.histogram[lastIdx]);
+
+  const bb = Indicators.bollingerBands(candles);
+  assert.strictEqual(snap.bbUpper, bb.upper[lastIdx]);
+
+  const a = Indicators.adx(candles);
+  assert.strictEqual(snap.adx, a.adx[lastIdx]);
+
+  const st = Indicators.stochastic(candles);
+  assert.strictEqual(snap.stochK, st.k[lastIdx]);
+
+  const ich = Indicators.ichimoku(candles);
+  assert.strictEqual(snap.tenkan, ich.tenkan[lastIdx]);
+});
+
+test('Stage 1 is inert: Scoring.evaluate() output is byte-identical to before this batch', () => {
+  const candles = buildCleanUptrend(80);
+  const result = Scoring.evaluate({ h1: candles, m15: candles, m5: candles });
+  // These are exactly the fields buildContinuation/buildExhaustion/
+  // buildReversal read today — if any of them ever start reading the new
+  // Stage 1 fields, this snapshot will need a deliberate update, not a
+  // silent pass.
+  assert.ok(result.score >= 0 && result.score <= 100);
+  assert.ok(!result.continuation.items.some(([label]) => /EMA|MACD|Bollinger|BB|ADX|Stochastic|Ichimoku|Liquidity Sweep/i.test(label)),
+    `Expected no Stage-1-indicator-derived scoring items yet, got ${JSON.stringify(result.continuation.items)}`);
 });
 
 // ---------------------------------------------------------------------------

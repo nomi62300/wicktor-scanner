@@ -8,12 +8,40 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, Phase 5 Stage 0
-(strategy-enrichment indicator math), and a Flows 1Y column added in
-follow-up sessions with the owner present. Deliberately left unmerged on
-a branch pending review, per standing branch discipline (`main`
-auto-deploys live). Not version-bumped or tagged; that happens at merge
-time.
+fallback tier, sloped regression-channel levels, Phase 5 Stages 0-1
+(strategy-enrichment indicator math + snapshot wiring), and a Flows 1Y
+column added in follow-up sessions with the owner present. Deliberately
+left unmerged on a branch pending review, per standing branch discipline
+(`main` auto-deploys live). Not version-bumped or tagged; that happens
+at merge time.
+
+### Added (Phase 5 Stage 1 — strategy-enrichment snapshot wiring)
+- Wired the 6 new indicators into `analyzeTimeframe()`'s per-timeframe
+  snapshot: last-bar readings (`ema9`/`ema21`, `macdLine`/`macdSignal`/
+  `macdHistogram`, `bbUpper`/`bbLower`/`bbMiddle`/`bbPercentB`/
+  `bbBandwidth`, `adx`/`plusDI`/`minusDI`, `stochK`/`stochD`,
+  `tenkan`/`kijun`/`ichimokuAboveCloud`/`ichimokuBelowCloud`) plus simple
+  derived state in the same style as the existing `aoRising`/`acRising`
+  pattern (`emaStackBullish`, `macdBullishCross`/`macdBearishCross`/
+  `macdHistogramRising`, `bbSqueeze`/`bbExpanding`,
+  `stochBullishCrossFromOversold`/`stochBearishCrossFromOverbought`,
+  `tenkanKijunBullishCross`, `liquiditySweepUp`/`liquiditySweepDown`).
+  Full `macdSeries`/`stochSeries` also carried for Stage 2+'s MACD/
+  Stochastic divergence, which reuses the existing `divergence()`
+  function directly — it was already fully generic (never RSI-specific
+  internally), no new divergence function needed.
+- **Still deliberately inert** — nothing in `scoring.js` reads any of
+  these fields yet; `Scoring.evaluate()` output is unchanged. Strategy-
+  specific combinations (e.g. "pullback within 0.3x ATR of EMA21")
+  deliberately NOT computed here — those belong in `scoring.js` in
+  Stage 2+, combining these raw readings with a strategy's own
+  threshold, not baked into the shared snapshot.
+- Verified: new fields match calling the Stage 0 functions directly at
+  the same index; `Scoring.evaluate()`'s continuation items contain no
+  Stage-1-indicator-derived labels yet. Live-verified: a full scan
+  completes normally with cards rendering correctly, no new console
+  errors, no visible performance regression despite six new indicators
+  now computing per timeframe per coin.
 
 ### Added (Flows: 1Y column, MTD/YTD stand-in)
 - Added `1y` to `sectorPerformance7d()`'s existing `price_change_percentage`
