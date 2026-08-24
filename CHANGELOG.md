@@ -17,6 +17,66 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Added (Phase A — frozen-fixture regression harness)
+`tools/` now holds a three-part harness: `capture-fixtures.js` freezes raw
+Bybit candles (5M/15M/1H/4H, 60 coins) to JSON, `score-fixtures.js` scores
+those frozen candles with the current code, and `diff-scores.js` compares
+two snapshots — refusing outright to diff across different fixture
+captures, since that measures the market moving rather than the code
+change. Verified deterministic: re-scoring the same fixtures diffs to
+zero. 4H is captured now despite being display-only, because the
+regime/context work needs real 4H history and re-capturing later would
+break comparability with the committed baseline.
+
+### Fixed (Phase B — scoring correctness, measured on frozen fixtures)
+Four independent correctness fixes ahead of the scoring restructure.
+Cumulative effect across the 60-coin sample: **38 scores changed, 6 band
+flips, mean |delta| 6.92**, band mix AVOID 42→41 / WATCH 16→18 /
+EXCELLENT 2→1.
+
+**B1 — score on closed candles, not the in-progress bar.** Bybit returns
+the still-forming candle as the newest element, so every indicator was
+reading a provisional bar and the same coin scored differently depending
+purely on when in the candle a scan fired. Also a methodology correction:
+Alligator/AO/fractal is a bar-close method, so a signal read off an
+unclosed bar isn't the signal the method defines. Done in
+`Scoring.evaluate()` rather than `Api.fetchCandleSet()` so scoring owns
+its input contract — the bot shares this file but not the fetch layer.
+Display price is unaffected. Largest single contributor: 37 scores
+changed, 5 band flips, worst XPL 60→15, SOL 62→21, NVDA 88→66.
+
+**B2 — mirror all directional logic for shorts.** Four asymmetries all
+leaning the same way: `!aoRising` credited flat/unavailable AO as bearish
+confirmation (12 free TQS points); the 40–75 RSI "healthy" band was
+applied unmirrored so a short at RSI 30 was penalised as if oversold;
+`buildExhaustion()` took no bias at all and penalised shorts for the
+market being overbought — the condition that supports the short; and
+"1H RSI extreme" was long-only with no bearish mirror. Symmetry is now
+structural (folding `100 - rsi` for bearish bias) rather than two sets of
+constants hoping to stay in sync. Measured: long-biased coins moved 0.00
+on average, short-biased +4.21 — only the broken side moved.
+
+**B3 — retire Alligator invalidation when the mouth flips.** A jaw touch
+earned in a bearish move stayed active after the mouth flipped bullish,
+and since `alignment` is forced to 0 whenever the flag is set, a valid new
+setup could be suppressed by an event from the opposite trend. Zero score
+change on the sample — the leak fires somewhere in history for 92% of
+TF-series but had always self-corrected by the final bar, the only bar the
+live score reads. It matters considerably more for anything walking
+history bar by bar, i.e. the bot's backtesting.
+
+**B4 — bounded ATR bucketing, honest lookback, null-safe RSI.**
+`bucketedAtr()` snapped sub-0.1% ATR up to 0.1%, inflating genuinely
+low-volatility pairs by up to 10x and contaminating every ATR-relative
+distance check; worst case is now 1.25x. `nearestLevels()`'s `lookback`
+defaulted to 150 against a 100-candle fetch and never constrained
+anything. `Math.round(null)` is 0, so a missing RSI rendered as "RSI 0".
+
+11 new tests cover the directional-symmetry invariants and the
+invalidation lifecycle, so a future one-sided rule fails loudly instead of
+skewing quietly. 113/113 browser, 81/82 Node (1 pre-existing unrelated
+`fractals`/`heikinAshi` fixture failure, untouched).
+
 ### Removed (Audit F5 — dead snapshot fields)
 `analyzeTimeframe()` was returning 15 fields no caller ever read:
 `macdSeries`/`stochSeries` (full 100-element series × 3 TF × 120 coins —
