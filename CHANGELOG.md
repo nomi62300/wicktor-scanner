@@ -17,6 +17,71 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Added (Phase C1 — market regime classification)
+`Indicators.classifyRegime()` labels each timeframe **trending / squeeze /
+transition / ranging**, plus the raw inputs behind it (`lineOrder`,
+`alligatorSpreadAtr`, `bbBandwidthPct`) and a general `percentileRank()`
+helper. Purely additive: **zero score change** on all 60 fixture coins,
+since nothing reads it until C4.
+
+Built on the Alligator's own geometry rather than a bolted-on trend
+filter — Williams already describes the indicator as *sleeping* (lines
+converged) versus *eating* (lines fanned and ordered), and
+`alligatorSpreadAtr` makes that measurable, keeping regime inside the
+taught method. It reads `lineOrder` rather than `alignment`, because
+`alignment` is forced to 0 by a jaw touch and so conflates "this move was
+invalidated" with "there is no trend here". Measured: `lineOrder` is
+non-zero for 78-87% of timeframes while `alignment` is only 42-65%.
+
+Thresholds are calibrated against frozen fixtures, not convention:
+- **spread >= 0.5 ATR** sits in the measured gap between ordered mouths
+  (p25 0.41-0.59) and closed ones (p75 0.35-0.40).
+- **ADX >= 20**, Wilder's "a trend exists" line, deliberately not the 25
+  "strong trend" line: on 5M only ~25% of coins clear 25. The gate is not
+  redundant with spread despite r=0.73 — 22-38% of wide-spread coins sit
+  below ADX 20, and those are *stale fans* (lines still spread from a move
+  whose momentum is gone) that must not read as trending.
+- **squeeze at the 10th percentile** of bandwidth's own history, not the
+  textbook 20th: 5M bandwidth percentile has a median of 18, so a 20
+  threshold labels a fifth of all 5M coins as squeezing and starves
+  transition to zero.
+
+A precedence chain rather than a weighted blend, because the three inputs
+are strongly collinear (adx-spread 0.73, adx-bandwidth 0.71) and adding
+them would triple-count one underlying signal.
+
+**The significant finding — regime is not valid on 5M.** Forward-validated
+over 4,860 classifications (classify at bar i, measure i+1..i+N, no future
+data entering the classification):
+
+| TF | trending vs ranging forward efficiency | verdict |
+|---|---|---|
+| 1H | +0.10 at 12 bars, positive at every horizon 4-20 | reliable |
+| 15M | +0.12 at 6-8 bars, positive 4-16 | reliable |
+| 5M | **negative at all seven horizons tested** | do not use |
+
+The 5M inversion is systematic, not sampling noise — it held at 3, 4, 6,
+8, 12, 16 and 20 bars with n>1000. Every input here is a lagging
+description of a completed move (jaw is SMMA(13) displaced 8; ADX(14) is
+double-smoothed), so on 5M the mouth finishes fanning only once the move is
+spent and mean reversion follows — a short-horizon momentum reading acting
+as a contrarian one. This contradicted the originally proposed
+regime-first-on-5M architecture and changes it: **regime comes from 1H and
+15M; 5M's role is entry triggering, not regime.** The 5M value is still
+recorded (honest math, useful for display) but must not be treated as
+predictive.
+
+An earlier backward-looking validation suggested the same 5M problem but
+was not trustworthy — it classified only the final bar (n=6-13 per bucket)
+and its result flipped sign with the window, i.e. it was noise. Both the
+throwaway and the forward version are kept in `tools/` so the difference in
+method is visible.
+
+New tooling: `explore-regime.js` (input distributions),
+`calibrate-regime.js` (threshold sweeps), `validate-regime-forward.js`
+(predictive validation). 11 new tests cover the precedence chain, boundary
+inclusivity, the stale-fan case, and graceful degradation on missing input.
+
 ### Added (Phase A — frozen-fixture regression harness)
 `tools/` now holds a three-part harness: `capture-fixtures.js` freezes raw
 Bybit candles (5M/15M/1H/4H, 60 coins) to JSON, `score-fixtures.js` scores

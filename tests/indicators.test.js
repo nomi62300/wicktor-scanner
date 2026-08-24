@@ -635,6 +635,82 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase C1 — regime classification
+// ---------------------------------------------------------------------------
+
+const R = (o) => Indicators.classifyRegime(Object.assign(
+  { lineOrder: 1, alligatorSpreadAtr: 1.0, adx: 30, bbBandwidthPct: 50 }, o));
+
+test('C1 regime: ordered + fanned + real movement = trending', () => {
+  assert.strictEqual(R({}), 'trending');
+  assert.strictEqual(R({ lineOrder: -1 }), 'trending', 'direction-agnostic');
+});
+
+test('C1 regime: a fanned mouth with no movement behind it is NOT trending', () => {
+  // The stale-fan case: lines still spread from a move whose momentum is
+  // gone. 22-38% of wide-spread coins measured below ADX 20.
+  assert.notStrictEqual(R({ adx: 15 }), 'trending');
+});
+
+test('C1 regime: converged lines are not trending however strong ADX looks', () => {
+  assert.notStrictEqual(R({ alligatorSpreadAtr: 0.2, adx: 45 }), 'trending');
+});
+
+test('C1 regime: squeeze outranks transition when volatility is compressed', () => {
+  // ordered but not fanned, and bandwidth in its own bottom decile
+  assert.strictEqual(R({ alligatorSpreadAtr: 0.2, bbBandwidthPct: 5 }), 'squeeze');
+  // same geometry, normal volatility -> merely unclear
+  assert.strictEqual(R({ alligatorSpreadAtr: 0.2, bbBandwidthPct: 50 }), 'transition');
+});
+
+test('C1 regime: a closed mouth with width to trade is ranging', () => {
+  assert.strictEqual(R({ lineOrder: 0, alligatorSpreadAtr: 0.2, bbBandwidthPct: 50 }), 'ranging');
+});
+
+test('C1 regime: reads lineOrder, so an invalidated trend is not mislabelled a range', () => {
+  // alignment would be 0 here (jaw touched); lineOrder preserves the geometry
+  assert.strictEqual(
+    Indicators.classifyRegime({ lineOrder: 1, alignment: 0, alligatorSpreadAtr: 1.2, adx: 30, bbBandwidthPct: 50 }),
+    'trending');
+});
+
+test('C1 regime: thresholds are boundaries, not approximations', () => {
+  const t = Indicators.REGIME_THRESHOLDS;
+  assert.strictEqual(R({ alligatorSpreadAtr: t.spreadTrend, adx: t.adxTrend }), 'trending', 'inclusive at the edge');
+  assert.notStrictEqual(R({ alligatorSpreadAtr: t.spreadTrend - 0.001 }), 'trending');
+  assert.notStrictEqual(R({ adx: t.adxTrend - 0.001 }), 'trending');
+  assert.strictEqual(R({ alligatorSpreadAtr: 0.2, bbBandwidthPct: t.squeezePct }), 'squeeze', 'inclusive at the edge');
+});
+
+test('C1 regime: missing inputs degrade to unknown rather than guessing', () => {
+  assert.strictEqual(R({ alligatorSpreadAtr: null }), 'unknown');
+  // ADX unavailable must not read as "trend confirmed"
+  assert.notStrictEqual(R({ adx: null }), 'trending');
+});
+
+test('C1 percentileRank: ranks a value within its own trailing history', () => {
+  const series = Array.from({ length: 60 }, (_, i) => i); // 0..59 ascending
+  assert.strictEqual(Indicators.percentileRank(series, 59, 50), 100, 'highest in window');
+  const flat = new Array(60).fill(5);
+  assert.strictEqual(Indicators.percentileRank(flat, 59, 50), 100, 'all ties count as at-or-below');
+  assert.strictEqual(Indicators.percentileRank(series, 5, 50), null, 'too few samples to rank');
+  assert.strictEqual(Indicators.percentileRank([null, null], 1, 50), null);
+});
+
+test('C1: analyzeTimeframe exposes regime plus the raw inputs behind it', () => {
+  const snap = Indicators.analyzeTimeframe(buildCleanUptrend(90));
+  assert.ok(['trending', 'squeeze', 'transition', 'ranging', 'unknown'].includes(snap.regime));
+  assert.strictEqual(typeof snap.lineOrder, 'number');
+  assert.ok(snap.alligatorSpreadAtr == null || snap.alligatorSpreadAtr >= 0);
+});
+
+test('C1: a clean synthetic uptrend classifies as trending', () => {
+  const snap = Indicators.analyzeTimeframe(buildCleanUptrend(90));
+  assert.strictEqual(snap.regime, 'trending');
+  assert.strictEqual(snap.lineOrder, 1);
+});
+
+// ---------------------------------------------------------------------------
 // Phase B3 — invalidation must not outlive the move that caused it
 // ---------------------------------------------------------------------------
 

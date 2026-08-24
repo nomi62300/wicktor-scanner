@@ -552,6 +552,98 @@ const Indicators = (() => {
   }
 
   /**
+   * Market regime for one timeframe.
+   *
+   * Built on the Alligator's own geometry rather than bolting on a foreign
+   * trend filter: Williams already describes the indicator as *sleeping*
+   * (lines converged and intertwined) versus *eating* (lines fanned out and
+   * ordered). alligatorSpreadAtr makes that measurable, so the regime stays
+   * inside the taught method instead of running alongside it.
+   *
+   * Reads `lineOrder`, NOT `alignment`. alignment is forced to 0 by a jaw
+   * touch, which conflates "this move got invalidated" with "there is no
+   * trend here" — two different market states that need different handling.
+   * Measured: lineOrder is non-zero for 78-87% of timeframes while alignment
+   * is only 42-65%, and that gap is precisely the invalidated-trend cases.
+   *
+   * Thresholds are calibrated against frozen fixtures (see
+   * tools/calibrate-regime.js), not taken from convention:
+   *
+   *  - spread >= 0.5 ATR sits in the measured gap between ordered mouths
+   *    (p25 0.41-0.59) and closed ones (p75 0.35-0.40).
+   *
+   *  - adx >= 20 is Wilder's "a trend exists" line, deliberately not the 25
+   *    "strong trend" line used elsewhere: on 5M only ~25% of coins clear 25,
+   *    which is too strict for a scalping product. The gate is not redundant
+   *    with spread despite r=0.73 — 22-38% of wide-spread coins have ADX
+   *    below 20, and those are stale fans (lines still spread from a move
+   *    whose momentum is gone), which must not read as TRENDING.
+   *
+   *  - squeeze at the 10th percentile of a bandwidth's own recent history,
+   *    not the textbook 20th: 5M bandwidth percentile has a median of 18,
+   *    so a 20 threshold labels a fifth of all 5M coins as squeezing and
+   *    starves TRANSITION to zero. 10 holds at 10-18% across all three TFs.
+   *
+   * Deliberately a precedence chain rather than a weighted score of the
+   * three inputs: they are strongly collinear (adx-spread 0.73,
+   * adx-bandwidth 0.71), so combining them additively would triple-count one
+   * underlying signal. Each input answers a distinct question instead —
+   * spread/order: is the mouth open and directional; adx: is there real
+   * movement behind it; bandwidth percentile: is volatility compressed.
+   *
+   * Returns 'trending' | 'squeeze' | 'transition' | 'ranging' | 'unknown'.
+   * Direction is not returned — read `lineOrder` for that.
+   *
+   * ---------------------------------------------------------------------
+   * VALIDITY BY TIMEFRAME — measured, and the most important caveat here.
+   *
+   * Forward-validated over 4,860 classifications (classify at bar i, measure
+   * bars i+1..i+N, nothing from the future entering the classification; see
+   * tools/validate-regime-forward.js). Median forward efficiency,
+   * trending vs ranging:
+   *
+   *   1H    +0.10 at 12 bars, positive at every horizon 4-20   -> RELIABLE
+   *   15M   +0.12 at 6-8 bars, positive 4-16                   -> RELIABLE
+   *   5M    NEGATIVE at every horizon tested (3,4,6,8,12,16,20) -> DO NOT USE
+   *
+   * The 5M inversion is systematic, not sampling noise — it held at all
+   * seven horizons with n>1000. The mechanism is that every input here is a
+   * lagging description of a completed move: jaw is SMMA(13) displaced 8,
+   * and ADX(14) is double-smoothed, so on 5M the mouth only finishes fanning
+   * once the move is largely spent, and mean reversion follows. A
+   * short-horizon momentum reading behaves as a contrarian indicator.
+   *
+   * Consequence for callers: take regime from 1H (and 15M), never from 5M.
+   * 5M's role is entry triggering, not regime. The snapshot still carries a
+   * 5M `regime` value because it is honest math on that timeframe's data and
+   * is useful for display, but scoring must not treat it as predictive.
+   * ---------------------------------------------------------------------
+   */
+  const REGIME = {
+    spreadTrend: 0.5,   // ATR units of Alligator fan-out
+    adxTrend: 20,       // Wilder's trend-exists line
+    squeezePct: 10      // percentile of bandwidth's own trailing history
+  };
+
+  function classifyRegime({ lineOrder, alligatorSpreadAtr, adx, bbBandwidthPct }, t = REGIME) {
+    if (alligatorSpreadAtr == null) return 'unknown';
+
+    const mouthOpen = lineOrder !== 0 && alligatorSpreadAtr >= t.spreadTrend;
+    const hasMovement = adx != null && adx >= t.adxTrend;
+    if (mouthOpen && hasMovement) return 'trending';
+
+    // Checked before TRANSITION so a trend that lost momentum AND compressed
+    // reads as coiling rather than merely unclear — the more actionable call.
+    if (bbBandwidthPct != null && bbBandwidthPct <= t.squeezePct) return 'squeeze';
+
+    // Lines still ordered but not fanned, or fanned without movement behind
+    // it: a trend forming or decaying, not a range with width to trade.
+    if (lineOrder !== 0) return 'transition';
+
+    return 'ranging';
+  }
+
+  /**
    * Convenience: compute everything for one timeframe's candles and
    * return a compact snapshot of the latest closed bar.
    *
@@ -578,6 +670,12 @@ const Indicators = (() => {
       if (lipsV > teethV && teethV > jawV) alignment = 1;
       else if (lipsV < teethV && teethV < jawV) alignment = -1;
     }
+    // Line ordering BEFORE the invalidation override. Regime classification
+    // needs the raw geometry: a jaw touch means "this move was invalidated",
+    // which is a different statement from "the mouth is closed and there is
+    // no trend". Collapsing both into alignment===0 is what made an
+    // invalidated trend indistinguishable from a genuine range.
+    const lineOrder = alignment;
 
     // Touch-state invalidation — walks HA candles, returns bool[] per bar
     const touchStates = alligatorTouchState(haCandles, jaw, teeth, lips);
@@ -615,6 +713,23 @@ const Indicators = (() => {
     const belowDownFractal = lastDownFrac != null && price < candles[lastDownFrac].l;
 
     const atrV = atr(candles)[lastIdx];
+
+    // How far apart the three Alligator lines sit, in ATR units. This is the
+    // measurable form of Williams' own sleeping/eating language: converged
+    // lines = a sleeping alligator (no trend), lines fanned out = an eating
+    // one. ATR-normalized so it's comparable across assets and across
+    // volatility regimes, rather than a raw price distance that would mean
+    // something different on BTC than on a micro-cap.
+    //
+    // Basis note: the lines are built on HA median price while ATR is on real
+    // candles. Both are price-scale so the ratio is meaningful; using HA-
+    // derived range instead would make the number harder to reason about
+    // against every other ATR-relative check in the codebase.
+    let alligatorSpreadAtr = null;
+    if (jawV != null && teethV != null && lipsV != null && atrV != null && atrV > 0) {
+      alligatorSpreadAtr = (Math.max(jawV, teethV, lipsV) - Math.min(jawV, teethV, lipsV)) / atrV;
+    }
+
     const { resistance, support } = nearestLevels(candles, frac, price, atrV);
     // v2 sloped-channel levels — additive, see regressionChannelLevels()'s
     // own doc comment for why this doesn't replace resistance/support above.
@@ -657,6 +772,11 @@ const Indicators = (() => {
     const bbPercentBV = bb.percentB[lastIdx];
     const bbBandwidthV = bb.bandwidth[lastIdx];
     const bbExpanding = bbBandwidthV != null && bb.bandwidth[lastIdx - 1] != null && bbBandwidthV > bb.bandwidth[lastIdx - 1];
+    // Bandwidth's rank against its own recent history — the squeeze measure.
+    // (bbBandwidth was dropped in the F5 dead-field cleanup because nothing
+    // read it; regime classification is the consumer that makes it live
+    // again, now paired with the percentile that gives it meaning.)
+    const bbBandwidthPct = percentileRank(bb.bandwidth, lastIdx);
 
     const adxResult = adx(candles);
     const adxV = adxResult.adx[lastIdx];
@@ -682,6 +802,10 @@ const Indicators = (() => {
 
     const sweep = liquiditySweep(candles, frac, lastIdx, atrV);
 
+    const regime = classifyRegime({
+      lineOrder, alligatorSpreadAtr, adx: adxV, bbBandwidthPct
+    });
+
     // MACD/Stochastic divergence (strategy-enrichment #9) — divergence()
     // is already fully generic (never RSI-specific internally), so this
     // reuses it directly against macdLine/stochK instead of a new
@@ -691,6 +815,9 @@ const Indicators = (() => {
 
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
+      lineOrder,              // raw line ordering, BEFORE the invalidation override
+      alligatorSpreadAtr,     // line fan-out in ATR units (sleeping vs eating)
+      regime,                 // trending / squeeze / transition / ranging / unknown
       confidence,             // 5-tier: strong_bull/weak_bull/neutral/weak_bear/strong_bear
       alligatorInvalidated,   // true if jaw-touch rule is currently active
       ao: aoV,
@@ -724,7 +851,7 @@ const Indicators = (() => {
       macdHistogram: macdHistV,
       macdBullishCross, macdBearishCross, macdHistogramRising,
       bbUpper: bbUpperV, bbLower: bbLowerV,
-      bbPercentB: bbPercentBV, bbExpanding,
+      bbPercentB: bbPercentBV, bbExpanding, bbBandwidthPct,
       adx: adxV,
       stochBullishCrossFromOversold, stochBearishCrossFromOverbought,
       ichimokuAboveCloud, ichimokuBelowCloud,
@@ -891,6 +1018,26 @@ const Indicators = (() => {
   }
 
   /**
+   * Where `series[idx]` ranks within its own trailing `lookback` values,
+   * as 0-100. Self-normalizing by construction: "narrowest bandwidth in 50
+   * bars" means the same thing on BTC and on a micro-cap, whereas any
+   * absolute bandwidth threshold would need per-asset calibration.
+   * Returns null when there isn't enough history to rank against.
+   */
+  function percentileRank(series, idx, lookback = 50, minSamples = 20) {
+    if (!series || idx == null || series[idx] == null) return null;
+    const from = Math.max(0, idx - lookback + 1);
+    let n = 0, atOrBelow = 0;
+    for (let k = from; k <= idx; k++) {
+      if (series[k] == null) continue;
+      n++;
+      if (series[k] <= series[idx]) atOrBelow++;
+    }
+    if (n < minSamples) return null;
+    return (atOrBelow / n) * 100;
+  }
+
+  /**
    * ADX (Wilder): +DI/-DI from directional movement, Wilder-smoothed via
    * the existing smma()/trueRange(), ADX = Wilder-smoothed DX. Reuses
    * trueRange()/smma() directly per the plan rather than reimplementing
@@ -1038,6 +1185,7 @@ const Indicators = (() => {
     awesomeOscillator, acceleratorOscillator, wisemanSignals, mfi, mfiClassification,
     fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
+    percentileRank, classifyRegime, REGIME_THRESHOLDS: REGIME,
     linearRegression, regressionChannelLevels,
     breakoutProximityPct,
     ema, macd, bollingerBands, adx, stochastic, ichimoku, liquiditySweep

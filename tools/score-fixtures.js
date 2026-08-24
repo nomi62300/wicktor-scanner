@@ -64,7 +64,13 @@ function main() {
       tfConfidence: r.tfConfidence,
       rsiByTf: r.rsiByTf,
       adx1h: r.tfSnapshots[0] && r.tfSnapshots[0].adx != null
-        ? +r.tfSnapshots[0].adx.toFixed(2) : null
+        ? +r.tfSnapshots[0].adx.toFixed(2) : null,
+      // C1 regime, per TF [1H, 15M, 5M]. 5M's is recorded for completeness
+      // but is measurably anti-predictive — see classifyRegime()'s validity
+      // note. Scoring should read 1H/15M only.
+      regimeByTf: r.tfSnapshots.map(s => s ? s.regime : null),
+      spreadByTf: r.tfSnapshots.map(s => (s && s.alligatorSpreadAtr != null)
+        ? +s.alligatorSpreadAtr.toFixed(2) : null)
     });
   }
 
