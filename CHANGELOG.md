@@ -7,10 +7,27 @@ project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
-outcome-logging, OI 15m%, and the extended 7-TF panel added in follow-up
-sessions with the owner present. Deliberately left unmerged on a branch
-pending review, per standing branch discipline (`main` auto-deploys
-live). Not version-bumped or tagged; that happens at merge time.
+outcome-logging, OI 15m%, the extended 7-TF panel, and the CoinPaprika
+fallback tier added in follow-up sessions with the owner present.
+Deliberately left unmerged on a branch pending review, per standing
+branch discipline (`main` auto-deploys live). Not version-bumped or
+tagged; that happens at merge time.
+
+### Added (CoinPaprika fallback tier)
+- Inserted as the middle tier in both `coingeckoGlobal()` and
+  `coingeckoMarketCaps()`: CoinGecko → CoinPaprika (free, direct, no
+  quota to protect) → CMC via the Supabase proxy (metered, last resort).
+  Verified live in three ways: (1) direct browser `fetch()` to
+  `api.coinpaprika.com` from this origin succeeds with a real
+  `access-control-allow-origin: *` header — genuinely CORS-open, not
+  just curl-reachable; (2) a real, unforced fallback fired during this
+  session's own testing — `coingeckoGlobal()` hit CoinGecko's rate limit
+  mid-scan and fell through to CoinPaprika automatically, and the UI's
+  BTC Dominance/Market Cap tiles showed CoinPaprika's real values; (3)
+  simulated a full CoinGecko+CoinPaprika outage to confirm the CMC proxy
+  still answers as the final fallback. All three tiers reshape their
+  response to CoinGecko's own field names, so no caller needs to change
+  regardless of which source actually answered.
 
 ### Added (Phase 6 — Breakout-proximity)
 - New Continuation scoring item evaluated on 15M: `Indicators.

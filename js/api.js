@@ -234,6 +234,13 @@ const Api = (() => {
     return safeFetch(url.toString());
   }
 
+  // CoinPaprika: genuinely keyless and CORS-open (verified live —
+  // access-control-allow-origin: * is present when a request carries an
+  // Origin header), no shared quota to protect unlike CMC's metered
+  // 15k/month key. Sits BEFORE the CMC proxy in every fallback chain
+  // below — free and unlimited beats metered-and-last-resort.
+  const COINPAPRIKA_BASE = 'https://api.coinpaprika.com/v1';
+
   let cgCache = { global: null, ts: 0 };
   // Global mcap/dominance doesn't meaningfully move minute-to-minute —
   // matches the 30-min cadence applied to the rest of the top strip.
@@ -250,10 +257,23 @@ const Api = (() => {
       return cgCache.global;
     }
 
-    // CoinGecko failed outright — fall back to CMC via the proxy, reshaped
-    // to CoinGecko's field names so every caller (topStripData etc.) needs
-    // no changes regardless of which source actually answered.
-    console.warn('[Api] coingeckoGlobal failed, falling back to CMC proxy');
+    // CoinGecko failed outright — try CoinPaprika next (free, direct, no
+    // quota to protect), reshaped to CoinGecko's field names so every
+    // caller (topStripData etc.) needs no changes regardless of source.
+    console.warn('[Api] coingeckoGlobal failed, falling back to CoinPaprika');
+    const cpData = await safeFetch(`${COINPAPRIKA_BASE}/global`);
+    if (cpData && cpData.market_cap_usd != null) {
+      cgCache.global = {
+        market_cap_percentage: { btc: cpData.bitcoin_dominance_percentage },
+        total_market_cap: { usd: cpData.market_cap_usd },
+        market_cap_change_percentage_24h_usd: cpData.market_cap_change_24h
+      };
+      cgCache.ts = now;
+      return cgCache.global;
+    }
+
+    // CoinPaprika also failed — last resort, CMC via the proxy.
+    console.warn('[Api] CoinPaprika also failed, falling back to CMC proxy');
     const cmcData = await cmcProxyFetch('/v1/global-metrics/quotes/latest');
     if (cmcData && cmcData.data && cmcData.data.quote && cmcData.data.quote.USD) {
       const usd = cmcData.data.quote.USD;
@@ -298,10 +318,23 @@ const Api = (() => {
     }
 
     // All 4 pages came back empty — CoinGecko is down/rate-limited, not
-    // just missing a few coins. Fall back to a single CMC listings call
-    // (one request instead of 4, same 1000-coin depth) via the proxy.
+    // just missing a few coins. Try CoinPaprika next (free, direct, one
+    // request for the same 1000-coin depth), then CMC via the proxy only
+    // as the last resort.
     if (Object.keys(map).length === 0) {
-      console.warn('[Api] coingeckoMarketCaps failed on every page, falling back to CMC proxy');
+      console.warn('[Api] coingeckoMarketCaps failed on every page, falling back to CoinPaprika');
+      const cpData = await safeFetch(`${COINPAPRIKA_BASE}/tickers?limit=1000`);
+      if (Array.isArray(cpData)) {
+        cpData.forEach(c => {
+          const sym = (c.symbol || '').toUpperCase();
+          const mcap = c.quotes && c.quotes.USD ? c.quotes.USD.market_cap : null;
+          if (mcap != null && !(sym in map)) map[sym] = mcap;
+        });
+      }
+    }
+
+    if (Object.keys(map).length === 0) {
+      console.warn('[Api] CoinPaprika also failed, falling back to CMC proxy');
       const cmcData = await cmcProxyFetch('/v1/cryptocurrency/listings/latest', { limit: 1000 });
       if (cmcData && Array.isArray(cmcData.data)) {
         cmcData.data.forEach(c => {
