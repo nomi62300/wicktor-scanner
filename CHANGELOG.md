@@ -50,6 +50,14 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (branch-only — preview deploy unlocked)
+`MAINTENANCE_MODE` is committed `false` on this branch only, so the new
+Vercel preview deploy (`wicktor-terminal-preview`, tracking
+`terminal-build/phase-0-1`) is testable without the access code. `main`
+is untouched and still locked at `true` — `beta.wicktor.top` never reads
+this branch. **Must flip back to `true` before this branch is ever
+merged into `main`.**
+
 ### Added (Audit F2 — ADX actually wired in)
 The original plan specified an ADX Continuation multiplier; it was never
 built, and two comments in `scoring.js` incorrectly asserted it existed

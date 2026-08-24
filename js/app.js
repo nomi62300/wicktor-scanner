@@ -49,9 +49,14 @@
 
   // Hard gate shown to literally every visitor, checked before the access
   // gate and before anything else in init() — even someone who already has
-  // the current valid code sees this, not the app. Flip to false (and
-  // redeploy) to reopen the scanner once maintenance work is done.
-  const MAINTENANCE_MODE = true;
+  // the current valid code sees this, not the app.
+  //
+  // Committed as false ONLY on this branch, ONLY so the Vercel preview
+  // deploy (terminal-build/phase-0-1) is testable without the access code.
+  // This branch never deploys to beta.wicktor.top (that's main, still
+  // locked at true) — but flip this back to true before this branch is
+  // ever merged into main, or the live site reopens unintentionally.
+  const MAINTENANCE_MODE = false;
 
   const DEFAULT_SETTINGS = {
     universeSize: 120,
