@@ -182,8 +182,8 @@ const Scoring = (() => {
       if (m15.bbExpanding && brokeOut) {
         items.push(['15M BB squeeze breakout', 12]); score += 12;
         // Distinct specific-event confirmation, additive to the general
-        // ADX-as-Continuation-multiplier design (section 4.2) — this
-        // strategy's own ADX check, not the global multiplier.
+        // ADX-as-trend-strength term in tradeQualityScore() (Audit F2) —
+        // this strategy's own ADX check, not the global term.
         if (m15.adx != null && m15.adx >= 25) {
           items.push(['ADX confirms breakout strength', 8]); score += 8;
         }
@@ -241,8 +241,8 @@ const Scoring = (() => {
     // principle already used for RSI divergence (Strategy 9) elsewhere
     // in this plan. Only the genuinely distinct condition (a plain
     // directional MACD cross, no EMA21-pullback requirement — unlike
-    // Strategy 1) is scored. ADX is handled globally via the Q1
-    // multiplier design (section 4.2), not a redundant line here.
+    // Strategy 1) is scored. ADX is handled globally, as a trend-strength
+    // term in tradeQualityScore() (Audit F2), not a redundant line here.
     if (primary) {
       if (bias === 1 && primary.macdBullishCross) {
         items.push(['1H MACD trend-following cross', 12]); score += 12;
@@ -471,6 +471,17 @@ const Scoring = (() => {
       if (primary.rsi != null) {
         const healthy = primary.rsi > 40 && primary.rsi < 75;
         momentumScore += healthy ? 15 : -10;
+      }
+      // Audit F2: ADX is trend STRENGTH, not direction — it can't confirm
+      // which way the market is moving (that's alignment's job), only
+      // whether there's a real trend underneath the current bias at all.
+      // Tiers per Wilder's own convention, matching Strategy 2's existing
+      // adx>=25 "strong" threshold: below 20 is a weak/ranging read (the
+      // bias is more likely noise), 20-25 is developing (no adjustment),
+      // 25+ is an established trend.
+      if (primary.adx != null) {
+        if (primary.adx < 20) momentumScore -= 10;
+        else if (primary.adx >= 25) momentumScore += 15;
       }
     }
     momentumScore = Math.max(0, Math.min(100, momentumScore));

@@ -50,6 +50,29 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Added (Audit F2 — ADX actually wired in)
+The original plan specified an ADX Continuation multiplier; it was never
+built, and two comments in `scoring.js` incorrectly asserted it existed
+(used to justify not re-scoring ADX in Strategy 7). Post-audit measurement
+against 38 live coins showed why the Continuation multiplier was the
+wrong home for it anyway: `count=3` coins vary across only 1 distinct
+Continuation value but 6 distinct ADX bands — ADX is the thing that
+actually separates otherwise-identical top candidates, but Continuation
+doesn't feed the Trade Quality Score at all (see F1/F3 below), so it
+would have had zero effect on ranking regardless.
+
+Wired instead into `tradeQualityScore()`'s `momentumScore`, since ADX
+measures trend *strength* (not direction — that's alignment's job):
+1H ADX < 20 (weak/ranging, per Wilder's own convention and Strategy 2's
+existing `adx>=25` "strong" threshold) subtracts 10, ADX >= 25
+(established trend) adds 15, 20-25 (developing) is neutral. At
+momentumScore's 0.3 TQS weight that's a ±3 to +4.5 point nudge — present
+but not dominant. Both stale comments corrected to point at the real
+mechanism. Live-verified against 10 real Bybit symbols (BTC/ETH/SOL/XRP/
+DOGE/ADA/LINK/AVAX/INJ/UNI): scores stay bounded 0-100, no crashes,
+directionally sane (INJ's 42.8 ADX pushes it up, weak-trend coins get
+pulled down). 112/112 browser tests, 73/74 Node tests unchanged.
+
 ### Changed (Provider split — CoinPaprika becomes the primary bulk source)
 CoinGecko's free tier rate-limits constantly, and that was **not
 cosmetic**: sector data feeds `topNarrativeCandidates()` into the scan
