@@ -628,7 +628,9 @@ const Scoring = (() => {
       direction: dir, regime, score,
       continuation, exhaustion, reversal,
       crossingLipsWarning,
-      rsiByTf: tfSnapshots.map(s => s ? Math.round(s.rsi) : null),
+      // Math.round(null) is 0, not null — a missing RSI used to render as a
+      // confident "RSI 0" instead of "--".
+      rsiByTf: tfSnapshots.map(s => (s && s.rsi != null) ? Math.round(s.rsi) : null),
       tfAlignment: tfSnapshots.map(s => s ? s.alignment : 0),
       tfConfidence: tfSnapshots.map(s => s ? s.confidence : 'neutral'),
       divergenceOverall: tfSnapshots[0] && tfSnapshots[0].divergence !== 'none'

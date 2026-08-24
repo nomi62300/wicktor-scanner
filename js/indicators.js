@@ -397,17 +397,29 @@ const Indicators = (() => {
   }
 
   // ATR expressed as a fraction of price, bucketed into discrete steps
-  // (0.1% / 0.2% / 0.3% / 0.5% / 0.75% / 1%) rather than used as a raw
-  // continuous value — reduces noise-driven jitter in anything derived
-  // from it (Skyrexio pattern). Fractions, not fixed dollar steps, so it
-  // scales across assets from micro-cap tokens to BTC. Snaps UP to the
-  // nearest bucket at or above the raw ratio; ratios beyond the largest
-  // bucket are left unbucketed (real high-volatility conditions, not noise).
-  const ATR_PCT_BUCKETS = [0.001, 0.002, 0.003, 0.005, 0.0075, 0.01];
+  // rather than used as a raw continuous value — reduces noise-driven
+  // jitter in anything derived from it (Skyrexio pattern). Fractions, not
+  // fixed dollar steps, so it scales across assets from micro-cap tokens
+  // to BTC. Snaps UP to the nearest bucket at or above the raw ratio;
+  // ratios beyond the largest bucket are left unbucketed (real
+  // high-volatility conditions, not noise).
+  //
+  // The ladder is roughly geometric (~1.5x per step) so quantization error
+  // is bounded at the same *relative* size everywhere. The original ladder
+  // started at 0.1%, which meant a genuinely low-volatility pair reading
+  // 0.01% ATR was snapped up 10x — that isn't quantizing noise, it's
+  // inventing volatility, and every ATR-relative distance check downstream
+  // inherited it. Below the smallest bucket values pass through unbucketed,
+  // mirroring how the top of the ladder already behaves.
+  const ATR_PCT_BUCKETS = [0.0005, 0.00075, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.0075, 0.01, 0.015];
 
   function bucketedAtr(atrValue, price) {
     if (atrValue == null || !price) return atrValue;
     const ratio = atrValue / price;
+    // Off BOTH ends of the ladder, pass the raw ratio through. Without the
+    // low-end check, find() snaps anything under the smallest bucket up to
+    // it — which is how a 0.01% ATR became 0.1%.
+    if (ratio < ATR_PCT_BUCKETS[0]) return atrValue;
     const bucket = ATR_PCT_BUCKETS.find(b => ratio <= b);
     return (bucket != null ? bucket : ratio) * price;
   }
@@ -420,8 +432,15 @@ const Indicators = (() => {
    * fractal low below price, both within `lookback` bars of the latest bar.
    * Falls back to a bucketed-ATR-scaled buffer when no fractal exists on
    * that side (e.g. price at a new high/low within the window).
+   *
+   * `lookback` defaulted to 150 against a 100-candle fetch, so it never
+   * actually constrained anything — every fractal in the series qualified
+   * regardless of age. Defaulted to the real window size now so the code
+   * states what it does. Genuine recency/strength weighting (a level
+   * touched four times matters more than one touched once) is a separate
+   * piece of work, not something this parameter was ever doing.
    */
-  function nearestLevels(candles, frac, price, atrValue, lookback = 150) {
+  function nearestLevels(candles, frac, price, atrValue, lookback = 100) {
     const minIdx = Math.max(0, candles.length - 1 - lookback);
 
     let resistance = null;
