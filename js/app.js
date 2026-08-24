@@ -84,6 +84,7 @@
     },
     searchQuery: '',
     topStripData: {},
+    flowsData: [],
     rawMovers: [],
     refreshTimer: null,
     modalCoin: null,
@@ -107,9 +108,12 @@
     filterBar: document.getElementById('filter-bar'),
     navScanner: document.getElementById('nav-scanner'),
     navDashboard: document.getElementById('nav-dashboard'),
+    navFlows: document.getElementById('nav-flows'),
     viewScanner: document.getElementById('view-scanner'),
     viewDashboard: document.getElementById('view-dashboard'),
+    viewFlows: document.getElementById('view-flows'),
     dashboardGrid: document.getElementById('dashboard-grid'),
+    flowsGrid: document.getElementById('flows-grid'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -764,28 +768,46 @@
     });
     el.navScanner.addEventListener('click', () => switchTab('scanner'));
     el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
+    el.navFlows.addEventListener('click', () => switchTab('flows'));
+    el.flowsGrid.addEventListener('click', (e) => {
+      const row = e.target.closest('.flows-row');
+      if (row) toggleFlowsRow(row.dataset.categoryId);
+    });
+    el.flowsGrid.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('.flows-row');
+      if (row) { e.preventDefault(); toggleFlowsRow(row.dataset.categoryId); }
+    });
   }
 
   // --------------------------------------------------------------- Tab nav
-  // Dashboard data is fetched lazily on first visit, not on every scan —
-  // it's supporting market context, not part of the scan cycle. Cached at
-  // the Api layer (topByMarketCap) so revisiting the tab within the cache
-  // window doesn't refetch.
+  // Dashboard/Flows data is fetched lazily on first visit, not on every
+  // scan — it's supporting market context, not part of the scan cycle.
+  // Cached at the Api layer so revisiting a tab within the cache window
+  // doesn't refetch.
+  const TABS = ['scanner', 'dashboard', 'flows'];
   let dashboardLoaded = false;
+  let flowsLoaded = false;
+  const flowsExpanded = new Set();
 
   function switchTab(tab) {
-    const toDashboard = tab === 'dashboard';
-    el.navScanner.classList.toggle('active', !toDashboard);
-    el.navDashboard.classList.toggle('active', toDashboard);
-    el.navScanner.setAttribute('aria-selected', String(!toDashboard));
-    el.navDashboard.setAttribute('aria-selected', String(toDashboard));
-    el.viewScanner.hidden = toDashboard;
-    el.viewDashboard.hidden = !toDashboard;
-    if (toDashboard && !dashboardLoaded) {
+    TABS.forEach(t => {
+      const active = t === tab;
+      el[`nav${capitalize(t)}`].classList.toggle('active', active);
+      el[`nav${capitalize(t)}`].setAttribute('aria-selected', String(active));
+      el[`view${capitalize(t)}`].hidden = !active;
+    });
+    if (tab === 'dashboard' && !dashboardLoaded) {
       dashboardLoaded = true;
       refreshDashboard();
     }
+    if (tab === 'flows' && !flowsLoaded) {
+      flowsLoaded = true;
+      refreshFlows();
+    }
   }
+
+  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
   async function refreshDashboard() {
     const top5 = await Api.topByMarketCap(5).catch(e => {
@@ -801,6 +823,25 @@
         .filter(x => x.change < 0).sort((a, b) => a.change - b.change).slice(0, 10)
     };
     el.dashboardGrid.innerHTML = Render.dashboardHtml(dashboardData);
+  }
+
+  async function refreshFlows() {
+    const sectorPerf = await Api.sectorPerformance7d().catch(e => {
+      console.warn('[App] sectorPerformance7d fetch failed (Flows tab)', e);
+      return [];
+    });
+    state.narrativePerf = state.narrativePerf || (sectorPerf && sectorPerf.length
+      ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
+      : null);
+    state.flowsData = sectorPerf;
+    el.flowsGrid.innerHTML = Render.marketFlowsHtml(sectorPerf, flowsExpanded);
+  }
+
+  function toggleFlowsRow(categoryId) {
+    if (!categoryId) return;
+    if (flowsExpanded.has(categoryId)) flowsExpanded.delete(categoryId);
+    else flowsExpanded.add(categoryId);
+    el.flowsGrid.innerHTML = Render.marketFlowsHtml(state.flowsData, flowsExpanded);
   }
 
   // ------------------------------------------------------------- Access gate

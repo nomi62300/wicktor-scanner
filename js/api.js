@@ -534,17 +534,36 @@ const Api = (() => {
     let consecutiveFailures = 0;
     let circuitOpen = false;
 
+    // 24h/30d added alongside the original 7d for the Market Flows tab —
+    // CoinGecko accepts multiple comma-separated windows in one request at
+    // no extra cost (verified live), so this stays a single fetch per
+    // category rather than needing a second pass or a snapshot job.
+    const CATEGORY_WINDOWS = '24h,7d,30d';
     async function fetchCategoryWithRetry(catId) {
       const data = await safeFetch(
-        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
+        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=${CATEGORY_WINDOWS}`
       );
       if (data && Array.isArray(data) && data.length > 0) return data;
       if (circuitOpen) return null; // sustained failure already detected — don't wait out a retry
       await new Promise(r => setTimeout(r, 2500));
       const retryData = await safeFetch(
-        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=7d`
+        `${COINGECKO_BASE}/coins/markets?vs_currency=usd&category=${catId}&order=market_cap_desc&per_page=50&page=1&price_change_percentage=${CATEGORY_WINDOWS}`
       );
       return (retryData && Array.isArray(retryData) && retryData.length > 0) ? retryData : null;
+    }
+
+    // Market-cap-weighted average % change for one window across a
+    // category's coins — same weighting method for every window so
+    // 24h/7d/30d stay comparable to each other.
+    function weightedChangeFor(coins, field) {
+      let totalMcap = 0, weightedSum = 0;
+      for (const coin of coins) {
+        const chg = coin[field];
+        if (chg == null || coin.market_cap == null) continue;
+        totalMcap += coin.market_cap;
+        weightedSum += coin.market_cap * chg;
+      }
+      return totalMcap > 0 ? weightedSum / totalMcap : 0;
     }
 
     const results = [];
@@ -557,15 +576,18 @@ const Api = (() => {
       const data = await fetchCategoryWithRetry(cat.id);
       if (data) {
         consecutiveFailures = 0;
-        let totalMcap = 0, weightedSum = 0;
-        for (const coin of data) {
-          const chg = coin.price_change_percentage_7d_in_currency;
-          if (chg == null || coin.market_cap == null) continue;
-          totalMcap += coin.market_cap;
-          weightedSum += coin.market_cap * chg;
-        }
-        const weightedChange7d = totalMcap > 0 ? weightedSum / totalMcap : 0;
-        results.push({ categoryId: cat.id, name: cat.name, weightedChange7d, coins: data });
+        const weightedChange24h = weightedChangeFor(data, 'price_change_percentage_24h_in_currency');
+        const weightedChange7d = weightedChangeFor(data, 'price_change_percentage_7d_in_currency');
+        const weightedChange30d = weightedChangeFor(data, 'price_change_percentage_30d_in_currency');
+        // Sum of the top-50-by-mktcap coins actually fetched — a proxy for
+        // the category's true total market cap (which could include coins
+        // beyond the top 50), not a claim of exhaustive coverage.
+        const mcap = data.reduce((sum, c) => sum + (c.market_cap || 0), 0);
+        results.push({
+          categoryId: cat.id, name: cat.name, mcap,
+          weightedChange24h, weightedChange7d, weightedChange30d,
+          coins: data
+        });
       } else {
         consecutiveFailures++;
         if (consecutiveFailures >= 3 && !circuitOpen) {

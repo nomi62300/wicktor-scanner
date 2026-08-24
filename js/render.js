@@ -447,5 +447,56 @@ const Render = (() => {
     ].join('');
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, newsSectionHtml, esc };
+  // Market Flows (B2): sector/category cards with click-through to
+  // constituent coins. `expandedIds` is a Set of categoryId strings
+  // currently expanded — kept in app.js state, passed in here so this
+  // stays a pure render function like everything else in this file.
+  function pctCellHtml(val) {
+    if (val == null) return '<span style="color:var(--text3)">--</span>';
+    const color = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+    const sign = val >= 0 ? '+' : '';
+    return `<span style="color:${color}">${sign}${val.toFixed(1)}%</span>`;
+  }
+
+  function marketFlowsHtml(sectorPerf, expandedIds) {
+    if (!sectorPerf || !sectorPerf.length) {
+      return '<div class="loading-state">Loading sector data...</div>';
+    }
+    const sorted = [...sectorPerf].sort((a, b) => (b.mcap || 0) - (a.mcap || 0));
+    const rows = sorted.map(sector => {
+      const isOpen = expandedIds && expandedIds.has(sector.categoryId);
+      const coinRows = isOpen
+        ? sector.coins.slice(0, 15).map(c => `
+            <tr class="flows-coin-row">
+              <td>${esc((c.symbol || '').toUpperCase())} <span style="color:var(--text3)">${esc(c.name || '')}</span></td>
+              <td class="mono">${c.market_cap != null ? '$' + esc(String(Math.round(c.market_cap).toLocaleString())) : '--'}</td>
+              <td>${pctCellHtml(c.price_change_percentage_24h_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_7d_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_30d_in_currency)}</td>
+            </tr>`).join('')
+        : '';
+      return `
+        <tr class="flows-row" data-category-id="${esc(sector.categoryId)}" role="button" tabindex="0" aria-expanded="${isOpen}">
+          <td>${isOpen ? '&#9660;' : '&#9654;'} ${esc(sector.name)}</td>
+          <td class="mono">${sector.mcap != null ? '$' + esc(String(Math.round(sector.mcap).toLocaleString())) : '--'}</td>
+          <td>${pctCellHtml(sector.weightedChange24h)}</td>
+          <td>${pctCellHtml(sector.weightedChange7d)}</td>
+          <td>${pctCellHtml(sector.weightedChange30d)}</td>
+        </tr>
+        ${isOpen ? `<tr class="flows-coins-wrap"><td colspan="5">
+          <table class="flows-coins-table"><thead><tr>
+            <th>Coin</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th>
+          </tr></thead><tbody>${coinRows}</tbody></table>
+        </td></tr>` : ''}`;
+    }).join('');
+
+    return `
+      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins.</div>
+      <table class="flows-table">
+        <thead><tr><th>Category</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, newsSectionHtml, esc };
 })();

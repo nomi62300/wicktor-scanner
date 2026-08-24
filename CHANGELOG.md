@@ -6,12 +6,30 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
-Phase 0 + Phase 1 of the terminal-build roadmap, done unsupervised
-overnight while the owner was unavailable — deliberately left unmerged on
-a branch pending review, per standing branch discipline (`main` auto-
+Phase 0 + Phase 1 done unsupervised overnight; Phase 2 added in a
+follow-up session with the owner present. Deliberately left unmerged on a
+branch pending review, per standing branch discipline (`main` auto-
 deploys live). Not version-bumped or tagged; that happens at merge time.
 
-### Added
+### Added (Phase 2 — Market Flows)
+- New "Flows" tab: sortable-by-market-cap category table (Artificial
+  Intelligence, DePIN, RWA, Gaming, Layer 1/2, Meme, etc. — the same
+  16-keyword set already used for the Top Sectors tile) with 24h/7d/30d
+  market-cap-weighted % change per category. Click a row to expand its
+  top-15 constituent coins with the same columns.
+- `Api.sectorPerformance7d()` extended to fetch `price_change_percentage=
+  24h,7d,30d` in the same request (verified live that CoinGecko accepts
+  multiple comma-separated windows at no extra cost) instead of just 7d,
+  and now also returns each category's total market cap (sum of the top
+  50 coins fetched, not the full category — labeled as such in the UI).
+  This made the roadmap's originally-planned daily-snapshot GitHub Actions
+  workflow + new Supabase table unnecessary — real 24h/7d/30d numbers
+  come from one existing request, no new infrastructure needed.
+- Fully additive to existing callers (`topNarrativeCandidates()`, the
+  Top Sectors top-strip tile) — neither reads the new fields, both
+  continue working unchanged.
+
+### Added (Phase 1 — Dashboard)
 - New "Dashboard" tab alongside the existing Scanner view: BTC dominance,
   market cap + 24h%, Fear & Greed, Top Sectors (reused from the existing
   top strip), a new Top 5 by Market Cap tile, and Top 10 Gainers/Losers

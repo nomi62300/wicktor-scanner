@@ -76,6 +76,7 @@
   <nav class="main-nav" role="tablist" aria-label="Main sections">
     <button id="nav-scanner" class="main-nav-tab active" role="tab" aria-selected="true" aria-controls="view-scanner">Scanner</button>
     <button id="nav-dashboard" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-dashboard">Dashboard</button>
+    <button id="nav-flows" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-flows">Flows</button>
   </nav>
 
   <div id="view-scanner" role="tabpanel" aria-labelledby="nav-scanner">
@@ -121,6 +122,12 @@
   <div id="view-dashboard" role="tabpanel" aria-labelledby="nav-dashboard" hidden>
     <section id="dashboard-grid" class="top-strip" aria-label="Dashboard">
       <div class="loading-state">Loading dashboard...</div>
+    </section>
+  </div>
+
+  <div id="view-flows" role="tabpanel" aria-labelledby="nav-flows" hidden>
+    <section id="flows-grid" aria-label="Market Flows">
+      <div class="loading-state">Loading sector data...</div>
     </section>
   </div>
 

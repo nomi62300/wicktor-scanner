@@ -313,6 +313,43 @@ input:focus-visible {
   border-bottom-color: var(--gold);
 }
 
+/* ---- Market Flows table ---- */
+.flows-note {
+  font-size: 11px;
+  color: var(--text3);
+  margin-bottom: 10px;
+}
+
+.flows-table, .flows-coins-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.flows-table th, .flows-coins-table th {
+  text-align: left;
+  font-size: 9px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.flows-table td, .flows-coins-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.flows-row { cursor: pointer; }
+.flows-row:hover { background: var(--surf); }
+
+.flows-coins-wrap td { padding: 4px 10px 12px 24px; border-bottom: 1px solid var(--border); }
+
+.flows-coins-table { background: var(--surf); border-radius: var(--radius-lg); }
+.flows-coins-table th, .flows-coins-table td { padding: 6px 10px; border-bottom: 1px solid var(--border2, var(--border)); font-size: 12px; }
+.flows-coin-row:last-child td { border-bottom: none; }
+
 /* ---- Filter bar ---- */
 .filter-bar {
   display: flex;
