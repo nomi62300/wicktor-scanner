@@ -210,10 +210,68 @@ const Render = (() => {
     container.innerHTML = coins.map((c, i) => cardHtml(c, i)).join('');
   }
 
+  // Exhaustion/Reversal keep their existing point-sum scoring untouched —
+  // this is display-only. Every item here is a fixed-max binary fire/
+  // no-fire EXCEPT Exhaustion's RSI-extremity item, which is genuinely
+  // graded (points scale with how far RSI sits past its threshold), so it
+  // needs its own known ceiling to turn into a fair percentage for icon
+  // tiering. Fixed items always render at 100% of their own max when
+  // shown (they only ever appear in `items` already fully fired), so the
+  // icon is trivially a check for those — still useful for a consistent
+  // glance across all three blocks, and correct: they aren't partial.
+  const ITEM_MAX_LOOKUP = [
+    [/RSI approaching (overbought|oversold)/i, 40],
+    [/RSI divergence/i, 20],
+    [/RSI extreme/i, 15],
+    [/Divergent Bar/i, 15],
+    [/MACD reversal cross/i, 15],
+    [/MACD divergence/i, 15],
+    [/Liquidity sweep/i, 15],
+    [/AC decelerating/i, 12],
+    [/Wiseman AO reversal/i, 12],
+    [/Range-bound/i, 12],
+    [/Stochastic exhaustion crossover/i, 10],
+    [/Stochastic divergence/i, 10],
+    [/MFI Squat/i, 10],
+    [/Retest into (overbought|oversold)/i, 10],
+    [/BB extreme/i, 8]
+  ];
+  function itemOwnMax(label) {
+    const hit = ITEM_MAX_LOOKUP.find(([re]) => re.test(label));
+    return hit ? hit[1] : null;
+  }
+
+  const EXHAUSTION_REVERSAL_EXPLANATIONS = [
+    [/RSI approaching (overbought|oversold)/i, '5M RSI distance from neutral — the further past 68/32, the more stretched the move looks.'],
+    [/RSI extreme/i, '1H RSI at or past 75 — historically overextended territory for the current move.'],
+    [/AC decelerating/i, 'Accelerator Oscillator (momentum of momentum) slowing on 1H, ahead of AO’s own zero-cross — an early exhaustion tell.'],
+    [/BB extreme/i, 'Price on 5M closing at or past a Bollinger Band edge — a mean-reversion stretch point.'],
+    [/Stochastic exhaustion crossover/i, 'A Stochastic cross on 5M coming out of an already-extreme oversold/overbought read.'],
+    [/RSI divergence/i, 'Price made a new high/low that RSI didn’t confirm — a classic momentum-divergence warning.'],
+    [/MFI Squat/i, 'Falling range-per-volume with rising volume on 1H — effort without result, a reversal warning.'],
+    [/Divergent Bar/i, 'The Alligator’s mouth is in the opposite order to the current bias — a structural warning the trend may be turning.'],
+    [/Wiseman AO reversal/i, 'An Awesome Oscillator shape signal warning against the current bias, independent of the main AO-direction check.'],
+    [/Retest into (overbought|oversold)/i, 'A retest that’s holding, but RSI is already at an extreme — the riskier variant of a plain retest.'],
+    [/MACD reversal cross/i, 'MACD turning against the current bias while price sits within 1x ATR of a real support/resistance level.'],
+    [/MACD divergence/i, 'MACD made a new high/low that price didn’t confirm — momentum diverging from price.'],
+    [/Liquidity sweep/i, 'A wick swept past a level and rejected back inside — a stop-hunt pattern that warns against the current bias.'],
+    [/Stochastic divergence/i, 'Stochastic %K diverging from price on 15M — the same divergence concept, a faster oscillator.'],
+    [/Range-bound/i, 'Price at a range extreme with RSI confirming, while no clear 1H trend bias exists — a mean-reversion setup, not a trend play.']
+  ];
+  function exhaustionReversalExplanation(label) {
+    const hit = EXHAUSTION_REVERSAL_EXPLANATIONS.find(([re]) => re.test(label));
+    return hit ? hit[1] : 'One of the signals feeding this score.';
+  }
+
   function breakdownBlockHtml(label, colorVar, val, items) {
-    const rows = items.map(([label, pts]) =>
-      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}</span></div>`
-    ).join('');
+    const rows = items.map(([itemLabel, pts]) => {
+      const max = itemOwnMax(itemLabel);
+      const tier = max ? continuationTier(Math.min(100, (pts / max) * 100)) : { icon: '&#10003;', color: colorVar, bg: colorVar };
+      const info = `<span class="cont-info" title="${esc(exhaustionReversalExplanation(itemLabel))}">i</span>`;
+      return `<div class="breakdown-item">
+        <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(itemLabel)}${info}</span>
+      </div>`;
+    }).join('');
     return `
     <div class="block">
       <div class="block-title-row"><span style="color:${colorVar}">${label}</span><span>${val}/100</span></div>
@@ -234,9 +292,9 @@ const Render = (() => {
   // bug report: the visible list looked like it should sum to more than
   // the header score.
   function continuationTier(pct) {
-    if (pct >= 66) return { icon: '&#10003;', color: 'var(--green-text)', bg: 'var(--green)' };
-    if (pct >= 33) return { icon: '!', color: 'var(--gold-text)', bg: 'var(--gold)' };
-    return { icon: '&#10005;', color: 'var(--text3)', bg: 'var(--surf2)' };
+    if (pct >= 66) return { icon: '&#10003;', color: 'var(--green-text)' };
+    if (pct >= 33) return { icon: '!', color: 'var(--gold-text)' };
+    return { icon: '&#10005;', color: 'var(--text3)' };
   }
 
   // Plain-English explanation per signal, matched by a stable substring
@@ -296,13 +354,13 @@ const Render = (() => {
       const tier = continuationTier(pct);
       const tenScale = Math.round(pct / 10);
       return `<div class="breakdown-item"${rowStyle}>
-        <span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+        <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
         <span class="cont-chip" style="color:${tier.color};border-color:${tier.color}">${tenScale}/10</span>
       </div>`;
     }
     const tier = continuationTier(pct);
     return `<div class="breakdown-item"${rowStyle}>
-      <span><span class="cont-icon" style="color:${tier.color};background:${tier.bg}22">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+      <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
     </div>`;
   }
 

@@ -50,6 +50,30 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (Icon boldness fix + same pattern extended to Exhaustion/Reversal)
+Two follow-ups from live review of the icon redesign:
+- The icon circles were far more washed out live than in the mockup that
+  was approved — shipped at 13% background alpha vs the mockup's solid
+  fill. Bumped to 33% (`color + '55'`) for real contrast against the
+  card's near-black background, and the OI row now gets the same leading
+  tier icon as every other item (previously it only had the trailing
+  X/10 chip, no icon, making it visually inconsistent with the rest).
+- Exhaustion and Reversal get the same icon treatment — explicitly
+  **display-only, scoring untouched**: `tradeQualityScore()` reads
+  `exhaustion.score`/`reversal.score` directly, so rescaling their
+  underlying 0-40/0-50 point-sum to a percentage-mean like Continuation
+  would have silently changed every coin's live Trade Quality Score,
+  which wasn't what was asked. Instead, each item's own known point
+  ceiling (a lookup table in `render.js`, e.g. RSI-divergence maxes at
+  20, BB-extreme at 8) turns its existing point value into a percentage
+  for icon-tier purposes only — the actual score sum is identical to
+  before. Every item here is a fixed-max binary fire/no-fire except
+  Exhaustion's RSI-extremity item, which is genuinely graded (points
+  scale with how far RSI sits past 68/32), so it's the one item that can
+  actually land on ! or ✕ instead of always ✓. Per-item point suffixes
+  ("+12") dropped from Exhaustion/Reversal rows too — the header bar is
+  now the only place a number appears, matching Continuation.
+
 ### Changed (Continuation breakdown — icon-based, at-a-glance display)
 Follow-up to the F3 percentage redesign, requested after reviewing it
 live: raw "+NN%" numbers on 12-16 line items read slower than a status
