@@ -52,10 +52,41 @@ const Scoring = (() => {
   // tfSnapshots is always ordered [1H, 15M, 5M] — same order everywhere else.
   const TF_LABELS = ['1H', '15M', '5M'];
 
+  // Audit F3: previously an additive point-sum capped at 65, which
+  // saturated (many items firing at once, clipped to a flat number) for
+  // an increasing share of the best coins as Phase 5 added more items —
+  // 0/40 on main, 13/40 after Phase 5. Continuation is display-only (Q1:
+  // wiring it into tradeQualityScore() would double-count alignment,
+  // which TQS already weights), so a maxed diagnostic that can't tell two
+  // EXCELLENT coins apart is a real loss of information, not cosmetic.
+  //
+  // Redesigned as an unweighted mean of 0-100 sub-scores, one per signal.
+  // Each signal is either:
+  //  - naturally continuous (breakout proximity, ADX strength, OI
+  //    magnitude) — graded, not just thresholded;
+  //  - a binary event (a cross happened or it didn't) — 100 if fired, 0
+  //    if not, still counted in the mean either way, since "no cross this
+  //    bar" is real information about this specific signal;
+  //  - structurally inapplicable for this coin/bar (OI 15m% only exists
+  //    for perps; a signal needing data this snapshot doesn't have) —
+  //    EXCLUDED from the mean entirely, never scored 0. Scoring a missing
+  //    signal as 0 would unfairly drag down every spot coin for lacking a
+  //    perp-only signal it was never going to have.
+  // add() below encodes exactly that: skip when inapplicable, otherwise
+  // always contribute to the mean, only show a line item when > 0 (kept
+  // from the old behavior — the card lists what's confirming, not a full
+  // audit of every indicator that currently reads zero).
   function buildContinuation(tfSnapshots, bias, oiChange15m) {
     const items = [];
-    let score = 0;
+    const applicable = [];
     const { count } = computeBias(tfSnapshots);
+
+    function add(label, pct, isApplicable) {
+      if (!isApplicable) return;
+      const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+      applicable.push(clamped);
+      if (clamped > 0) items.push([label, clamped]);
+    }
 
     // 5-tier confidence grades HOW CLEAN each aligned TF is (no recent
     // lips dips vs 1-2 weakening dips) — a TF counted in `count` can still
@@ -71,101 +102,81 @@ const Scoring = (() => {
     const weakCount = weakLabels.length;
 
     if (count === 3) {
-      if (weakCount === 0) { items.push(['3TF alligator aligned (clean)', 30]); score += 30; }
-      else { items.push([`3TF alligator aligned (${weakLabels.join('/')} weakening)`, 24]); score += 24; }
+      add(weakCount === 0 ? '3TF alligator aligned (clean)' : `3TF alligator aligned (${weakLabels.join('/')} weakening)`,
+        weakCount === 0 ? 100 : 80, true);
     } else if (count === 2) {
-      if (weakCount === 0) { items.push(['2TF alligator aligned (clean)', 18]); score += 18; }
-      else { items.push([`2TF alligator aligned (${weakLabels.join('/')} weakening)`, 14]); score += 14; }
+      add(weakCount === 0 ? '2TF alligator aligned (clean)' : `2TF alligator aligned (${weakLabels.join('/')} weakening)`,
+        weakCount === 0 ? 65 : 50, true);
     } else if (count === 1) {
-      items.push(['1TF alligator aligned', 8]); score += 8;
+      add('1TF alligator aligned', 30, true);
+    } else {
+      add('Alligator not aligned', 0, true);
     }
 
     const primary = tfSnapshots[0]; // 1H
     if (primary) {
-      if (bias === 1 && primary.aoRising && primary.ao > 0) {
-        items.push(['AO rising, bullish', 16]); score += 16;
-      } else if (bias === -1 && !primary.aoRising && primary.ao < 0) {
-        items.push(['AO falling, bearish', 16]); score += 16;
-      } else if (primary.aoRising === (bias === 1)) {
-        items.push(['AO direction weak confirm', 6]); score += 6;
+      if (primary.ao != null) {
+        const strongConfirm = (bias === 1 && primary.aoRising && primary.ao > 0) ||
+          (bias === -1 && !primary.aoRising && primary.ao < 0);
+        const weakConfirm = primary.aoRising === (bias === 1);
+        if (strongConfirm) add(bias === 1 ? 'AO rising, bullish' : 'AO falling, bearish', 100, true);
+        else if (weakConfirm) add('AO direction weak confirm', 45, true);
+        else add('AO direction opposes bias', 0, true);
       }
 
-      if (bias === 1 && primary.aboveUpFractal) {
-        items.push(['Above last up fractal', 15]); score += 15;
-      } else if (bias === -1 && primary.belowDownFractal) {
-        items.push(['Below last down fractal', 15]); score += 15;
-      }
+      const aligned = (bias === 1 && primary.aboveUpFractal) || (bias === -1 && primary.belowDownFractal);
+      add(bias === 1 ? 'Above last up fractal' : 'Below last down fractal', aligned ? 100 : 0, true);
 
-      if (primary.mfiSignal === 'green') {
-        items.push(['MFI Green (volume + range confirm)', 8]); score += 8;
-      }
+      add('MFI Green (volume + range confirm)', primary.mfiSignal === 'green' ? 100 : 0, true);
     }
 
     // Breakout-proximity (Phase 6): evaluated on 15M specifically — how
     // close price sits to its own fractal-based key level, in ATR terms.
-    // Close-confirmed breakout (price already past the level) scores
-    // higher than merely approaching it, since a close beyond the level
-    // is the actual taught confirmation, not just proximity.
+    // Continuous now (Audit F3) — a confirmed breakout is a flat 100,
+    // everything else uses breakoutProximityPct() directly instead of a
+    // fixed >=66% threshold gating a flat 10.
     const m15 = tfSnapshots[1];
     if (m15) {
-      if (bias === 1 && m15.resistance != null) {
-        if (m15.close > m15.resistance) {
-          items.push(['15M Confirmed breakout above key level', 14]); score += 14;
-        } else {
-          const prox = Indicators.breakoutProximityPct(m15.resistance - m15.close, m15.atr);
-          if (prox != null && prox >= 66) {
-            items.push(['15M Approaching key level (breakout setup)', 10]); score += 10;
-          }
-        }
-      } else if (bias === -1 && m15.support != null) {
-        if (m15.close < m15.support) {
-          items.push(['15M Confirmed breakout below key level', 14]); score += 14;
-        } else {
-          const prox = Indicators.breakoutProximityPct(m15.close - m15.support, m15.atr);
-          if (prox != null && prox >= 66) {
-            items.push(['15M Approaching key level (breakout setup)', 10]); score += 10;
-          }
-        }
+      if (bias === 1 && m15.resistance != null && m15.atr != null) {
+        const pct = m15.close > m15.resistance ? 100 : Indicators.breakoutProximityPct(m15.resistance - m15.close, m15.atr);
+        add(m15.close > m15.resistance ? '15M Confirmed breakout above key level' : '15M Approaching key level (breakout setup)', pct, pct != null);
+      } else if (bias === -1 && m15.support != null && m15.atr != null) {
+        const pct = m15.close < m15.support ? 100 : Indicators.breakoutProximityPct(m15.close - m15.support, m15.atr);
+        add(m15.close < m15.support ? '15M Confirmed breakout below key level' : '15M Approaching key level (breakout setup)', pct, pct != null);
       }
     }
 
-    // OI 15m% (perpetuals only — null for spot, checked via presence not
-    // market type, since buildContinuation doesn't otherwise know market).
-    // Significance threshold 5%: a large swing in open interest either way
-    // means fresh capital is actively committing to the current move, not
-    // just existing positions drifting — a soft confirmation, not a gate.
-    if (oiChange15m != null && Math.abs(oiChange15m) >= 5) {
-      items.push([`Perp OI ${oiChange15m > 0 ? '+' : ''}${oiChange15m.toFixed(1)}% (15m, fresh capital)`, 8]);
-      score += 8;
+    // OI 15m% (perpetuals only — null for spot). Structurally inapplicable
+    // on spot, so excluded from the mean rather than scored 0. Magnitude
+    // scaled against 15% as a "very active" reference point, continuous
+    // rather than the old flat +8 past a 5% threshold.
+    if (oiChange15m != null) {
+      const pct = Math.min(100, Math.abs(oiChange15m) / 15 * 100);
+      add(`Perp OI ${oiChange15m > 0 ? '+' : ''}${oiChange15m.toFixed(1)}% (15m, fresh capital)`, pct, true);
     }
 
     // ====================================================================
     // Phase 5 Stage 2 — scalping-tier strategies 1-5 (see the paused
     // backlog plan section 4.3 for the full owner-provided definitions).
     // computeBias()/alignmentCeiling() are never touched by this batch —
-    // everything below only adds/subtracts Continuation/Exhaustion/
-    // Reversal points, same as every existing item in this function.
+    // everything below only contributes 0-100 sub-scores toward the
+    // Continuation mean, same as every existing signal in this function.
     // ====================================================================
 
     // Strategy 1 (Scalping EMA).
-    if (primary) {
-      if (bias === 1 && primary.emaStackBullish) {
-        items.push(['1H EMA 9/21 bullish trend', 10]); score += 10;
-      } else if (bias === -1 && primary.ema9 != null && primary.ema21 != null && primary.ema9 < primary.ema21) {
-        items.push(['1H EMA 9/21 bearish trend', 10]); score += 10;
-      }
+    if (primary && primary.ema9 != null && primary.ema21 != null) {
+      const bullish = bias === 1 && primary.emaStackBullish;
+      const bearish = bias === -1 && primary.ema9 < primary.ema21;
+      add(bias === 1 ? '1H EMA 9/21 bullish trend' : '1H EMA 9/21 bearish trend', (bullish || bearish) ? 100 : 0, true);
     }
-    if (m15) {
+    if (m15 && m15.ema21 != null && m15.close != null && m15.atr != null) {
       // "Pullback to EMA21" = close within 0.5x ATR of EMA21 — same
       // distance-in-ATR language used elsewhere in this file (breakout-
       // proximity, OI significance), kept consistent across the batch.
-      const pulledBackToEma21 = m15.ema21 != null && m15.close != null && m15.atr != null &&
-        Math.abs(m15.close - m15.ema21) <= 0.5 * m15.atr;
-      if (bias === 1 && m15.macdBullishCross && pulledBackToEma21) {
-        items.push(['15M MACD bullish cross on EMA21 pullback', 14]); score += 14;
-      } else if (bias === -1 && m15.macdBearishCross && pulledBackToEma21) {
-        items.push(['15M MACD bearish cross on EMA21 pullback', 14]); score += 14;
-      }
+      const pulledBackToEma21 = Math.abs(m15.close - m15.ema21) <= 0.5 * m15.atr;
+      const fired = (bias === 1 && m15.macdBullishCross && pulledBackToEma21) ||
+        (bias === -1 && m15.macdBearishCross && pulledBackToEma21);
+      add(bias === 1 ? '15M MACD bullish cross on EMA21 pullback' : '15M MACD bearish cross on EMA21 pullback', fired ? 100 : 0, true);
     }
 
     // Strategy 2 (Volatility Breakout), 15M. "Squeeze -> expansion,
@@ -175,35 +186,32 @@ const Scoring = (() => {
     // trailing-20 minimum right now), not a multi-bar "was squeezed a
     // few bars ago" history, so this reads the live breakout moment
     // rather than reconstructing the squeeze's own start.
-    if (m15) {
-      const breakoutUp = m15.bbUpper != null && m15.close > m15.bbUpper;
-      const breakoutDown = m15.bbLower != null && m15.close < m15.bbLower;
+    if (m15 && m15.bbUpper != null && m15.bbLower != null) {
+      const breakoutUp = m15.close > m15.bbUpper;
+      const breakoutDown = m15.close < m15.bbLower;
       const brokeOut = (bias === 1 && breakoutUp) || (bias === -1 && breakoutDown);
-      if (m15.bbExpanding && brokeOut) {
-        items.push(['15M BB squeeze breakout', 12]); score += 12;
-        // Distinct specific-event confirmation, additive to the general
-        // ADX-as-trend-strength term in tradeQualityScore() (Audit F2) —
-        // this strategy's own ADX check, not the global term.
-        if (m15.adx != null && m15.adx >= 25) {
-          items.push(['ADX confirms breakout strength', 8]); score += 8;
-        }
-      }
+      add('15M BB squeeze breakout', (m15.bbExpanding && brokeOut) ? 100 : 0, true);
+    }
+    // ADX trend strength (Audit F2/F3) — standalone and continuous now,
+    // no longer nested inside the squeeze-breakout block: trend strength
+    // is informative on its own, not only alongside a live breakout.
+    if (m15 && m15.adx != null) {
+      add(`15M ADX trend strength (${m15.adx.toFixed(1)})`, Math.min(100, (m15.adx / 50) * 100), true);
     }
 
     // Strategy 3 (Breakout Retest), 1H. Full spec ("broke out within 8
     // bars, retested, closed back above") needs multi-bar candle history
     // the scoring layer doesn't have — approximated using what the
-    // snapshot does carry: already above/below the fractal level AND
-    // sitting close to it (within 0.5x ATR), i.e. a live retest zone.
-    if (primary) {
-      const nearUpRetest = primary.lastUpFractal != null && primary.close != null && primary.atr != null &&
-        Math.abs(primary.close - primary.lastUpFractal) <= 0.5 * primary.atr;
-      const nearDownRetest = primary.lastDownFractal != null && primary.close != null && primary.atr != null &&
-        Math.abs(primary.close - primary.lastDownFractal) <= 0.5 * primary.atr;
-      if (bias === 1 && primary.aboveUpFractal && nearUpRetest) {
-        items.push(['1H Breakout retest held', 15]); score += 15;
-      } else if (bias === -1 && primary.belowDownFractal && nearDownRetest) {
-        items.push(['1H Breakout retest held', 15]); score += 15;
+    // snapshot does carry: already above/below the fractal level, graded
+    // by proximity to it (continuous, Audit F3) rather than a flat
+    // within-0.5x-ATR threshold.
+    if (primary && primary.atr != null) {
+      if (bias === 1 && primary.lastUpFractal != null) {
+        const pct = primary.aboveUpFractal ? Indicators.breakoutProximityPct(primary.close - primary.lastUpFractal, primary.atr) : 0;
+        add('1H Breakout retest held', pct, true);
+      } else if (bias === -1 && primary.lastDownFractal != null) {
+        const pct = primary.belowDownFractal ? Indicators.breakoutProximityPct(primary.lastDownFractal - primary.close, primary.atr) : 0;
+        add('1H Breakout retest held', pct, true);
       }
     }
 
@@ -212,25 +220,18 @@ const Scoring = (() => {
     // price-driven (an actual close outside the bands).
     if (m15 && m15.macdHistogram != null) {
       const histMatchesBias = (bias === 1 && m15.macdHistogram > 0) || (bias === -1 && m15.macdHistogram < 0);
-      if (m15.bbExpanding && histMatchesBias && m15.macdHistogramRising) {
-        items.push(['15M Squeeze momentum expansion (MACD confirm)', 14]); score += 14;
-      }
+      const fired = m15.bbExpanding && histMatchesBias && m15.macdHistogramRising;
+      add('15M Squeeze momentum expansion (MACD confirm)', fired ? 100 : 0, true);
     }
 
     // Strategy 6 (Momentum Swing).
     if (primary) {
-      if (bias === 1 && primary.ichimokuAboveCloud) {
-        items.push(['1H Price above Ichimoku cloud', 12]); score += 12;
-      } else if (bias === -1 && primary.ichimokuBelowCloud) {
-        items.push(['1H Price below Ichimoku cloud', 12]); score += 12;
-      }
+      const aligned = (bias === 1 && primary.ichimokuAboveCloud) || (bias === -1 && primary.ichimokuBelowCloud);
+      add(bias === 1 ? '1H Price above Ichimoku cloud' : '1H Price below Ichimoku cloud', aligned ? 100 : 0, true);
     }
     if (m15) {
-      if (bias === 1 && m15.stochBullishCrossFromOversold) {
-        items.push(['15M Stochastic bullish entry (oversold cross)', 10]); score += 10;
-      } else if (bias === -1 && m15.stochBearishCrossFromOverbought) {
-        items.push(['15M Stochastic bearish entry (overbought cross)', 10]); score += 10;
-      }
+      const fired = (bias === 1 && m15.stochBullishCrossFromOversold) || (bias === -1 && m15.stochBearishCrossFromOverbought);
+      add(bias === 1 ? '15M Stochastic bullish entry (oversold cross)' : '15M Stochastic bearish entry (overbought cross)', fired ? 100 : 0, true);
     }
 
     // Strategy 7 (Trend Following). "EMA stack aligned with bias" is the
@@ -244,29 +245,24 @@ const Scoring = (() => {
     // Strategy 1) is scored. ADX is handled globally, as a trend-strength
     // term in tradeQualityScore() (Audit F2), not a redundant line here.
     if (primary) {
-      if (bias === 1 && primary.macdBullishCross) {
-        items.push(['1H MACD trend-following cross', 12]); score += 12;
-      } else if (bias === -1 && primary.macdBearishCross) {
-        items.push(['1H MACD trend-following cross', 12]); score += 12;
-      }
+      const fired = (bias === 1 && primary.macdBullishCross) || (bias === -1 && primary.macdBearishCross);
+      add('1H MACD trend-following cross', fired ? 100 : 0, true);
     }
 
     // Strategy 12 (Pullback Retracements), 15M. Tighter pullback
     // tolerance (0.3x ATR) than Strategy 1's 0.5x — this is a precision
     // entry-timing strategy, not just "was there a MACD cross nearby."
     // RSI 40-60 = healthy pullback, not already reversal-territory.
-    if (m15) {
+    if (m15 && m15.ema21 != null && m15.close != null && m15.atr != null && m15.rsi != null) {
       const emaTrendMatch = (bias === 1 && m15.emaStackBullish) ||
         (bias === -1 && m15.ema9 != null && m15.ema21 != null && m15.ema9 < m15.ema21);
-      const pulledBackTight = m15.ema21 != null && m15.close != null && m15.atr != null &&
-        Math.abs(m15.close - m15.ema21) <= 0.3 * m15.atr;
-      const rsiHealthy = m15.rsi != null && m15.rsi >= 40 && m15.rsi <= 60;
-      if (emaTrendMatch && pulledBackTight && rsiHealthy) {
-        items.push(['15M Pullback to EMA21 (RSI healthy)', 12]); score += 12;
-      }
+      const pulledBackTight = Math.abs(m15.close - m15.ema21) <= 0.3 * m15.atr;
+      const rsiHealthy = m15.rsi >= 40 && m15.rsi <= 60;
+      add('15M Pullback to EMA21 (RSI healthy)', (emaTrendMatch && pulledBackTight && rsiHealthy) ? 100 : 0, true);
     }
 
-    return { score: Math.min(65, score), items };
+    const score = applicable.length ? Math.round(applicable.reduce((a, b) => a + b, 0) / applicable.length) : 0;
+    return { score, items };
   }
 
   function buildExhaustion(tfSnapshots) {

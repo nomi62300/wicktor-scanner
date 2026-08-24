@@ -210,9 +210,10 @@ const Render = (() => {
     container.innerHTML = coins.map((c, i) => cardHtml(c, i)).join('');
   }
 
-  function breakdownBlockHtml(label, colorVar, val, items) {
+  function breakdownBlockHtml(label, colorVar, val, items, isPercent) {
+    const suffix = isPercent ? '%' : '';
     const rows = items.map(([label, pts]) =>
-      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}</span></div>`
+      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}${suffix}</span></div>`
     ).join('');
     return `
     <div class="block">
@@ -307,7 +308,7 @@ const Render = (() => {
         <div class="block-title-row"><span>Direction</span><span style="color:${coin.direction >= 0 ? 'var(--green-text)' : 'var(--red-text)'}">${coin.direction > 0 ? '+' : ''}${coin.direction}</span></div>
         ${directionGaugeHtml(coin.direction)}
       </div>
-      ${breakdownBlockHtml('Continuation', 'var(--green)', coin.continuation.score, coin.continuation.items)}
+      ${breakdownBlockHtml('Continuation', 'var(--green)', coin.continuation.score, coin.continuation.items, true)}
       ${breakdownBlockHtml('Exhaustion', 'var(--gold)', coin.exhaustion.score, coin.exhaustion.items)}
       ${breakdownBlockHtml('Reversal', 'var(--text3)', coin.reversal.score, coin.reversal.items)}
       <div class="news-section-label" style="margin-top:2px;">Key levels</div>

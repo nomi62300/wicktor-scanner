@@ -578,11 +578,11 @@ test('Strategy 1: MACD cross far from EMA21 (no pullback) does not score', () =>
   assert.ok(!items.some(([l]) => l.includes('MACD bullish cross')));
 });
 
-test('Strategy 2 (Volatility Breakout): expansion + close above upper band scores, ADX>=25 adds a second item', () => {
+test('Strategy 2 (Volatility Breakout): expansion + close above upper band scores; ADX contributes its own standalone item (Audit F3)', () => {
   const m15 = baseSnap({ bbExpanding: true, bbUpper: 100, close: 101, adx: 30 });
   const { items } = Scoring.buildContinuation([baseSnap({}), m15, null], 1);
   assert.ok(items.some(([l]) => l === '15M BB squeeze breakout'));
-  assert.ok(items.some(([l]) => l === 'ADX confirms breakout strength'));
+  assert.ok(items.some(([l]) => l.startsWith('15M ADX trend strength')));
 });
 
 test('Strategy 2: expansion without breaking the band does not score', () => {
@@ -721,7 +721,9 @@ test('Phase 5 complete: a coin with every new-batch signal firing still returns 
   const candles = buildCleanUptrend(80);
   const result = Scoring.evaluate({ h1: candles, m15: candles, m5: candles }, { oiChange15m: 9 });
   assert.ok(result.score >= 0 && result.score <= 100);
-  assert.ok(result.continuation.score <= 65);
+  // Continuation is a mean of 0-100 sub-scores now (Audit F3), so its own
+  // range is 0-100, not the old fixed 65-point cap.
+  assert.ok(result.continuation.score >= 0 && result.continuation.score <= 100);
   assert.ok(result.exhaustion.score <= 40);
   assert.ok(result.reversal.score <= 50);
 });

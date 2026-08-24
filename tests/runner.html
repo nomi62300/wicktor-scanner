@@ -640,13 +640,23 @@ test('buildContinuation: |OI change| >= 5% scores the OI confirmation item', () 
     `Expected OI confirmation item, got ${JSON.stringify(items)}`);
 });
 
-test('buildContinuation: OI change below 5% threshold scores nothing', () => {
+test('buildContinuation: OI magnitude is continuous now (Audit F3) — a small swing still scores proportionally, not gated by a flat 5% threshold', () => {
   const cs = uptrend(80);
   const snap = Indicators.analyzeTimeframe(cs);
   const tfSnapshots = [snap, snap, snap];
   const { items } = Scoring.buildContinuation(tfSnapshots, 1, 2.0);
+  const item = items.find(([label]) => label.includes('Perp OI'));
+  assert(item, `Expected a (smaller) OI item even below the old 5% threshold, got ${JSON.stringify(items)}`);
+  assert(item[1] < 20, `Expected a small magnitude-scaled percentage, got ${item[1]}`);
+});
+
+test('buildContinuation: near-zero OI change scores essentially nothing', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 0.05);
   assert(!items.some(([label]) => label.includes('Perp OI')),
-    `Expected no OI item below threshold, got ${JSON.stringify(items)}`);
+    `Expected no OI item for a near-zero swing, got ${JSON.stringify(items)}`);
 });
 
 test('buildContinuation: null OI (spot market) scores nothing, no crash', () => {
@@ -831,11 +841,11 @@ test('Strategy 1: EMA stack + MACD-cross-on-pullback score; far-from-EMA21 does 
   assert(!Scoring.buildContinuation([baseSnap({}), m15far, null], 1).items.some(([l]) => l.includes('MACD bullish cross')));
 });
 
-test('Strategy 2: expansion+breakout scores, ADX>=25 adds a second item; no breakout scores nothing', () => {
+test('Strategy 2: expansion+breakout scores; ADX contributes its own standalone item (Audit F3); no breakout scores nothing', () => {
   const m15 = baseSnap({ bbExpanding: true, bbUpper: 100, close: 101, adx: 30 });
   const items = Scoring.buildContinuation([baseSnap({}), m15, null], 1).items;
   assert(items.some(([l]) => l === '15M BB squeeze breakout'));
-  assert(items.some(([l]) => l === 'ADX confirms breakout strength'));
+  assert(items.some(([l]) => l.startsWith('15M ADX trend strength')));
   const noBreak = baseSnap({ bbExpanding: true, bbUpper: 100, close: 99, adx: 30 });
   assert(!Scoring.buildContinuation([baseSnap({}), noBreak, null], 1).items.some(([l]) => l.includes('BB squeeze breakout')));
 });
@@ -919,7 +929,10 @@ test('Phase 5 complete: every arm stays within its cap even with every new-batch
   const cs = uptrend(80);
   const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9 });
   assert(result.score >= 0 && result.score <= 100);
-  assert(result.continuation.score <= 65 && result.exhaustion.score <= 40 && result.reversal.score <= 50);
+  // Continuation is a mean of 0-100 sub-scores now (Audit F3) — its range
+  // is 0-100, not the old fixed 65-point cap.
+  assert(result.continuation.score >= 0 && result.continuation.score <= 100);
+  assert(result.exhaustion.score <= 40 && result.reversal.score <= 50);
 });
 
 suite('Q — Provider split: CoinPaprika normalization + tag resolution');

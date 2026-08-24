@@ -50,6 +50,46 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (Audit F3 — Continuation redesigned as a percentage mean)
+The old design summed ~17 fixed-point items (theoretical max ~218) and
+clipped at 65 — increasingly saturating for the best coins as Phase 5
+added more items (0/40 on `main`, 13/40 after Phase 5, per the audit).
+Since Continuation stays display-only (Q1: wiring it into
+`tradeQualityScore()` would double-count alignment), a maxed diagnostic
+that can't tell two EXCELLENT coins apart was a real loss of information.
+
+Redesigned as an unweighted mean of 0-100 sub-scores, one per signal,
+three kinds:
+- **Continuous where a natural magnitude exists** — breakout proximity
+  now uses `breakoutProximityPct()` directly instead of gating a flat 10
+  points behind a 66% threshold; the same function now also grades the
+  1H breakout-retest distance. ADX strength is scaled (50 ADX → 100%,
+  matching Audit F2's thresholds) and pulled out of the BB-squeeze block
+  into its own standalone item — trend strength is informative on its
+  own, not just alongside a live breakout. OI 15m% is now magnitude-
+  scaled against a 15% reference instead of a flat ±8 past a 5% gate.
+- **Binary events, always included** (a cross either happened or it
+  didn't) — 100 if fired, 0 if not. "No cross this bar" is real
+  information about that specific signal, so it still counts toward the
+  mean rather than being silently dropped.
+- **Structurally inapplicable, excluded from the mean** — OI 15m% only
+  exists for perps; scoring it 0 on spot coins would unfairly drag down
+  every spot card for lacking a signal it was never going to have.
+
+Fixes a latent, previously-unflagged display bug as a side effect:
+`breakdownBlockHtml()` in `render.js` has always labeled every bar
+`val/100` with a `width:${val}%` fill, but Continuation's real ceiling
+was 65 — a maxed coin visually read as "65% full." Now genuinely 0-100,
+so the label is honest for the first time. `render.js` items now render
+with a `%` suffix to make the new scale explicit.
+
+Live-verified against 12 real Bybit symbols: scores spread meaningfully
+(6% to 53%) instead of clustering at a flat capped number — two
+EXCELLENT-band coins (DOGE 53%, UNI 34%) now visibly differ where they'd
+have both read "65" before. 113/113 browser tests (was 112 — added a
+near-zero-OI coverage case), 73/74 Node tests (1 pre-existing unrelated
+failure).
+
 ### Changed (Tour temporarily disabled)
 `TOUR_ENABLED = false` gates both the manual "Take the tour" button and
 the auto-trigger on first scan. `TOUR_STEPS` is stale against this
