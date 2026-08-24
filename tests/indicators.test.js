@@ -536,7 +536,6 @@ test('analyzeTimeframe: new Stage 1 fields match calling the Stage 0 functions d
   assert.strictEqual(snap.ema9, ema9[lastIdx]);
 
   const m = Indicators.macd(candles);
-  assert.strictEqual(snap.macdLine, m.macdLine[lastIdx]);
   assert.strictEqual(snap.macdHistogram, m.histogram[lastIdx]);
 
   const bb = Indicators.bollingerBands(candles);
@@ -544,12 +543,6 @@ test('analyzeTimeframe: new Stage 1 fields match calling the Stage 0 functions d
 
   const a = Indicators.adx(candles);
   assert.strictEqual(snap.adx, a.adx[lastIdx]);
-
-  const st = Indicators.stochastic(candles);
-  assert.strictEqual(snap.stochK, st.k[lastIdx]);
-
-  const ich = Indicators.ichimoku(candles);
-  assert.strictEqual(snap.tenkan, ich.tenkan[lastIdx]);
 });
 
 test('Stage 1 snapshot fields are readable via Scoring.evaluate() without throwing', () => {

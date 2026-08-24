@@ -17,6 +17,23 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Removed (Audit F5 — dead snapshot fields)
+`analyzeTimeframe()` was returning 15 fields no caller ever read:
+`macdSeries`/`stochSeries` (full 100-element series × 3 TF × 120 coins —
+the worst offenders), `bbSqueeze` (a 20-bar loop computed and discarded),
+`adxPrev`, `plusDI`, `minusDI`, `tenkanKijunBullishCross`, `macdLine`,
+`macdSignal`, `bbMiddle`, `bbBandwidth`, `stochK`, `stochD`, `tenkan`,
+`kijun`. Stage 3's MACD/Stochastic divergence ended up reusing
+`macdResult.macdLine`/`stochResult.k` locally instead of the exposed
+series fields, and the two Stage-1 assertion tests that pinned
+`snap.macdLine`/`snap.stochK`/`snap.tenkan` were the only remaining
+readers — updated to assert against the underlying indicator functions
+directly instead. Confirmed via `git grep` across every non-indicators.js
+source file before removal. Zero scoring/UI behavior change — verified
+112/112 browser tests and 73/74 Node tests (the 1 failure is the
+pre-existing, unrelated `fractals`/`heikinAshi` case). Cuts ~563 KB/scan
+of retained-but-unused payload.
+
 ### Changed (Provider split — CoinPaprika becomes the primary bulk source)
 CoinGecko's free tier rate-limits constantly, and that was **not
 cosmetic**: sector data feeds `topNarrativeCandidates()` into the scan

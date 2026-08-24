@@ -612,28 +612,12 @@ const Indicators = (() => {
     const bb = bollingerBands(candles);
     const bbUpperV = bb.upper[lastIdx];
     const bbLowerV = bb.lower[lastIdx];
-    const bbMiddleV = bb.middle[lastIdx];
     const bbPercentBV = bb.percentB[lastIdx];
     const bbBandwidthV = bb.bandwidth[lastIdx];
-    // Squeeze = current bandwidth is the lowest of the trailing 20 bars —
-    // a relative, self-normalizing "tight" rather than a fixed threshold
-    // that would need per-symbol calibration.
-    let bbSqueeze = false;
-    {
-      const from = Math.max(0, lastIdx - 19);
-      let minBw = Infinity;
-      for (let k = from; k <= lastIdx; k++) {
-        if (bb.bandwidth[k] != null && bb.bandwidth[k] < minBw) minBw = bb.bandwidth[k];
-      }
-      bbSqueeze = bbBandwidthV != null && bbBandwidthV === minBw;
-    }
     const bbExpanding = bbBandwidthV != null && bb.bandwidth[lastIdx - 1] != null && bbBandwidthV > bb.bandwidth[lastIdx - 1];
 
     const adxResult = adx(candles);
     const adxV = adxResult.adx[lastIdx];
-    const adxPrev = adxResult.adx[lastIdx - 1];
-    const plusDIV = adxResult.plusDI[lastIdx];
-    const minusDIV = adxResult.minusDI[lastIdx];
 
     const stochResult = stochastic(candles);
     const stochKV = stochResult.k[lastIdx];
@@ -653,12 +637,6 @@ const Indicators = (() => {
       price > ich.currentSpanA && price > ich.currentSpanB;
     const ichimokuBelowCloud = ich.currentSpanA != null && ich.currentSpanB != null &&
       price < ich.currentSpanA && price < ich.currentSpanB;
-    const tenkanV = ich.tenkan[lastIdx];
-    const kijunV = ich.kijun[lastIdx];
-    const tenkanPrev = ich.tenkan[lastIdx - 1];
-    const kijunPrev = ich.kijun[lastIdx - 1];
-    const tenkanKijunBullishCross = tenkanV != null && kijunV != null && tenkanPrev != null && kijunPrev != null &&
-      tenkanPrev <= kijunPrev && tenkanV > kijunV;
 
     const sweep = liquiditySweep(candles, frac, lastIdx, atrV);
 
@@ -700,17 +678,13 @@ const Indicators = (() => {
       // Strategy-enrichment Stage 1 — see the batch comment above this
       // block for scope/rationale.
       ema9: ema9V, ema21: ema21V, emaStackBullish,
-      macdLine: macdLineV, macdSignal: macdSignalV, macdHistogram: macdHistV,
-      macdSeries: macdResult.macdLine, // full series — Stage 2+ MACD-divergence reuses divergence()'s pivot-pairing, which needs the whole series, not just the last value
+      macdHistogram: macdHistV,
       macdBullishCross, macdBearishCross, macdHistogramRising,
-      bbUpper: bbUpperV, bbLower: bbLowerV, bbMiddle: bbMiddleV,
-      bbPercentB: bbPercentBV, bbBandwidth: bbBandwidthV, bbSqueeze, bbExpanding,
-      adx: adxV, adxPrev, plusDI: plusDIV, minusDI: minusDIV,
-      stochK: stochKV, stochD: stochDV,
-      stochSeries: stochResult.k, // full series, same reason as macdSeries
+      bbUpper: bbUpperV, bbLower: bbLowerV,
+      bbPercentB: bbPercentBV, bbExpanding,
+      adx: adxV,
       stochBullishCrossFromOversold, stochBearishCrossFromOverbought,
-      ichimokuAboveCloud, ichimokuBelowCloud, tenkan: tenkanV, kijun: kijunV,
-      tenkanKijunBullishCross,
+      ichimokuAboveCloud, ichimokuBelowCloud,
       liquiditySweepUp: sweep.up, liquiditySweepDown: sweep.down,
       macdDivergence: macdDivergenceV, stochDivergence: stochDivergenceV
     };
