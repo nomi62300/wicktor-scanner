@@ -50,6 +50,37 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (Card TF row redesigned: 4H added, modal panel removed)
+Replaced the card's Alligator-confidence Active TF row (1H/15M/5M
+triangle icons) with a compact 4-chip row — 4H/1H/15M/5M, each showing
+name, a simple trend triangle (up/down/flat dash), and % change. The
+modal's old 7-timeframe "All timeframes" panel (1M/5M/15M/30M/1H/4H/1D)
+is removed entirely — 4H now lives on the card itself instead of
+needing a click to see it, and the other three (1M/30M/1D) weren't kept.
+
+The new trend reading is deliberately simpler than the old Alligator-
+confidence tiering it replaces: last-candle-close vs the one before it,
+same concept the removed modal panel already used, not a 5-tier
+confidence state (that's a 1H/15M/5M scoring-only concept with no
+natural 4H analog, and mixing two different "trend" ideas across four
+chips in one small row would read as inconsistent).
+
+**Real cost tradeoff, accepted deliberately**: 4H candles are now
+fetched for every scanned coin (`Api.fetchCandleSet()`'s 4th parallel
+request, small 30-candle limit since it's display-only, never fed to
+`Scoring.evaluate()`) instead of lazily only when a coin's modal opened.
+That's roughly +1 Bybit request per coin per scan, replacing the old
+7-request-per-modal-open panel — net request volume across a typical
+session should still be lower (240 small requests once vs repeated
+7-request bursts per coin inspected), but it does mean every scan is
+slightly heavier regardless of how many coins get a closer look.
+
+`Api.fetchExtendedTimeframes()` and the modal's lazy-load path
+(`loadExtendedTfPanel()` in `app.js`) are removed as dead code along
+with it. 113/113 browser tests, 73/74 Node tests (1 pre-existing
+unrelated failure, untouched by this change since it's render/api/app
+only — scoring.js wasn't touched).
+
 ### Changed (Icon boldness fix + same pattern extended to Exhaustion/Reversal)
 Two follow-ups from live review of the icon redesign:
 - The icon circles were far more washed out live than in the mockup that

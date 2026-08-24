@@ -24,28 +24,27 @@ const Render = (() => {
     return n.toFixed(4);
   }
 
-  // Fixed-size SVG icons for the 5-tier per-TF confidence state — Unicode
-  // arrow glyphs (▲/↗/▼/↘/—) render thin, low-contrast, or near-illegible
-  // at small sizes across different fonts/devices/OSes; explicit stroke
-  // width and sizing keeps every state visually distinct at a glance.
-  const TF_ICONS = {
-    strong_bull: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1.5l5 9h-10z"/></svg>',
-    weak_bull:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5L9.5 2.5M4.5 2.5H9.5V7.5"/></svg>',
-    strong_bear: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 10.5l-5-9h10z"/></svg>',
-    weak_bear:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5L9.5 9.5M4.5 9.5H9.5V4.5"/></svg>',
-    neutral:     '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6H10"/></svg>'
+  // Card's Active TF row (4H/1H/15M/5M): a compact chip per TF — name,
+  // trend triangle, % change — replacing the old Alligator-confidence
+  // arrow row. Simple last-candle-vs-previous trend (see app.js's
+  // tfChipData()), not the 5-tier confidence state; that state is a
+  // 1H/15M/5M-only scoring concept without a natural 4H analog.
+  const TF_TREND_ICONS = {
+    up:   '<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1.5l5 9h-10z"/></svg>',
+    down: '<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><path d="M6 10.5l-5-9h10z"/></svg>',
+    flat: '<svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6H10"/></svg>'
   };
-  const TF_ICON_META = {
-    strong_bull: ['tf-up', 'Clean uptrend'],
-    weak_bull:   ['tf-weak-up', 'Weakening (recent lips dip)'],
-    strong_bear: ['tf-down', 'Clean downtrend'],
-    weak_bear:   ['tf-weak-down', 'Recovering (recent lips dip)'],
-    neutral:     ['tf-flat', 'Neutral / mixed']
-  };
-  function tfArrowHtml(confidence) {
-    const key = TF_ICON_META[confidence] ? confidence : 'neutral';
-    const [cls, title] = TF_ICON_META[key];
-    return `<span class="${cls}" title="${title}">${TF_ICONS[key]}</span>`;
+  function tfChipHtml(chip) {
+    const color = chip.trend === 'up' ? 'var(--green-text)' : chip.trend === 'down' ? 'var(--red-text)' : 'var(--text3)';
+    const pctText = chip.pct == null ? '--' : `${chip.pct > 0 ? '+' : ''}${chip.pct.toFixed(2)}%`;
+    return `<div class="tf-chip">
+      <div class="tf-chip-name">${esc(chip.label)}</div>
+      <div class="tf-chip-trend" style="color:${color}">${TF_TREND_ICONS[chip.trend]}</div>
+      <div class="tf-chip-pct" style="color:${color}">${pctText}</div>
+    </div>`;
+  }
+  function tfChipRowHtml(tfChips) {
+    return `<div class="tf-chip-row">${tfChips.map(tfChipHtml).join('')}</div>`;
   }
 
   function rsiColor(v) {
@@ -138,8 +137,6 @@ const Render = (() => {
    */
   function cardHtml(coin, idx) {
     const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
-    const tfRow = coin.tfConfidence.map((c, i) =>
-      `<span class="tf-item">${TF_LABELS[i]} ${tfArrowHtml(c)}</span>`).join('');
     const rsiRow = coin.rsiByTf.map((v, i) =>
       `<span style="color:${rsiColor(v)}">${TF_LABELS[i]} ${v != null ? v : '--'}</span>`).join(' &middot; ');
     const unlockSevereCls = coin.unlock && coin.unlock.severity === 'red' ? ' unlock-severe' : '';
@@ -170,7 +167,7 @@ const Render = (() => {
         ${sideBadgeHtml(coin.side)}
       </div>
       <div class="tf-label">Active TF</div>
-      <div class="tf-row">${tfRow}</div>
+      ${tfChipRowHtml(coin.tfChips)}
       <div class="rsi-row">RSI: ${rsiRow}</div>
       <div class="cer-row">
         <span class="cer-cont">CONT ${coin.continuation.score}</span>
@@ -475,39 +472,8 @@ const Render = (() => {
           ${coin.supportSloped ? `<div class="level-box-sloped">Channel: $${esc(formatPriceForDisplay(coin.supportSloped.value))} <span style="color:var(--text3)">(r&sup2; ${coin.supportSloped.r2.toFixed(2)})</span></div>` : ''}
         </div>
       </div>
-      <div class="news-section-label" style="margin-top:2px;">All timeframes</div>
-      <div id="extended-tf-panel" class="extended-tf-panel">
-        <div class="loading-state" style="padding:8px 0;">Loading...</div>
-      </div>
       ${newsSectionHtml(newsResult)}
     `;
-  }
-
-  // Extended 7-timeframe panel (detail modal, lazy-loaded): last close +
-  // last-candle % change per TF, informational only — no scoring here.
-  const EXTENDED_TF_LABELS = { '1m': '1M', '5m': '5M', '15m': '15M', '30m': '30M', '1h': '1H', '4h': '4H', '1d': '1D' };
-
-  function extendedTfPanelHtml(tfData) {
-    const rows = Object.keys(EXTENDED_TF_LABELS).map(tf => {
-      const candles = tfData[tf];
-      if (!candles || candles.length < 2) {
-        return `<div class="extended-tf-row">
-            <span class="extended-tf-label">${EXTENDED_TF_LABELS[tf]}</span>
-            <span style="color:var(--text3)">--</span>
-          </div>`;
-      }
-      const last = candles[candles.length - 1];
-      const prev = candles[candles.length - 2];
-      const pctChange = prev.c ? ((last.c - prev.c) / prev.c) * 100 : 0;
-      const color = pctChange >= 0 ? 'var(--green-text)' : 'var(--red-text)';
-      const sign = pctChange >= 0 ? '+' : '';
-      return `<div class="extended-tf-row">
-          <span class="extended-tf-label">${EXTENDED_TF_LABELS[tf]}</span>
-          <span class="mono">$${esc(String(last.c))}</span>
-          <span style="color:${color}">${sign}${pctChange.toFixed(2)}%</span>
-        </div>`;
-    }).join('');
-    return `<div class="extended-tf-grid">${rows}</div>`;
   }
 
   // ------------------------------------------------------------ Top strip
@@ -797,5 +763,5 @@ const Render = (() => {
       </table>`;
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsFeedHtml, newsSectionHtml, watchlistHtml, esc };
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, newsFeedHtml, newsSectionHtml, watchlistHtml, esc };
 })();

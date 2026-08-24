@@ -237,6 +237,12 @@
     const closes1h = candles.h1.map(c => c.c);
     const priceNum = base.price;
     const volatility = classifyVolatility(candles.h1);
+    const tfChips = [
+      tfChipData('4H', candles.h4),
+      tfChipData('1H', candles.h1),
+      tfChipData('15M', candles.m15),
+      tfChipData('5M', candles.m5)
+    ];
 
     // display symbol without USDT suffix, and without trailing x for stocks (kept as-is with x for clarity)
     const displaySymbol = base.symbol.replace(/USDT$/, '');
@@ -271,6 +277,7 @@
       unlock,
       newsMeta,
       watchlisted: state.watchlist.has(key),
+      tfChips,
       resistance: formatPrice(result.tfSnapshots[0].resistance),
       support: formatPrice(result.tfSnapshots[0].support),
       // v2 sloped-channel levels — null unless the regression fit was
@@ -280,6 +287,20 @@
       supportSloped: result.tfSnapshots[0].supportSloped,
       ...result
     };
+  }
+
+  // Card's Active TF row (4H/1H/15M/5M): last-candle close vs the one
+  // before it — a simple, display-only trend reading, deliberately not
+  // the Alligator-confidence tiering used for scoring (that's a 1H/15M/5M-
+  // only concept and doesn't have a 4H analog without a much bigger
+  // computation this row doesn't need).
+  function tfChipData(label, candles) {
+    if (!candles || candles.length < 2) return { label, trend: 'flat', pct: null };
+    const last = candles[candles.length - 1];
+    const prev = candles[candles.length - 2];
+    const pct = prev.c ? ((last.c - prev.c) / prev.c) * 100 : 0;
+    const trend = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+    return { label, trend, pct };
   }
 
   function classifyVolatility(h1candles) {
@@ -732,7 +753,6 @@
     el.modalContent.innerHTML = Render.detailModalHtml(coin, state.newsCache[coin.rawSymbol]);
     el.modalBackdrop.classList.add('open');
     bindModalCloseEvents();
-    loadExtendedTfPanel(coin);
 
     const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling).text;
     Outcomes.logIfNew({
@@ -741,22 +761,6 @@
     });
   }
 
-  // Fetched fresh on every modal open, not cached — the scan pipeline
-  // doesn't retain raw candles per coin (would be a lot of memory across a
-  // full grid), and this is a small, cheap 7-request fetch only paid when
-  // a user actually opens a coin's detail.
-  async function loadExtendedTfPanel(coin) {
-    const category = coin.market === 'PERP' ? 'linear' : 'spot';
-    const tfData = await Api.fetchExtendedTimeframes(category, coin.rawSymbol).catch(e => {
-      console.warn('[App] extended timeframe fetch failed', e);
-      return null;
-    });
-    // The modal may have been closed, or a different coin opened, by the
-    // time this resolves — only render if this is still the active coin.
-    if (state.modalCoin !== coin) return;
-    const panel = el.modalContent.querySelector('#extended-tf-panel');
-    if (panel && tfData) panel.innerHTML = Render.extendedTfPanelHtml(tfData);
-  }
   function bindModalCloseEvents() {
     const closeBtn = el.modalContent.querySelector('[data-action="close-modal"]');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);

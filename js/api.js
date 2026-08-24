@@ -209,29 +209,20 @@ const Api = (() => {
       .slice(0, count);
   }
 
+  // h4 is display-only (card's Active TF row, last-candle trend + %change)
+  // — never fed to Scoring.evaluate(), so a small limit is enough; no
+  // indicator math needs the full history. Replaces the old modal-only
+  // lazy-fetched 7-TF panel: fetched for every scanned coin now instead of
+  // just the one whose modal is open, a deliberate cost tradeoff (~1 extra
+  // request/coin/scan) in exchange for 4H being visible on every card.
   async function fetchCandleSet(category, symbol) {
-    const [h1, m15, m5] = await Promise.all([
+    const [h1, m15, m5, h4] = await Promise.all([
       bybitKlines(category, symbol, '1h', 100),
       bybitKlines(category, symbol, '15m', 100),
-      bybitKlines(category, symbol, '5m', 100)
+      bybitKlines(category, symbol, '5m', 100),
+      bybitKlines(category, symbol, '4h', 30)
     ]);
-    return { h1, m15, m5 };
-  }
-
-  // Extended 7-timeframe panel (detail modal only, informational — never
-  // feeds scoring): fetched fresh and lazily when a coin's modal opens,
-  // since the scan pipeline doesn't retain raw candles per coin. A smaller
-  // limit than the scan's own 100 is enough for a last-price/last-change
-  // display, not full indicator computation.
-  const EXTENDED_TFS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
-
-  async function fetchExtendedTimeframes(category, symbol) {
-    const results = await Promise.all(
-      EXTENDED_TFS.map(tf => bybitKlines(category, symbol, tf, 30))
-    );
-    const out = {};
-    EXTENDED_TFS.forEach((tf, i) => { out[tf] = results[i]; });
-    return out;
+    return { h1, m15, m5, h4 };
   }
 
   // ----------------------------------------------------------- CoinGecko --
@@ -998,7 +989,7 @@ const Api = (() => {
   }
 
   return {
-    bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet, fetchExtendedTimeframes,
+    bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
     openInterestChange15m,
     isTradeableUsdtPair, isXStock, refreshXStockSet, spotSymbolSet,
     coingeckoGlobal, marketCapMap, coingeckoMarketCaps: marketCapMap,
