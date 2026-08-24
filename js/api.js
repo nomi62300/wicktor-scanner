@@ -317,17 +317,10 @@ const Api = (() => {
     const now = Date.now();
     if (cgCache.global && now - cgCache.ts < CG_CACHE_MS) return cgCache.global;
 
-    const data = await safeFetch(`${COINGECKO_BASE}/global`);
-    if (data && data.data) {
-      cgCache.global = data.data;
-      cgCache.ts = now;
-      return cgCache.global;
-    }
-
-    // CoinGecko failed outright — try CoinPaprika next (free, direct, no
-    // quota to protect), reshaped to CoinGecko's field names so every
-    // caller (topStripData etc.) needs no changes regardless of source.
-    console.warn('[Api] coingeckoGlobal failed, falling back to CoinPaprika');
+    // Tier 1 — CoinPaprika. Promoted ahead of CoinGecko because it does
+    // not rate-limit; the reshape into CoinGecko's field names means
+    // every caller (topStripData etc.) is unaffected by which provider
+    // actually answered.
     const cpData = await safeFetch(`${COINPAPRIKA_BASE}/global`);
     if (cpData && cpData.market_cap_usd != null) {
       cgCache.global = {
@@ -339,8 +332,17 @@ const Api = (() => {
       return cgCache.global;
     }
 
-    // CoinPaprika also failed — last resort, CMC via the proxy.
-    console.warn('[Api] CoinPaprika also failed, falling back to CMC proxy');
+    // Tier 2 — CoinGecko.
+    console.warn('[Api] global: CoinPaprika failed, falling back to CoinGecko');
+    const data = await safeFetch(`${COINGECKO_BASE}/global`);
+    if (data && data.data) {
+      cgCache.global = data.data;
+      cgCache.ts = now;
+      return cgCache.global;
+    }
+
+    // Tier 3 — CMC via the proxy, metered, genuine last resort.
+    console.warn('[Api] global: CoinGecko also failed, falling back to CMC proxy');
     const cmcData = await cmcProxyFetch('/v1/global-metrics/quotes/latest');
     if (cmcData && cmcData.data && cmcData.data.quote && cmcData.data.quote.USD) {
       const usd = cmcData.data.quote.USD;
@@ -624,6 +626,135 @@ const Api = (() => {
    * Lightweight list of every CoinGecko category {id, name}.
    * Cached 24h — taxonomy changes are rare.
    */
+  /**
+   * Market-cap-weighted average % change for one window across a
+   * category's coins — same weighting method for every window so
+   * 24h/7d/30d stay comparable. Hoisted out of sectorPerformance7d()'s
+   * closure so the CoinPaprika builder below shares the exact same math.
+   *
+   * Returns 0 (not null) when nothing weighs in, matching its original
+   * behaviour — callers that need "no data" semantics must pass null
+   * explicitly rather than relying on this.
+   */
+  function weightedChangeFor(coins, field) {
+    let totalMcap = 0, weightedSum = 0;
+    for (const coin of coins) {
+      const chg = coin[field];
+      if (chg == null || coin.market_cap == null) continue;
+      totalMcap += coin.market_cap;
+      weightedSum += coin.market_cap * chg;
+    }
+    return totalMcap > 0 ? weightedSum / totalMcap : 0;
+  }
+
+  // ---------------------------------------- Fast sectors (CoinPaprika) ---
+
+  // Whole sector->coin membership map in ONE request (~550KB). 24h TTL
+  // mirrors CG_CATEGORY_LIST_TTL — taxonomy changes are rare.
+  let _paprikaTagCache = { data: null, ts: 0 };
+  const PAPRIKA_TAG_TTL = 24 * 60 * 60 * 1000;
+
+  async function paprikaTagMap() {
+    const now = Date.now();
+    if (_paprikaTagCache.data && now - _paprikaTagCache.ts < PAPRIKA_TAG_TTL) {
+      return _paprikaTagCache.data;
+    }
+    const data = await safeFetch(`${COINPAPRIKA_BASE}/tags?additional_fields=coins`);
+    if (Array.isArray(data) && data.length) {
+      _paprikaTagCache = { data, ts: now };
+      return data;
+    }
+    return _paprikaTagCache.data || [];
+  }
+
+  /**
+   * Maps each NARRATIVE_KEYWORDS entry onto a CoinPaprika tag.
+   *
+   * Five keywords match more than one tag, so the tiebreak matters:
+   * picking by array order (what the CoinGecko path's .find() does)
+   * would select the 21-coin "Computing & Cloud Infrastructure" over the
+   * 71-coin "Infrastructure". Ranking by coins.length descending picks
+   * the substantive tag every time. Array order is not a contract.
+   *
+   * Unmatched keywords warn and are skipped — the same degradation
+   * contract as the CoinGecko path. 'Modular Blockchain' and
+   * 'Data Availability' have no CoinPaprika tag and will always land here.
+   */
+  function resolveNarrativeTags(tags) {
+    const resolved = [];
+    for (const kw of NARRATIVE_KEYWORDS) {
+      const kwLower = kw.toLowerCase();
+      const matches = (tags || []).filter(t => (t.name || '').toLowerCase().includes(kwLower));
+      if (!matches.length) {
+        console.warn(`[Api] narrative: no CoinPaprika tag match for keyword "${kw}"`);
+        continue;
+      }
+      const best = matches.reduce((a, b) =>
+        ((b.coins || []).length > (a.coins || []).length ? b : a));
+      resolved.push({ keyword: kw, tag: best });
+    }
+    console.log('[Api] narrative tags resolved:',
+      resolved.map(r => `${r.keyword}->${r.tag.id}`).join(', '));
+    return resolved;
+  }
+
+  /**
+   * Sector performance built from two CoinPaprika requests instead of
+   * CoinGecko's 17 (one per category, 2s apart, under a 20s deadline and
+   * a circuit breaker that routinely truncates the run).
+   *
+   * Emits the exact same shape sectorPerformance7d() does, so
+   * topNarrativeCandidates() and the render layer are unchanged.
+   *
+   * 30d/1y are hard-set to null rather than computed: CoinPaprika's free
+   * tier returns a literal 0 for those windows on every coin, and
+   * weightedChangeFor() would turn that into a confident-looking 0.0%.
+   */
+  let _fastSectorCache = { data: null, ts: 0 };
+
+  async function fastSectorPerformance() {
+    const now = Date.now();
+    if (_fastSectorCache.data && now - _fastSectorCache.ts < SECTOR_PERF_TTL) {
+      return _fastSectorCache.data;
+    }
+
+    const [tags, tickers] = await Promise.all([paprikaTagMap(), paprikaTickers()]);
+    if (!tags.length || !tickers.length) return _fastSectorCache.data || [];
+
+    const byId = new Map();
+    for (const t of tickers) {
+      const n = normalizePaprikaCoin(t);
+      if (n) byId.set(t.id, n);
+    }
+
+    const results = [];
+    for (const { keyword, tag } of resolveNarrativeTags(tags)) {
+      const coins = (tag.coins || [])
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .sort((a, b) => b.market_cap - a.market_cap)
+        // Reproduces CoinGecko's per_page=50. Without it the >=350M
+        // top-8 in topNarrativeCandidates() would draw from a much wider
+        // pool and silently change which coins enter the scan universe.
+        .slice(0, 50);
+      if (!coins.length) continue;
+      results.push({
+        categoryId: tag.id,
+        name: keyword,
+        mcap: coins.reduce((s, c) => s + (c.market_cap || 0), 0),
+        weightedChange24h: weightedChangeFor(coins, 'price_change_percentage_24h_in_currency'),
+        weightedChange7d: weightedChangeFor(coins, 'price_change_percentage_7d_in_currency'),
+        weightedChange30d: null,
+        weightedChange1y: null,
+        coins
+      });
+    }
+
+    // Only cache a genuine result, same guard sectorPerformance7d() uses.
+    if (results.length) _fastSectorCache = { data: results, ts: now };
+    return results;
+  }
+
   async function cgCategoryList() {
     const now = Date.now();
     if (_cgCategoryListCache.data && now - _cgCategoryListCache.ts < CG_CATEGORY_LIST_TTL) {
@@ -736,20 +867,6 @@ const Api = (() => {
       return (retryData && Array.isArray(retryData) && retryData.length > 0) ? retryData : null;
     }
 
-    // Market-cap-weighted average % change for one window across a
-    // category's coins — same weighting method for every window so
-    // 24h/7d/30d stay comparable to each other.
-    function weightedChangeFor(coins, field) {
-      let totalMcap = 0, weightedSum = 0;
-      for (const coin of coins) {
-        const chg = coin[field];
-        if (chg == null || coin.market_cap == null) continue;
-        totalMcap += coin.market_cap;
-        weightedSum += coin.market_cap * chg;
-      }
-      return totalMcap > 0 ? weightedSum / totalMcap : 0;
-    }
-
     const results = [];
     for (const cat of resolvedCategories) {
       if (Date.now() - loopStart > LOOP_DEADLINE_MS) {
@@ -858,7 +975,8 @@ const Api = (() => {
     topByMarketCap, formatMcap,
     fearGreedIndex, unlockInfo,
     fetchAllNews, newsForSymbol, allNews, coinNews,
-    cgCategoryList, sectorPerformance7d, topNarrativeCandidates
+    cgCategoryList, sectorPerformance7d, topNarrativeCandidates,
+    paprikaTagMap, resolveNarrativeTags, fastSectorPerformance, weightedChangeFor
   };
 })();
 
