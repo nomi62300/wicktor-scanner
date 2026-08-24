@@ -50,6 +50,15 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (Tour temporarily disabled)
+`TOUR_ENABLED = false` gates both the manual "Take the tour" button and
+the auto-trigger on first scan. `TOUR_STEPS` is stale against this
+build's new tabs (Dashboard, Flows, Heatmap, News, Watchlist), so it's
+parked rather than shown wrong. The auto-trigger guard also skips marking
+`tourSeen` while disabled, so visitors during this window still get the
+auto-tour once it's re-enabled and rewritten to match. Steps content
+untouched — re-enable by flipping the flag once amended.
+
 ### Changed (branch-only — preview deploy unlocked)
 `MAINTENANCE_MODE` is committed `false` on this branch only, so the new
 Vercel preview deploy (`wicktor-terminal-preview`, tracking

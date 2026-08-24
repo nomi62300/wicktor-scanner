@@ -1137,6 +1137,11 @@
   // steps are dropped if no card exists yet (e.g. re-triggered from
   // Settings before any scan has completed), so the tour never breaks on
   // a missing element.
+  //
+  // Temporarily disabled — TOUR_STEPS is stale against this build's new
+  // tabs/features (Dashboard, Flows, Heatmap, News, Watchlist, etc.).
+  // Flip back to true once the steps are updated to match.
+  const TOUR_ENABLED = false;
   const TOUR_STEPS = [
     { element: '.brand', popover: {
       title: 'Welcome to Wicktor', description: 'A multi-timeframe crypto & tokenized-stock screener, built around one taught trading method. Quick tour of the main screen.' } },
@@ -1165,6 +1170,7 @@
   }
 
   function startTour() {
+    if (!TOUR_ENABLED) return;
     if (typeof window.driver === 'undefined' || !window.driver.js) return; // CDN unavailable — fail soft
     const hasCards = !!document.querySelector('.coin-card');
     const steps = hasCards ? TOUR_STEPS : TOUR_STEPS.filter(s => !s.element || !s.element.startsWith('.coin-card'));
@@ -1176,6 +1182,7 @@
   // the card-detail steps have something to point at — called after every
   // renderAll(), but hasSeenTour() makes every call after the first a no-op.
   function maybeAutoStartTour() {
+    if (!TOUR_ENABLED) return; // don't mark tourSeen while disabled, so re-enabling still auto-triggers for these visitors
     if (hasSeenTour()) return;
     if (!document.querySelector('.coin-card')) return;
     localStorage.setItem(STORAGE_KEYS.tourSeen, '1');
