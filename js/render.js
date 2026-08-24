@@ -304,8 +304,39 @@ const Render = (() => {
         <div class="level-box"><div class="level-box-label">Resistance</div><div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div></div>
         <div class="level-box"><div class="level-box-label">Support</div><div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div></div>
       </div>
+      <div class="news-section-label" style="margin-top:2px;">All timeframes</div>
+      <div id="extended-tf-panel" class="extended-tf-panel">
+        <div class="loading-state" style="padding:8px 0;">Loading...</div>
+      </div>
       ${newsSectionHtml(newsResult)}
     `;
+  }
+
+  // Extended 7-timeframe panel (detail modal, lazy-loaded): last close +
+  // last-candle % change per TF, informational only — no scoring here.
+  const EXTENDED_TF_LABELS = { '1m': '1M', '5m': '5M', '15m': '15M', '30m': '30M', '1h': '1H', '4h': '4H', '1d': '1D' };
+
+  function extendedTfPanelHtml(tfData) {
+    const rows = Object.keys(EXTENDED_TF_LABELS).map(tf => {
+      const candles = tfData[tf];
+      if (!candles || candles.length < 2) {
+        return `<div class="extended-tf-row">
+            <span class="extended-tf-label">${EXTENDED_TF_LABELS[tf]}</span>
+            <span style="color:var(--text3)">--</span>
+          </div>`;
+      }
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      const pctChange = prev.c ? ((last.c - prev.c) / prev.c) * 100 : 0;
+      const color = pctChange >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+      const sign = pctChange >= 0 ? '+' : '';
+      return `<div class="extended-tf-row">
+          <span class="extended-tf-label">${EXTENDED_TF_LABELS[tf]}</span>
+          <span class="mono">$${esc(String(last.c))}</span>
+          <span style="color:${color}">${sign}${pctChange.toFixed(2)}%</span>
+        </div>`;
+    }).join('');
+    return `<div class="extended-tf-grid">${rows}</div>`;
   }
 
   // ------------------------------------------------------------ Top strip
@@ -498,5 +529,56 @@ const Render = (() => {
       </table>`;
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, newsSectionHtml, esc };
+  // Heatmap (B5): flattens every coin across the same category set Flows
+  // uses (dedup by symbol, keep the highest-mktcap instance — a coin can
+  // appear in multiple categories), tile size ~ sqrt(market cap) (keeps
+  // one giant BTC tile from swallowing the whole grid), color = 24h%. No
+  // 1h toggle — that window isn't fetched anywhere else and this tab is
+  // explicitly the lowest-priority one on the roadmap, not worth a new
+  // CoinGecko window just for a toggle.
+  function heatmapHtml(sectorPerf) {
+    if (!sectorPerf || !sectorPerf.length) {
+      return '<div class="loading-state">Loading sector data...</div>';
+    }
+    const bySymbol = new Map();
+    sectorPerf.forEach(sector => {
+      (sector.coins || []).forEach(c => {
+        const existing = bySymbol.get(c.id);
+        if (!existing || (c.market_cap || 0) > (existing.market_cap || 0)) {
+          bySymbol.set(c.id, c);
+        }
+      });
+    });
+    const coins = [...bySymbol.values()]
+      .filter(c => c.market_cap != null)
+      .sort((a, b) => b.market_cap - a.market_cap)
+      .slice(0, 120);
+    if (!coins.length) return '<div class="loading-state">No coin data yet.</div>';
+
+    const maxSqrt = Math.sqrt(coins[0].market_cap);
+    const MIN_PX = 56, MAX_PX = 168;
+
+    const tiles = coins.map(c => {
+      const size = Math.round(MIN_PX + (Math.sqrt(c.market_cap) / maxSqrt) * (MAX_PX - MIN_PX));
+      const chg = c.price_change_percentage_24h_in_currency;
+      // Color intensity scales with |chg|, capped at 10% for full saturation
+      // — keeps a +40% meme-coin spike from just looking identical to +11%.
+      const intensity = chg == null ? 0 : Math.min(1, Math.abs(chg) / 10);
+      const bg = chg == null
+        ? 'var(--surf2)'
+        : chg >= 0
+          ? `color-mix(in srgb, var(--green) ${20 + intensity * 55}%, var(--surf2))`
+          : `color-mix(in srgb, var(--red) ${20 + intensity * 55}%, var(--surf2))`;
+      const fontSize = Math.max(10, Math.round(size / 6));
+      return `
+        <div class="heatmap-tile" style="width:${size}px;height:${size}px;background:${bg};font-size:${fontSize}px;" title="${esc((c.name || '').toString())}">
+          <div class="heatmap-symbol">${esc((c.symbol || '').toUpperCase())}</div>
+          <div class="heatmap-chg">${chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%' : '--'}</div>
+        </div>`;
+    }).join('');
+
+    return `<div class="heatmap-grid">${tiles}</div>`;
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsSectionHtml, esc };
 })();

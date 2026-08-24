@@ -58,7 +58,10 @@ const Api = (() => {
 
   // -------------------------------------------------------------- Bybit ---
 
-  const INTERVAL_MAP = { '1h': '60', '15m': '15', '5m': '5' };
+  const INTERVAL_MAP = {
+    '1m': '1', '5m': '5', '15m': '15', '30m': '30',
+    '1h': '60', '4h': '240', '1d': 'D'
+  };
 
   /**
    * category: 'spot' | 'linear'
@@ -73,6 +76,26 @@ const Api = (() => {
     const data = await safeFetch(`${BYBIT_BASE}/v5/market/instruments-info?category=${category}&limit=1000`);
     if (!data || data.retCode !== 0) return [];
     return data.result.list;
+  }
+
+  /**
+   * % change in open interest over the trailing 15 minutes, perpetuals
+   * only (`category` is always 'linear' here — spot has no OI concept).
+   * `limit=2` gives exactly [current, ~15min-ago] since intervalTime=15min
+   * spaces snapshots 15 min apart; list is newest-first per Bybit's
+   * convention (same as bybitKlines before its own reverse()).
+   */
+  async function openInterestChange15m(symbol) {
+    const data = await safeFetch(
+      `${BYBIT_BASE}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=15min&limit=2`
+    );
+    if (!data || data.retCode !== 0) return null;
+    const list = data.result && data.result.list;
+    if (!list || list.length < 2) return null;
+    const current = parseFloat(list[0].openInterest);
+    const prior = parseFloat(list[1].openInterest);
+    if (!prior) return null;
+    return ((current - prior) / prior) * 100;
   }
 
   /**
@@ -178,6 +201,22 @@ const Api = (() => {
       bybitKlines(category, symbol, '5m', 100)
     ]);
     return { h1, m15, m5 };
+  }
+
+  // Extended 7-timeframe panel (detail modal only, informational — never
+  // feeds scoring): fetched fresh and lazily when a coin's modal opens,
+  // since the scan pipeline doesn't retain raw candles per coin. A smaller
+  // limit than the scan's own 100 is enough for a last-price/last-change
+  // display, not full indicator computation.
+  const EXTENDED_TFS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
+
+  async function fetchExtendedTimeframes(category, symbol) {
+    const results = await Promise.all(
+      EXTENDED_TFS.map(tf => bybitKlines(category, symbol, tf, 30))
+    );
+    const out = {};
+    EXTENDED_TFS.forEach((tf, i) => { out[tf] = results[i]; });
+    return out;
   }
 
   // ----------------------------------------------------------- CoinGecko --
@@ -665,7 +704,8 @@ const Api = (() => {
   }
 
   return {
-    bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet,
+    bybitTickers, bybitInstruments, bybitKlines, topUniverse, fetchCandleSet, fetchExtendedTimeframes,
+    openInterestChange15m,
     isTradeableUsdtPair, isXStock, refreshXStockSet,
     coingeckoGlobal, coingeckoMarketCaps, topByMarketCap, formatMcap,
     fearGreedIndex, unlockInfo,

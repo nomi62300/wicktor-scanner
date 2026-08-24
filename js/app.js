@@ -109,11 +109,14 @@
     navScanner: document.getElementById('nav-scanner'),
     navDashboard: document.getElementById('nav-dashboard'),
     navFlows: document.getElementById('nav-flows'),
+    navHeatmap: document.getElementById('nav-heatmap'),
     viewScanner: document.getElementById('view-scanner'),
     viewDashboard: document.getElementById('view-dashboard'),
     viewFlows: document.getElementById('view-flows'),
+    viewHeatmap: document.getElementById('view-heatmap'),
     dashboardGrid: document.getElementById('dashboard-grid'),
     flowsGrid: document.getElementById('flows-grid'),
+    heatmapGridContainer: document.getElementById('heatmap-grid-container'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -190,9 +193,16 @@
 
   // -------------------------------------------------------- Core pipeline
   async function computeCoin(base, category, mcapMap, newsData) {
-    const candles = await Api.fetchCandleSet(category, base.symbol);
+    // OI has no spot-market concept — perpetuals only, fetched alongside
+    // candles (not sequentially) so it doesn't add latency to the scan.
+    const [candles, oiChange15m] = await Promise.all([
+      Api.fetchCandleSet(category, base.symbol),
+      category === 'linear'
+        ? Api.openInterestChange15m(base.symbol).catch(() => null)
+        : Promise.resolve(null)
+    ]);
     if (!candles.h1) return null;
-    const result = Scoring.evaluate(candles);
+    const result = Scoring.evaluate(candles, { oiChange15m });
     if (!result) return null;
 
     const market = category === 'linear' ? 'PERP' : 'SPOT';
@@ -226,6 +236,7 @@
       rawSymbol: base.symbol,
       sector: base.narrativeSector || (base.isStock ? 'Tokenized Stock' : 'Crypto'),
       price: formatPrice(priceNum),
+      priceRaw: priceNum,
       market,
       side: result.bias === 1 ? (market === 'PERP' ? 'Long' : 'Buy') : (market === 'PERP' ? 'Short' : 'Sell'),
       discoveredAgo: discoveredAgoLabel(key),
@@ -668,6 +679,30 @@
     el.modalContent.innerHTML = Render.detailModalHtml(coin, state.newsCache[coin.rawSymbol]);
     el.modalBackdrop.classList.add('open');
     bindModalCloseEvents();
+    loadExtendedTfPanel(coin);
+
+    const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling).text;
+    Outcomes.logIfNew({
+      key: `${coin.rawSymbol}:${coin.market}`,
+      band, score: coin.score, side: coin.side, entryPrice: coin.priceRaw
+    });
+  }
+
+  // Fetched fresh on every modal open, not cached — the scan pipeline
+  // doesn't retain raw candles per coin (would be a lot of memory across a
+  // full grid), and this is a small, cheap 7-request fetch only paid when
+  // a user actually opens a coin's detail.
+  async function loadExtendedTfPanel(coin) {
+    const category = coin.market === 'PERP' ? 'linear' : 'spot';
+    const tfData = await Api.fetchExtendedTimeframes(category, coin.rawSymbol).catch(e => {
+      console.warn('[App] extended timeframe fetch failed', e);
+      return null;
+    });
+    // The modal may have been closed, or a different coin opened, by the
+    // time this resolves — only render if this is still the active coin.
+    if (state.modalCoin !== coin) return;
+    const panel = el.modalContent.querySelector('#extended-tf-panel');
+    if (panel && tfData) panel.innerHTML = Render.extendedTfPanelHtml(tfData);
   }
   function bindModalCloseEvents() {
     const closeBtn = el.modalContent.querySelector('[data-action="close-modal"]');
@@ -769,6 +804,7 @@
     el.navScanner.addEventListener('click', () => switchTab('scanner'));
     el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
     el.navFlows.addEventListener('click', () => switchTab('flows'));
+    el.navHeatmap.addEventListener('click', () => switchTab('heatmap'));
     el.flowsGrid.addEventListener('click', (e) => {
       const row = e.target.closest('.flows-row');
       if (row) toggleFlowsRow(row.dataset.categoryId);
@@ -785,7 +821,7 @@
   // scan — it's supporting market context, not part of the scan cycle.
   // Cached at the Api layer so revisiting a tab within the cache window
   // doesn't refetch.
-  const TABS = ['scanner', 'dashboard', 'flows'];
+  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap'];
   let dashboardLoaded = false;
   let flowsLoaded = false;
   const flowsExpanded = new Set();
@@ -804,6 +840,16 @@
     if (tab === 'flows' && !flowsLoaded) {
       flowsLoaded = true;
       refreshFlows();
+    }
+    if (tab === 'heatmap') {
+      if (!flowsLoaded) {
+        // Heatmap reuses Flows' category data — share the one fetch
+        // instead of duplicating the same CoinGecko sequence.
+        flowsLoaded = true;
+        refreshFlows().then(refreshHeatmap);
+      } else {
+        refreshHeatmap();
+      }
     }
   }
 
@@ -835,6 +881,10 @@
       : null);
     state.flowsData = sectorPerf;
     el.flowsGrid.innerHTML = Render.marketFlowsHtml(sectorPerf, flowsExpanded);
+  }
+
+  function refreshHeatmap() {
+    el.heatmapGridContainer.innerHTML = Render.heatmapHtml(state.flowsData);
   }
 
   function toggleFlowsRow(categoryId) {

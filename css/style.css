@@ -350,6 +350,29 @@ input:focus-visible {
 .flows-coins-table th, .flows-coins-table td { padding: 6px 10px; border-bottom: 1px solid var(--border2, var(--border)); font-size: 12px; }
 .flows-coin-row:last-child td { border-bottom: none; }
 
+/* ---- Heatmap ---- */
+.heatmap-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-content: flex-start;
+}
+
+.heatmap-tile {
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  overflow: hidden;
+  padding: 2px;
+  text-align: center;
+}
+
+.heatmap-symbol { font-weight: 600; }
+.heatmap-chg { opacity: 0.85; font-size: 0.85em; }
+
 /* ---- Filter bar ---- */
 .filter-bar {
   display: flex;
@@ -643,6 +666,18 @@ input:focus-visible {
 .level-box { background: var(--surf2); border-radius: 9px; padding: 8px 10px; }
 .level-box-label { font-size: 9px; color: var(--text3); }
 .level-box-value { font-size: 12px; font-family: var(--font-mono); }
+
+.extended-tf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; margin-bottom: 14px; }
+.extended-tf-row {
+  background: var(--surf2);
+  border-radius: 9px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+.extended-tf-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
 
 .news-section-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
 .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }

@@ -603,13 +603,26 @@ const Indicators = (() => {
     };
   }
 
+  /**
+   * Breakout-proximity: how close price is to a key fractal-based level,
+   * in ATR terms — 100% at the level itself, 0% at 3+ ATRs away. Pure
+   * function so distance/atr can come from any timeframe's already-computed
+   * resistance/support/atr/close (no new snapshot fields needed).
+   */
+  function breakoutProximityPct(distance, atrValue) {
+    if (distance == null || atrValue == null || atrValue <= 0) return null;
+    const distanceAtr = Math.abs(distance) / atrValue;
+    return Math.max(0, 100 * (1 - distanceAtr / 3));
+  }
+
   return {
     medianPrice, sma, smma, shiftForward,
     heikinAshi, alligator, alligatorTouchState,
     divergentBar, crossingLips,
     awesomeOscillator, acceleratorOscillator, wisemanSignals, mfi, mfiClassification,
     fractals, rsi, divergence, tfConfidenceTier,
-    lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe
+    lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
+    breakoutProximityPct
   };
 })();
 

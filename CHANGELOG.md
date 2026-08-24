@@ -6,10 +6,71 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
-Phase 0 + Phase 1 done unsupervised overnight; Phase 2 added in a
-follow-up session with the owner present. Deliberately left unmerged on a
-branch pending review, per standing branch discipline (`main` auto-
-deploys live). Not version-bumped or tagged; that happens at merge time.
+Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
+outcome-logging, OI 15m%, and the extended 7-TF panel added in follow-up
+sessions with the owner present. Deliberately left unmerged on a branch
+pending review, per standing branch discipline (`main` auto-deploys
+live). Not version-bumped or tagged; that happens at merge time.
+
+### Added (Phase 6 — Breakout-proximity)
+- New Continuation scoring item evaluated on 15M: `Indicators.
+  breakoutProximityPct(distance, atr)` (pure, unit-tested) measures how
+  close price sits to its own fractal-based key level in ATR terms. A
+  close already past the level scores "Confirmed breakout" (+14); within
+  1 ATR of it (proximity >= 66%) scores "Approaching key level" (+10).
+  Reuses the existing `resistance`/`support`/`atr`/`close` fields already
+  on every per-TF snapshot — no new indicator plumbing needed.
+
+### Added (Phase 7 — Heatmap)
+- New "Heatmap" tab: every coin across the same 16-category set Flows
+  uses, deduped by CoinGecko id (a coin can appear in multiple
+  categories, highest-mktcap instance wins), tile size ~ sqrt(market cap)
+  so one giant BTC tile can't swallow the grid, color = 24h% intensity
+  (capped at 10% magnitude for full saturation). Shares Flows' data fetch
+  — opening Heatmap first triggers the same `sectorPerformance7d()` call
+  Flows uses, not a duplicate. No 1h-color toggle (that window isn't
+  fetched anywhere else, and this is explicitly the lowest-priority tab
+  on the roadmap — not worth a new CoinGecko window just for it).
+
+### Added (Outcome-logging journal)
+- New `journal.html` + `js/journal.js`, isolated from the main scanning
+  page (own small theme-toggle copy, no dependency on `app.js`/
+  `render.js`'s DOM assumptions). New shared `js/outcomes.js` module
+  (`wicktor:outcomes` localStorage key, capped at 200 entries) used by
+  both the main page's logging hook and the journal page's read/write.
+- Logging hook: `openModal()` in `js/app.js` now logs `{key, band, score,
+  side, entryPrice}` the first time a coin's detail modal opens (deduped
+  per-key within a 1-hour window so repeat opens in one sitting don't
+  spam duplicate entries) — purely additive, main page UI/behavior
+  unchanged otherwise.
+- Journal page: aggregate stats (logged/resolved/win rate/wins/losses/
+  breakeven), full entry table, Win/Loss/Breakeven buttons per unresolved
+  entry. Linked from the main page's Settings panel.
+- New `priceRaw` numeric field added to the coin object (existing `price`
+  field is a display-formatted string with thousands separators, not
+  safely `parseFloat`-able) — purely additive.
+
+### Added (Extended 7-timeframe panel)
+- Detail modal now shows all 7 timeframes (1M/5M/15M/30M/1H/4H/1D): last
+  close + last-candle % change, informational only — doesn't touch
+  scoring. Lazy-fetched fresh on modal open (the scan pipeline doesn't
+  retain raw candles per coin) via new `Api.fetchExtendedTimeframes()`;
+  race-guarded so a closed/switched modal doesn't render stale data if
+  the fetch resolves late.
+- `INTERVAL_MAP` in `js/api.js` extended with 1m/30m/4h/1d (previously
+  only 1h/15m/5m existed, matching the scan's own fixed 3 timeframes).
+
+### Added (OI 15m%)
+- New Continuation scoring item, perpetuals only: `Api.
+  openInterestChange15m(symbol)` (Bybit `/v5/market/open-interest`,
+  verified live) computes % open-interest change over the trailing 15
+  minutes. `|change| >= 5%` (significance threshold) scores a soft
+  confirmation (+8) — magnitude-based, not signed by bias, since a large
+  swing in open interest either way means fresh capital is actively
+  committing to the current move. `Scoring.evaluate()` gained an optional
+  second `extras` parameter (`{oiChange15m}`) to thread this through
+  without changing the existing single-argument call signature anywhere
+  else. Spot-market coins pass `null` — no item, no crash.
 
 ### Added (Phase 2 — Market Flows)
 - New "Flows" tab: sortable-by-market-cap category table (Artificial

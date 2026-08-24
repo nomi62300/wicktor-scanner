@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wicktor — Outcome Journal</title>
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/logo.svg" alt="Wicktor" class="brand-icon-img">
+    </div>
+    <div style="font-family:var(--font-display);font-weight:500;font-size:16px;flex:1;">Outcome Journal</div>
+    <a href="index.html" class="btn btn-primary" style="text-decoration:none;">&larr; Back to Scanner</a>
+    <button id="theme-btn" class="icon-btn" aria-label="Toggle theme"></button>
+  </header>
+
+  <section id="journal-stats" class="top-strip" aria-label="Journal stats">
+    <div class="loading-state">Loading...</div>
+  </section>
+
+  <main id="journal-list" aria-label="Logged calls">
+    <div class="loading-state">Loading...</div>
+  </main>
+
+</div>
+
+<script src="js/outcomes.js"></script>
+<script src="js/journal.js"></script>
+</body>
+</html>

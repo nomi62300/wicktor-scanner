@@ -77,6 +77,7 @@
     <button id="nav-scanner" class="main-nav-tab active" role="tab" aria-selected="true" aria-controls="view-scanner">Scanner</button>
     <button id="nav-dashboard" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-dashboard">Dashboard</button>
     <button id="nav-flows" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-flows">Flows</button>
+    <button id="nav-heatmap" class="main-nav-tab" role="tab" aria-selected="false" aria-controls="view-heatmap">Heatmap</button>
   </nav>
 
   <div id="view-scanner" role="tabpanel" aria-labelledby="nav-scanner">
@@ -127,6 +128,12 @@
 
   <div id="view-flows" role="tabpanel" aria-labelledby="nav-flows" hidden>
     <section id="flows-grid" aria-label="Market Flows">
+      <div class="loading-state">Loading sector data...</div>
+    </section>
+  </div>
+
+  <div id="view-heatmap" role="tabpanel" aria-labelledby="nav-heatmap" hidden>
+    <section id="heatmap-grid-container" aria-label="Heatmap">
       <div class="loading-state">Loading sector data...</div>
     </section>
   </div>
@@ -226,6 +233,7 @@
 
   <div class="settings-links">
     <button id="take-tour-btn" class="settings-link-btn" type="button">Take the tour</button>
+    <a href="journal.html" class="settings-link-btn">Outcome Journal</a>
     <a href="https://app.youform.com/forms/qhosm8ii" target="_blank" rel="noopener noreferrer" class="settings-link-btn">Feedback</a>
   </div>
   <div id="app-version" class="settings-version"></div>
@@ -235,6 +243,7 @@
 <script src="js/indicators.js"></script>
 <script src="js/scoring.js"></script>
 <script src="js/api.js"></script>
+<script src="js/outcomes.js"></script>
 <script src="js/render.js"></script>
 <script src="js/app.js"></script>
 </body>

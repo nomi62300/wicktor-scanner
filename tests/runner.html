@@ -588,6 +588,94 @@ test('returns null when h1 candles are too short', () => {
   assert(result === null, 'expected null for short h1');
 });
 
+suite('I — breakoutProximityPct() and 15M breakout-proximity scoring');
+
+test('at the level itself = 100%', () => {
+  assert(Indicators.breakoutProximityPct(0, 10) === 100);
+});
+
+test('1 ATR away = ~66.7%', () => {
+  const pct = Indicators.breakoutProximityPct(10, 10);
+  assert(Math.abs(pct - (100 * 2 / 3)) < 1e-9, `Expected ~66.67, got ${pct}`);
+});
+
+test('3+ ATRs away floors at 0%, never negative', () => {
+  assert(Indicators.breakoutProximityPct(30, 10) === 0);
+  assert(Indicators.breakoutProximityPct(100, 10) === 0);
+});
+
+test('null/zero ATR returns null, not a divide-by-zero result', () => {
+  assert(Indicators.breakoutProximityPct(10, 0) === null);
+  assert(Indicators.breakoutProximityPct(10, null) === null);
+});
+
+test('buildContinuation: 15M closing above resistance scores the confirmed-breakout item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, { ...snap, resistance: cs[cs.length - 1].c - 0.01 }, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1);
+  assert(items.some(([label]) => label.includes('Confirmed breakout above key level')),
+    `Expected confirmed-breakout item, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: 15M far from any level scores neither breakout item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const farResistance = cs[cs.length - 1].c + snap.atr * 10;
+  const tfSnapshots = [snap, { ...snap, resistance: farResistance }, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1);
+  assert(!items.some(([label]) => label.includes('key level')),
+    `Expected no breakout-proximity item, got ${JSON.stringify(items)}`);
+});
+
+suite('J — OI 15m% scoring input');
+
+test('buildContinuation: |OI change| >= 5% scores the OI confirmation item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 7.2);
+  assert(items.some(([label]) => label.includes('Perp OI') && label.includes('+7.2%')),
+    `Expected OI confirmation item, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: OI change below 5% threshold scores nothing', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 2.0);
+  assert(!items.some(([label]) => label.includes('Perp OI')),
+    `Expected no OI item below threshold, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: null OI (spot market) scores nothing, no crash', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, null);
+  assert(!items.some(([label]) => label.includes('Perp OI')),
+    `Expected no OI item for null (spot), got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: negative OI swing beyond threshold also confirms (magnitude, not sign)', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, -8.5);
+  assert(items.some(([label]) => label.includes('Perp OI') && label.includes('-8.5%')),
+    `Expected OI confirmation item for negative swing, got ${JSON.stringify(items)}`);
+});
+
+test('evaluate() threads extras.oiChange15m through to continuation.items', () => {
+  const cs = uptrend(80);
+  const withOi = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9.0 });
+  assert(withOi.continuation.items.some(([label]) => label.includes('Perp OI')),
+    `Expected OI item in evaluate() output, got ${JSON.stringify(withOi.continuation.items)}`);
+  const withoutOi = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(!withoutOi.continuation.items.some(([label]) => label.includes('Perp OI')),
+    `Expected no OI item when extras omitted, got ${JSON.stringify(withoutOi.continuation.items)}`);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render results to DOM
 // ─────────────────────────────────────────────────────────────────────────────

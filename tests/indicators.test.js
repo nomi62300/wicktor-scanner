@@ -258,6 +258,31 @@ test('fractals output on real candles is unaffected by heikinAshi', () => {
   assert.ok(!sameSet, 'Fractal sets on real vs HA candles should differ (spike is smoothed in HA)');
 });
 
+test('breakoutProximityPct: at the level itself = 100%', () => {
+  const pct = Indicators.breakoutProximityPct(0, 10);
+  assert.strictEqual(pct, 100);
+});
+
+test('breakoutProximityPct: 1 ATR away = ~66.7%', () => {
+  const pct = Indicators.breakoutProximityPct(10, 10);
+  assert.ok(Math.abs(pct - (100 * 2 / 3)) < 1e-9, `Expected ~66.67, got ${pct}`);
+});
+
+test('breakoutProximityPct: 3+ ATRs away floors at 0%, never negative', () => {
+  assert.strictEqual(Indicators.breakoutProximityPct(30, 10), 0);
+  assert.strictEqual(Indicators.breakoutProximityPct(100, 10), 0);
+});
+
+test('breakoutProximityPct: uses absolute distance (sign-independent)', () => {
+  assert.strictEqual(Indicators.breakoutProximityPct(-10, 10), Indicators.breakoutProximityPct(10, 10));
+});
+
+test('breakoutProximityPct: null/zero ATR returns null, not a divide-by-zero result', () => {
+  assert.strictEqual(Indicators.breakoutProximityPct(10, 0), null);
+  assert.strictEqual(Indicators.breakoutProximityPct(10, null), null);
+  assert.strictEqual(Indicators.breakoutProximityPct(null, 10), null);
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

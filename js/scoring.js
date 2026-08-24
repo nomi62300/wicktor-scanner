@@ -52,7 +52,7 @@ const Scoring = (() => {
   // tfSnapshots is always ordered [1H, 15M, 5M] — same order everywhere else.
   const TF_LABELS = ['1H', '15M', '5M'];
 
-  function buildContinuation(tfSnapshots, bias) {
+  function buildContinuation(tfSnapshots, bias, oiChange15m) {
     const items = [];
     let score = 0;
     const { count } = computeBias(tfSnapshots);
@@ -99,6 +99,44 @@ const Scoring = (() => {
       if (primary.mfiSignal === 'green') {
         items.push(['MFI Green (volume + range confirm)', 8]); score += 8;
       }
+    }
+
+    // Breakout-proximity (Phase 6): evaluated on 15M specifically — how
+    // close price sits to its own fractal-based key level, in ATR terms.
+    // Close-confirmed breakout (price already past the level) scores
+    // higher than merely approaching it, since a close beyond the level
+    // is the actual taught confirmation, not just proximity.
+    const m15 = tfSnapshots[1];
+    if (m15) {
+      if (bias === 1 && m15.resistance != null) {
+        if (m15.close > m15.resistance) {
+          items.push(['15M Confirmed breakout above key level', 14]); score += 14;
+        } else {
+          const prox = Indicators.breakoutProximityPct(m15.resistance - m15.close, m15.atr);
+          if (prox != null && prox >= 66) {
+            items.push(['15M Approaching key level (breakout setup)', 10]); score += 10;
+          }
+        }
+      } else if (bias === -1 && m15.support != null) {
+        if (m15.close < m15.support) {
+          items.push(['15M Confirmed breakout below key level', 14]); score += 14;
+        } else {
+          const prox = Indicators.breakoutProximityPct(m15.close - m15.support, m15.atr);
+          if (prox != null && prox >= 66) {
+            items.push(['15M Approaching key level (breakout setup)', 10]); score += 10;
+          }
+        }
+      }
+    }
+
+    // OI 15m% (perpetuals only — null for spot, checked via presence not
+    // market type, since buildContinuation doesn't otherwise know market).
+    // Significance threshold 5%: a large swing in open interest either way
+    // means fresh capital is actively committing to the current move, not
+    // just existing positions drifting — a soft confirmation, not a gate.
+    if (oiChange15m != null && Math.abs(oiChange15m) >= 5) {
+      items.push([`Perp OI ${oiChange15m > 0 ? '+' : ''}${oiChange15m.toFixed(1)}% (15m, fresh capital)`, 8]);
+      score += 8;
     }
 
     return { score: Math.min(65, score), items };
@@ -260,7 +298,7 @@ const Scoring = (() => {
    * Full pipeline: pass in { h1, m15, m5 } raw candle arrays (already
    * fetched), returns everything the UI needs for one coin/market.
    */
-  function evaluate(candlesByTf) {
+  function evaluate(candlesByTf, extras) {
     const tfSnapshots = [
       Indicators.analyzeTimeframe(candlesByTf.h1),
       Indicators.analyzeTimeframe(candlesByTf.m15),
@@ -270,7 +308,7 @@ const Scoring = (() => {
 
     const { bias, count } = computeBias(tfSnapshots);
     const ceiling = alignmentCeiling(tfSnapshots, bias);
-    const continuation = buildContinuation(tfSnapshots, bias);
+    const continuation = buildContinuation(tfSnapshots, bias, extras && extras.oiChange15m);
     const exhaustion = buildExhaustion(tfSnapshots);
     const reversal = buildReversal(tfSnapshots, bias);
     const dir = directionValue(tfSnapshots);
