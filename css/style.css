@@ -666,6 +666,7 @@ input:focus-visible {
 .level-box { background: var(--surf2); border-radius: 9px; padding: 8px 10px; }
 .level-box-label { font-size: 9px; color: var(--text3); }
 .level-box-value { font-size: 12px; font-family: var(--font-mono); }
+.level-box-sloped { font-size: 10px; font-family: var(--font-mono); color: var(--text3); margin-top: 3px; }
 
 .extended-tf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; margin-bottom: 14px; }
 .extended-tf-row {

@@ -7,11 +7,32 @@ project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
-outcome-logging, OI 15m%, the extended 7-TF panel, and the CoinPaprika
-fallback tier added in follow-up sessions with the owner present.
-Deliberately left unmerged on a branch pending review, per standing
-branch discipline (`main` auto-deploys live). Not version-bumped or
-tagged; that happens at merge time.
+outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
+fallback tier, and sloped regression-channel levels added in follow-up
+sessions with the owner present. Deliberately left unmerged on a branch
+pending review, per standing branch discipline (`main` auto-deploys
+live). Not version-bumped or tagged; that happens at merge time.
+
+### Added (Sloped regression-channel levels — v2 key levels)
+- New `Indicators.linearRegression(points)` (pure OLS fit, returns
+  `{slope, intercept, r2}`) and `Indicators.regressionChannelLevels()`,
+  which fits a line through the last several fractal pivot highs/lows
+  (up to 6, minimum 3) instead of taking just the nearest one, then
+  projects that line to the current bar for a level that moves with the
+  trend. Gated on fit quality (`r2 >= 0.6` default) — a poor fit returns
+  `null`, meaning "not confident, don't show one," not a bad line.
+- Deliberately **additive**, not a replacement for the existing flat
+  `nearestLevels()` result — too much already depends on the flat level
+  (breakout-proximity scoring shipped earlier this session, the modal's
+  Key Levels display) to swap the underlying computation under them, on
+  both the live site and the bot. New `resistanceSloped`/`supportSloped`
+  snapshot fields sit alongside the unchanged `resistance`/`support`.
+- Modal's Key Levels box shows the sloped channel as a secondary line
+  under the flat value, with its r² so the reader can judge confidence,
+  when a confident fit exists — otherwise no second line at all.
+- Live-verified: a real coin's modal showed both a resistance channel
+  (r²=0.90) and support channel (r²=0.60) computed from real fractal
+  pivots, alongside the unchanged flat levels.
 
 ### Added (CoinPaprika fallback tier)
 - Inserted as the middle tier in both `coingeckoGlobal()` and

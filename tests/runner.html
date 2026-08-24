@@ -676,6 +676,56 @@ test('evaluate() threads extras.oiChange15m through to continuation.items', () =
     `Expected no OI item when extras omitted, got ${JSON.stringify(withoutOi.continuation.items)}`);
 });
 
+suite('K — linearRegression() and regressionChannelLevels() (sloped key levels v2)');
+
+test('perfect line gives exact slope/intercept and r2=1', () => {
+  const fit = Indicators.linearRegression([{ x: 0, y: 10 }, { x: 1, y: 12 }, { x: 2, y: 14 }, { x: 3, y: 16 }]);
+  assert(Math.abs(fit.slope - 2) < 1e-9);
+  assert(Math.abs(fit.intercept - 10) < 1e-9);
+  assert(Math.abs(fit.r2 - 1) < 1e-9);
+});
+
+test('scattered points give r2 < 1', () => {
+  const fit = Indicators.linearRegression([{ x: 0, y: 10 }, { x: 1, y: 9 }, { x: 2, y: 15 }, { x: 3, y: 8 }]);
+  assert(fit.r2 < 1);
+});
+
+test('fewer than 2 points, or all identical x, returns null', () => {
+  assert(Indicators.linearRegression([]) === null);
+  assert(Indicators.linearRegression([{ x: 0, y: 1 }]) === null);
+  assert(Indicators.linearRegression([{ x: 5, y: 1 }, { x: 5, y: 2 }, { x: 5, y: 3 }]) === null);
+});
+
+test('fewer than minPivots fractal highs returns null resistance', () => {
+  const candles = uptrend(80);
+  const result = Indicators.regressionChannelLevels(candles, { up: [10], down: [] }, 79);
+  assert(result.resistance === null && result.support === null);
+});
+
+test('enough clean rising pivots yields a confident projected value', () => {
+  const candles = uptrend(80);
+  candles.forEach((c, i) => { c.h = 100 + i * 2; });
+  const result = Indicators.regressionChannelLevels(candles, { up: [10, 20, 30, 40], down: [] }, 79, { minPivots: 3 });
+  assert(result.resistance !== null);
+  assert(result.resistance.r2 > 0.99, `Expected near-perfect r2, got ${result.resistance.r2}`);
+  const expected = 100 + 79 * 2;
+  assert(Math.abs(result.resistance.value - expected) < 1e-6);
+});
+
+test('noisy pivots below r2 threshold returns null', () => {
+  const candles = uptrend(80);
+  const noisyHighs = [50, 900, 60, 850];
+  [10, 20, 30, 40].forEach((idx, i) => { candles[idx].h = noisyHighs[i]; });
+  const result = Indicators.regressionChannelLevels(candles, { up: [10, 20, 30, 40], down: [] }, 79, { minPivots: 3, minR2: 0.6 });
+  assert(result.resistance === null, `Expected null for a poor fit, got ${JSON.stringify(result.resistance)}`);
+});
+
+test('analyzeTimeframe exposes resistanceSloped/supportSloped without throwing', () => {
+  const candles = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(candles);
+  assert('resistanceSloped' in snap && 'supportSloped' in snap);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render results to DOM
 // ─────────────────────────────────────────────────────────────────────────────

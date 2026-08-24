@@ -283,6 +283,67 @@ test('breakoutProximityPct: null/zero ATR returns null, not a divide-by-zero res
   assert.strictEqual(Indicators.breakoutProximityPct(null, 10), null);
 });
 
+test('linearRegression: perfect line gives exact slope/intercept and r2=1', () => {
+  const points = [{ x: 0, y: 10 }, { x: 1, y: 12 }, { x: 2, y: 14 }, { x: 3, y: 16 }];
+  const fit = Indicators.linearRegression(points);
+  assert.ok(Math.abs(fit.slope - 2) < 1e-9, `Expected slope 2, got ${fit.slope}`);
+  assert.ok(Math.abs(fit.intercept - 10) < 1e-9, `Expected intercept 10, got ${fit.intercept}`);
+  assert.ok(Math.abs(fit.r2 - 1) < 1e-9, `Expected r2 1, got ${fit.r2}`);
+});
+
+test('linearRegression: scattered points give r2 < 1', () => {
+  const points = [{ x: 0, y: 10 }, { x: 1, y: 9 }, { x: 2, y: 15 }, { x: 3, y: 8 }];
+  const fit = Indicators.linearRegression(points);
+  assert.ok(fit.r2 < 1, `Expected r2 < 1 for scattered points, got ${fit.r2}`);
+});
+
+test('linearRegression: fewer than 2 points returns null', () => {
+  assert.strictEqual(Indicators.linearRegression([]), null);
+  assert.strictEqual(Indicators.linearRegression([{ x: 0, y: 1 }]), null);
+});
+
+test('linearRegression: all identical x (vertical) returns null, not a divide-by-zero result', () => {
+  const points = [{ x: 5, y: 1 }, { x: 5, y: 2 }, { x: 5, y: 3 }];
+  assert.strictEqual(Indicators.linearRegression(points), null);
+});
+
+test('regressionChannelLevels: fewer than minPivots fractal highs returns null resistance', () => {
+  const candles = buildCleanUptrend(80);
+  const frac = { up: [10], down: [] }; // only 1 pivot, default minPivots=3
+  const result = Indicators.regressionChannelLevels(candles, frac, 79);
+  assert.strictEqual(result.resistance, null);
+  assert.strictEqual(result.support, null);
+});
+
+test('regressionChannelLevels: enough clean rising pivots yields a confident projected value', () => {
+  // Fractal highs rising exactly linearly with bar index -> perfect fit.
+  const candles = buildCleanUptrend(80);
+  candles.forEach((c, i) => { c.h = 100 + i * 2; }); // deterministic rising highs
+  const frac = { up: [10, 20, 30, 40], down: [] };
+  const result = Indicators.regressionChannelLevels(candles, frac, 79, { minPivots: 3 });
+  assert.ok(result.resistance !== null, 'Expected a confident regression result');
+  assert.ok(result.resistance.r2 > 0.99, `Expected near-perfect r2, got ${result.resistance.r2}`);
+  const expected = 100 + 79 * 2;
+  assert.ok(Math.abs(result.resistance.value - expected) < 1e-6,
+    `Expected projected value ~${expected}, got ${result.resistance.value}`);
+});
+
+test('regressionChannelLevels: noisy pivots below r2 threshold returns null', () => {
+  const candles = buildCleanUptrend(80);
+  const noisyHighs = [50, 900, 60, 850]; // wildly inconsistent, poor fit
+  [10, 20, 30, 40].forEach((idx, i) => { candles[idx].h = noisyHighs[i]; });
+  const frac = { up: [10, 20, 30, 40], down: [] };
+  const result = Indicators.regressionChannelLevels(candles, frac, 79, { minPivots: 3, minR2: 0.6 });
+  assert.strictEqual(result.resistance, null, `Expected null for a poor fit, got ${JSON.stringify(result.resistance)}`);
+});
+
+test('analyzeTimeframe: resistanceSloped/supportSloped are present (null or an object), never throw', () => {
+  const candles = buildCleanUptrend(80);
+  const snap = Indicators.analyzeTimeframe(candles);
+  assert.ok('resistanceSloped' in snap);
+  assert.ok('supportSloped' in snap);
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

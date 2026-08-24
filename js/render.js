@@ -13,6 +13,17 @@ const Render = (() => {
     return d.innerHTML;
   }
 
+  // Matches app.js's formatPrice() rules, kept local since render.js has
+  // no dependency on app.js — used for the sloped-channel level value,
+  // the one place render.js formats a raw number rather than a
+  // pre-formatted string already prepared by app.js.
+  function formatPriceForDisplay(n) {
+    if (n == null || isNaN(n)) return '--';
+    if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (n >= 1) return n.toFixed(2);
+    return n.toFixed(4);
+  }
+
   // Fixed-size SVG icons for the 5-tier per-TF confidence state — Unicode
   // arrow glyphs (▲/↗/▼/↘/—) render thin, low-contrast, or near-illegible
   // at small sizes across different fonts/devices/OSes; explicit stroke
@@ -301,8 +312,16 @@ const Render = (() => {
       ${breakdownBlockHtml('Reversal', 'var(--text3)', coin.reversal.score, coin.reversal.items)}
       <div class="news-section-label" style="margin-top:2px;">Key levels</div>
       <div class="levels-grid">
-        <div class="level-box"><div class="level-box-label">Resistance</div><div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div></div>
-        <div class="level-box"><div class="level-box-label">Support</div><div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div></div>
+        <div class="level-box">
+          <div class="level-box-label">Resistance</div>
+          <div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div>
+          ${coin.resistanceSloped ? `<div class="level-box-sloped">Channel: $${esc(formatPriceForDisplay(coin.resistanceSloped.value))} <span style="color:var(--text3)">(r&sup2; ${coin.resistanceSloped.r2.toFixed(2)})</span></div>` : ''}
+        </div>
+        <div class="level-box">
+          <div class="level-box-label">Support</div>
+          <div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div>
+          ${coin.supportSloped ? `<div class="level-box-sloped">Channel: $${esc(formatPriceForDisplay(coin.supportSloped.value))} <span style="color:var(--text3)">(r&sup2; ${coin.supportSloped.r2.toFixed(2)})</span></div>` : ''}
+        </div>
       </div>
       <div class="news-section-label" style="margin-top:2px;">All timeframes</div>
       <div id="extended-tf-panel" class="extended-tf-panel">

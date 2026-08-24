@@ -574,6 +574,9 @@ const Indicators = (() => {
 
     const atrV = atr(candles)[lastIdx];
     const { resistance, support } = nearestLevels(candles, frac, price, atrV);
+    // v2 sloped-channel levels — additive, see regressionChannelLevels()'s
+    // own doc comment for why this doesn't replace resistance/support above.
+    const sloped = regressionChannelLevels(candles, frac, lastIdx);
 
     return {
       alignment,              // 1 / -1 / 0 (0 if jaw was touched and not cleared)
@@ -599,6 +602,8 @@ const Indicators = (() => {
       atr: atrV,
       resistance,
       support,
+      resistanceSloped: sloped.resistance, // null unless a good-fit (r2 >= 0.6) regression exists
+      supportSloped: sloped.support,
       close: price
     };
   }
@@ -615,6 +620,68 @@ const Indicators = (() => {
     return Math.max(0, 100 * (1 - distanceAtr / 3));
   }
 
+  /**
+   * Ordinary least-squares line through {x,y} points. Returns
+   * {slope, intercept, r2} — r2 (coefficient of determination) is the fit
+   * quality gate callers use to decide whether the line is trustworthy
+   * enough to use, not just "a line that technically exists".
+   */
+  function linearRegression(points) {
+    const n = points.length;
+    if (n < 2) return null;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (const p of points) {
+      sumX += p.x; sumY += p.y; sumXY += p.x * p.y; sumXX += p.x * p.x;
+    }
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) return null; // all x identical, vertical line — undefined slope
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+
+    const meanY = sumY / n;
+    let ssTot = 0, ssRes = 0;
+    for (const p of points) {
+      const predicted = slope * p.x + intercept;
+      ssRes += (p.y - predicted) ** 2;
+      ssTot += (p.y - meanY) ** 2;
+    }
+    const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+    return { slope, intercept, r2 };
+  }
+
+  /**
+   * Sloped-channel v2 of nearestLevels()'s flat single-fractal-point
+   * resistance/support: fits a regression line through the last several
+   * fractal pivot highs (resistance) / lows (support) instead of taking
+   * just the nearest one, then projects that line to `currentIdx` for a
+   * level that moves with the trend rather than sitting flat.
+   *
+   * Deliberately ADDITIVE, not a replacement for nearestLevels() — too
+   * much already depends on the flat level (breakout-proximity scoring,
+   * the modal's Key Levels display, both live on production) to swap the
+   * underlying computation under them. Returns null per side when there
+   * aren't enough pivots or the fit is too poor (r2 < minR2) to trust —
+   * callers should treat null as "fall back to the flat level", not
+   * render a bad line.
+   */
+  function regressionChannelLevels(candles, frac, currentIdx, { lookback = 100, minPivots = 3, maxPivots = 6, minR2 = 0.6 } = {}) {
+    const minIdx = Math.max(0, currentIdx - lookback);
+
+    function projected(indices, key) {
+      const recent = indices.filter(i => i >= minIdx && i <= currentIdx).slice(-maxPivots);
+      if (recent.length < minPivots) return null;
+      const points = recent.map(i => ({ x: i, y: candles[i][key] }));
+      const fit = linearRegression(points);
+      if (!fit || fit.r2 < minR2) return null;
+      return { value: fit.slope * currentIdx + fit.intercept, r2: fit.r2, slope: fit.slope, pivotCount: recent.length };
+    }
+
+    return {
+      resistance: projected(frac.up, 'h'),
+      support: projected(frac.down, 'l')
+    };
+  }
+
   return {
     medianPrice, sma, smma, shiftForward,
     heikinAshi, alligator, alligatorTouchState,
@@ -622,6 +689,7 @@ const Indicators = (() => {
     awesomeOscillator, acceleratorOscillator, wisemanSignals, mfi, mfiClassification,
     fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
+    linearRegression, regressionChannelLevels,
     breakoutProximityPct
   };
 })();

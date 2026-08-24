@@ -248,6 +248,11 @@
       watchlisted: state.watchlist.has(key),
       resistance: formatPrice(result.tfSnapshots[0].resistance),
       support: formatPrice(result.tfSnapshots[0].support),
+      // v2 sloped-channel levels — null unless the regression fit was
+      // good enough (r2 >= 0.6); modal shows them as a secondary line
+      // under the flat fractal-point level, never in place of it.
+      resistanceSloped: result.tfSnapshots[0].resistanceSloped,
+      supportSloped: result.tfSnapshots[0].supportSloped,
       ...result
     };
   }
