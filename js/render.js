@@ -36,11 +36,13 @@ const Render = (() => {
   };
   function tfChipHtml(chip) {
     const color = chip.trend === 'up' ? 'var(--green-text)' : chip.trend === 'down' ? 'var(--red-text)' : 'var(--text3)';
-    const pctText = chip.pct == null ? '--' : `${chip.pct > 0 ? '+' : ''}${chip.pct.toFixed(2)}%`;
+    const pctText = chip.pct == null ? '(--)' : `(${chip.pct > 0 ? '+' : ''}${chip.pct.toFixed(2)}%)`;
     return `<div class="tf-chip">
-      <span class="tf-chip-name">${esc(chip.label)}</span>
-      <span class="tf-chip-trend" style="color:${color}">${TF_TREND_ICONS[chip.trend]}</span>
-      <span class="tf-chip-pct" style="color:${color}">${pctText}</span>
+      <div class="tf-chip-top">
+        <span class="tf-chip-name">${esc(chip.label)}</span>
+        <span class="tf-chip-trend" style="color:${color}">${TF_TREND_ICONS[chip.trend]}</span>
+      </div>
+      <div class="tf-chip-pct" style="color:${color}">${pctText}</div>
     </div>`;
   }
   function tfChipRowHtml(tfChips) {
