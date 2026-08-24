@@ -210,15 +210,108 @@ const Render = (() => {
     container.innerHTML = coins.map((c, i) => cardHtml(c, i)).join('');
   }
 
-  function breakdownBlockHtml(label, colorVar, val, items, isPercent) {
-    const suffix = isPercent ? '%' : '';
+  function breakdownBlockHtml(label, colorVar, val, items) {
     const rows = items.map(([label, pts]) =>
-      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}${suffix}</span></div>`
+      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}</span></div>`
     ).join('');
     return `
     <div class="block">
       <div class="block-title-row"><span style="color:${colorVar}">${label}</span><span>${val}/100</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${val}%;background:${colorVar}"></div></div>
+      ${rows}
+    </div>`;
+  }
+
+  // Continuation-only breakdown (Audit F3 follow-up): each item is a 0-100
+  // sub-score now (see buildContinuation()'s own doc comment in scoring.js),
+  // so a raw "+NN%" reads slower than a tier icon at a glance. Bucketed at
+  // the same >=66/33-66/<33 cutoffs already used pre-redesign as breakout-
+  // proximity's own "worth mentioning" threshold, so the tiering isn't a
+  // new number pulled from nowhere. OI is shown as a 1-10 magnitude chip
+  // instead of an icon, per the owner's request — a check/cross doesn't
+  // suit "how much did open interest move," a number does. Items scoring
+  // 0 stay visible but dimmed, not hidden — hiding them was the original
+  // bug report: the visible list looked like it should sum to more than
+  // the header score.
+  function continuationTier(pct) {
+    if (pct >= 66) return { icon: '&#10003;', color: 'var(--green-text)', bg: 'var(--green)' };
+    if (pct >= 33) return { icon: '!', color: 'var(--gold-text)', bg: 'var(--gold)' };
+    return { icon: '&#10005;', color: 'var(--text3)', bg: 'var(--surf2)' };
+  }
+
+  // Plain-English explanation per signal, matched by a stable substring
+  // since labels carry dynamic content (weakening TFs, ADX value, OI %).
+  // Checked in order — first match wins — so more specific patterns are
+  // listed before their broader relatives (e.g. the two MACD-cross
+  // variants before the plain "MACD trend-following cross").
+  const CONTINUATION_EXPLANATIONS = [
+    [/alligator aligned|not aligned/i, 'How many of the three timeframes (1H/15M/5M) currently agree with the trade’s bias, and whether any are showing early weakness.'],
+    [/^AO /i, 'Awesome Oscillator momentum on 1H — confirms whether momentum is building in the trade’s direction.'],
+    [/last (up|down) fractal/i, 'Whether price is currently past the most recent confirmed swing point on 1H.'],
+    [/MFI Green/i, 'Money Flow Index volume+range read — green means healthy participation behind the move.'],
+    [/key level/i, 'How close price is to — or already past — the nearest fractal-based level on 15M, in ATR terms.'],
+    [/Perp OI/i, 'How much perpetual open interest moved in the last 15 minutes. A big swing means fresh capital is actively entering, not just existing positions drifting.'],
+    [/EMA 9\/21/i, 'Whether the 9 and 21 EMA on 1H are stacked in the trade’s direction — a basic trend filter.'],
+    [/MACD (bullish|bearish) cross on EMA21 pullback/i, 'A MACD cross on 15M that happened while price was pulled back near its 21 EMA — a timed entry, not just any cross.'],
+    [/BB squeeze breakout/i, 'Bollinger Band width expanding while price closes outside the band on 15M — a volatility breakout moment.'],
+    [/ADX trend strength/i, 'Average Directional Index on 15M — measures how strong the underlying trend is, regardless of direction.'],
+    [/Breakout retest held/i, 'Price on 1H sitting back near a level it already broke past, holding above/below it — a retest-and-hold pattern.'],
+    [/Squeeze momentum expansion/i, 'MACD histogram on 15M rising in the trade’s direction while volatility expands — oscillator-based momentum confirmation.'],
+    [/Ichimoku cloud/i, 'Whether price on 1H sits above or below the Ichimoku cloud — a broader trend-position filter.'],
+    [/Stochastic (bullish|bearish) entry/i, 'A Stochastic %K/%D cross on 15M coming out of oversold/overbought — a timing signal for entries.'],
+    [/MACD trend-following cross/i, 'A plain directional MACD cross on 1H, independent of price location — confirms momentum turned in the trade’s direction.'],
+    [/Pullback to EMA21/i, 'Price on 15M pulled back tightly to its 21 EMA with RSI in a healthy 40-60 range — not overextended, not reversing.']
+  ];
+  function continuationExplanation(label) {
+    const hit = CONTINUATION_EXPLANATIONS.find(([re]) => re.test(label));
+    return hit ? hit[1] : 'One of the signals feeding the Continuation score.';
+  }
+
+  // Splits a trailing "(...)" qualifier off a label so it can be colored
+  // by its own sentiment independent of the leading tier icon — e.g. a
+  // clean "3TF aligned" is still a green check, but the "(1H/15M
+  // weakening)" qualifier inside it is worth flagging amber on its own,
+  // not just folded into the same green as the rest of the line.
+  function splitLabelQualifier(label) {
+    const m = label.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    if (!m) return { main: label, qualifier: null, qualifierColor: null };
+    const [, main, qualifier] = m;
+    let qualifierColor = null;
+    if (/weakening/i.test(qualifier)) qualifierColor = 'var(--gold-text)';
+    else if (/clean/i.test(qualifier)) qualifierColor = 'var(--green-text)';
+    return { main, qualifier, qualifierColor };
+  }
+
+  function infoIconHtml(label) {
+    return `<span class="cont-info" title="${esc(continuationExplanation(label))}">i</span>`;
+  }
+
+  function continuationItemHtml([label, pct]) {
+    const isOi = label.startsWith('Perp OI');
+    const { main, qualifier, qualifierColor } = splitLabelQualifier(label);
+    const qualifierHtml = qualifier
+      ? ` <span style="color:${qualifierColor || 'var(--text3)'}">(${esc(qualifier)})</span>` : '';
+    const rowStyle = pct > 0 ? '' : ' style="opacity:0.5"';
+    if (isOi) {
+      const tier = continuationTier(pct);
+      const tenScale = Math.round(pct / 10);
+      return `<div class="breakdown-item"${rowStyle}>
+        <span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+        <span class="cont-chip" style="color:${tier.color};border-color:${tier.color}">${tenScale}/10</span>
+      </div>`;
+    }
+    const tier = continuationTier(pct);
+    return `<div class="breakdown-item"${rowStyle}>
+      <span><span class="cont-icon" style="color:${tier.color};background:${tier.bg}22">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+    </div>`;
+  }
+
+  function continuationBlockHtml(score, items) {
+    const rows = items.map(continuationItemHtml).join('');
+    return `
+    <div class="block">
+      <div class="block-title-row"><span style="color:var(--green)">Continuation</span><span>${score}/100</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${score}%;background:var(--green)"></div></div>
       ${rows}
     </div>`;
   }
@@ -308,7 +401,7 @@ const Render = (() => {
         <div class="block-title-row"><span>Direction</span><span style="color:${coin.direction >= 0 ? 'var(--green-text)' : 'var(--red-text)'}">${coin.direction > 0 ? '+' : ''}${coin.direction}</span></div>
         ${directionGaugeHtml(coin.direction)}
       </div>
-      ${breakdownBlockHtml('Continuation', 'var(--green)', coin.continuation.score, coin.continuation.items, true)}
+      ${continuationBlockHtml(coin.continuation.score, coin.continuation.items)}
       ${breakdownBlockHtml('Exhaustion', 'var(--gold)', coin.exhaustion.score, coin.exhaustion.items)}
       ${breakdownBlockHtml('Reversal', 'var(--text3)', coin.reversal.score, coin.reversal.items)}
       <div class="news-section-label" style="margin-top:2px;">Key levels</div>

@@ -625,8 +625,8 @@ test('buildContinuation: 15M far from any level scores neither breakout item', (
   const farResistance = cs[cs.length - 1].c + snap.atr * 10;
   const tfSnapshots = [snap, { ...snap, resistance: farResistance }, snap];
   const { items } = Scoring.buildContinuation(tfSnapshots, 1);
-  assert(!items.some(([label]) => label.includes('key level')),
-    `Expected no breakout-proximity item, got ${JSON.stringify(items)}`);
+  assert(!items.some(([label, pct]) => label.includes('key level') && pct > 0),
+    `Expected a zero-value (but still present, applicable) breakout-proximity item, got ${JSON.stringify(items)}`);
 });
 
 suite('J — OI 15m% scoring input');
@@ -655,8 +655,8 @@ test('buildContinuation: near-zero OI change scores essentially nothing', () => 
   const snap = Indicators.analyzeTimeframe(cs);
   const tfSnapshots = [snap, snap, snap];
   const { items } = Scoring.buildContinuation(tfSnapshots, 1, 0.05);
-  assert(!items.some(([label]) => label.includes('Perp OI')),
-    `Expected no OI item for a near-zero swing, got ${JSON.stringify(items)}`);
+  assert(!items.some(([label, pct]) => label.includes('Perp OI') && pct > 0),
+    `Expected a zero-value (but still present, applicable) OI item for a near-zero swing, got ${JSON.stringify(items)}`);
 });
 
 test('buildContinuation: null OI (spot market) scores nothing, no crash', () => {
@@ -838,7 +838,7 @@ test('Strategy 1: EMA stack + MACD-cross-on-pullback score; far-from-EMA21 does 
   const m15ok = baseSnap({ macdBullishCross: true, ema21: 100, close: 100.2, atr: 1 });
   assert(Scoring.buildContinuation([baseSnap({}), m15ok, null], 1).items.some(([l]) => l.includes('MACD bullish cross on EMA21 pullback')));
   const m15far = baseSnap({ macdBullishCross: true, ema21: 100, close: 110, atr: 1 });
-  assert(!Scoring.buildContinuation([baseSnap({}), m15far, null], 1).items.some(([l]) => l.includes('MACD bullish cross')));
+  assert(!Scoring.buildContinuation([baseSnap({}), m15far, null], 1).items.some(([l, p]) => l.includes('MACD bullish cross') && p > 0));
 });
 
 test('Strategy 2: expansion+breakout scores; ADX contributes its own standalone item (Audit F3); no breakout scores nothing', () => {
@@ -847,7 +847,7 @@ test('Strategy 2: expansion+breakout scores; ADX contributes its own standalone 
   assert(items.some(([l]) => l === '15M BB squeeze breakout'));
   assert(items.some(([l]) => l.startsWith('15M ADX trend strength')));
   const noBreak = baseSnap({ bbExpanding: true, bbUpper: 100, close: 99, adx: 30 });
-  assert(!Scoring.buildContinuation([baseSnap({}), noBreak, null], 1).items.some(([l]) => l.includes('BB squeeze breakout')));
+  assert(!Scoring.buildContinuation([baseSnap({}), noBreak, null], 1).items.some(([l, p]) => l.includes('BB squeeze breakout') && p > 0));
 });
 
 test('Strategy 3: near-retest scores Continuation + Reversal trap item when RSI>=70; far does not', () => {
@@ -855,14 +855,14 @@ test('Strategy 3: near-retest scores Continuation + Reversal trap item when RSI>
   assert(Scoring.buildContinuation([near, null, null], 1).items.some(([l]) => l === '1H Breakout retest held'));
   assert(Scoring.buildReversal([near, null, null], 1).items.some(([l]) => l === '1H Retest into overbought (trap risk)'));
   const far = baseSnap({ aboveUpFractal: true, lastUpFractal: 100, close: 110, atr: 1 });
-  assert(!Scoring.buildContinuation([far, null, null], 1).items.some(([l]) => l.includes('Breakout retest')));
+  assert(!Scoring.buildContinuation([far, null, null], 1).items.some(([l, p]) => l.includes('Breakout retest') && p > 0));
 });
 
 test('Strategy 4: expanding + bias-matching rising histogram scores; opposite-bias histogram does not', () => {
   const m15 = baseSnap({ bbExpanding: true, macdHistogram: 2, macdHistogramRising: true });
   assert(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Squeeze momentum expansion (MACD confirm)'));
   const opp = baseSnap({ bbExpanding: true, macdHistogram: -2, macdHistogramRising: true });
-  assert(!Scoring.buildContinuation([baseSnap({}), opp, null], 1).items.some(([l]) => l.includes('Squeeze momentum')));
+  assert(!Scoring.buildContinuation([baseSnap({}), opp, null], 1).items.some(([l, p]) => l.includes('Squeeze momentum') && p > 0));
 });
 
 test('Strategy 5: BB extreme + stochastic exhaustion cross both score independently; mid-band scores neither', () => {
@@ -912,9 +912,9 @@ test('Strategy 12: EMA match + tight pullback + healthy RSI scores; RSI extreme 
   const good = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 50 });
   assert(Scoring.buildContinuation([baseSnap({}), good, null], 1).items.some(([l]) => l === '15M Pullback to EMA21 (RSI healthy)'));
   const badRsi = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 75 });
-  assert(!Scoring.buildContinuation([baseSnap({}), badRsi, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+  assert(!Scoring.buildContinuation([baseSnap({}), badRsi, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
   const wideDist = baseSnap({ emaStackBullish: true, ema21: 100, close: 101, atr: 1, rsi: 50 });
-  assert(!Scoring.buildContinuation([baseSnap({}), wideDist, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+  assert(!Scoring.buildContinuation([baseSnap({}), wideDist, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
 });
 
 test('Strategy 13: liquidity sweep only warns against bias, never confirms it', () => {

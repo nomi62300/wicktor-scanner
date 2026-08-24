@@ -50,6 +50,35 @@ a no-op. Re-verified by re-running `js/auth.js` standalone under a
 `window` with no `supabase` global: `Auth` defines, no throw anywhere in
 the call chain.
 
+### Changed (Continuation breakdown — icon-based, at-a-glance display)
+Follow-up to the F3 percentage redesign, requested after reviewing it
+live: raw "+NN%" numbers on 12-16 line items read slower than a status
+icon. `js/render.js` now buckets each item at the same >=66/33-66/<33
+cutoffs that were already breakout-proximity's own "worth mentioning"
+threshold pre-redesign (so the tiering isn't an arbitrary new number):
+green check (confirming), amber `!` (partial), dim gray cross (not
+currently active). This bucketing needed no scoring.js changes — the
+tiered alligator-alignment percentages (100/80/65/50/30/0) already
+happened to land in the right bucket per tier without any special-casing.
+
+OI shows as a `X/10` chip instead of an icon (a check/cross doesn't suit
+"how much did open interest move," a magnitude does). A label's trailing
+`(...)` qualifier is now colored independently of the leading icon —
+"(weakening)" reads amber, "(clean)" reads green — so a green-check item
+can still visibly flag a weakening sub-state instead of burying it in
+the same color as everything else.
+
+Zero-value applicable items are now shown dimmed rather than omitted
+(`scoring.js`'s `add()` always pushes to `items`, not just when > 0) —
+fixes the exact transparency gap flagged when reviewing a real card:
+the visible items alone summed to a higher average than the header
+score, because 4 applicable-but-inactive signals were invisible. They're
+part of the mean either way; now they're part of what you can see too.
+
+Each item also gets a small hover-tooltip info icon (`title=` attribute,
+matching the convention already used for TF icons and tweet badges)
+explaining what that specific signal measures.
+
 ### Changed (Audit F3 — Continuation redesigned as a percentage mean)
 The old design summed ~17 fixed-point items (theoretical max ~218) and
 clipped at 65 — increasingly saturating for the best coins as Phase 5

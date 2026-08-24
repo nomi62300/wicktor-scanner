@@ -81,11 +81,15 @@ const Scoring = (() => {
     const applicable = [];
     const { count } = computeBias(tfSnapshots);
 
+    // Every applicable signal is pushed to items now (Audit F3 follow-up),
+    // zero-value ones included — render.js shows those dimmed rather than
+    // omitting them, so the visible breakdown actually accounts for the
+    // full mean instead of implying a higher score than what's shown.
     function add(label, pct, isApplicable) {
       if (!isApplicable) return;
       const clamped = Math.max(0, Math.min(100, Math.round(pct)));
       applicable.push(clamped);
-      if (clamped > 0) items.push([label, clamped]);
+      items.push([label, clamped]);
     }
 
     // 5-tier confidence grades HOW CLEAN each aligned TF is (no recent

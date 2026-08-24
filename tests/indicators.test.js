@@ -575,7 +575,7 @@ test('Strategy 1: 15M MACD bullish cross on EMA21 pullback scores', () => {
 test('Strategy 1: MACD cross far from EMA21 (no pullback) does not score', () => {
   const m15 = baseSnap({ macdBullishCross: true, ema21: 100, close: 110, atr: 1 });
   const { items } = Scoring.buildContinuation([baseSnap({}), m15, null], 1);
-  assert.ok(!items.some(([l]) => l.includes('MACD bullish cross')));
+  assert.ok(!items.some(([l, p]) => l.includes('MACD bullish cross') && p > 0));
 });
 
 test('Strategy 2 (Volatility Breakout): expansion + close above upper band scores; ADX contributes its own standalone item (Audit F3)', () => {
@@ -588,7 +588,7 @@ test('Strategy 2 (Volatility Breakout): expansion + close above upper band score
 test('Strategy 2: expansion without breaking the band does not score', () => {
   const m15 = baseSnap({ bbExpanding: true, bbUpper: 100, close: 99, adx: 30 });
   const { items } = Scoring.buildContinuation([baseSnap({}), m15, null], 1);
-  assert.ok(!items.some(([l]) => l.includes('BB squeeze breakout')));
+  assert.ok(!items.some(([l, p]) => l.includes('BB squeeze breakout') && p > 0));
 });
 
 test('Strategy 3 (Breakout Retest): above fractal AND within 0.5x ATR of it scores', () => {
@@ -600,7 +600,7 @@ test('Strategy 3 (Breakout Retest): above fractal AND within 0.5x ATR of it scor
 test('Strategy 3: above fractal but far from it (not a retest) does not score', () => {
   const primary = baseSnap({ aboveUpFractal: true, lastUpFractal: 100, close: 110, atr: 1 });
   const { items } = Scoring.buildContinuation([primary, null, null], 1);
-  assert.ok(!items.some(([l]) => l.includes('Breakout retest')));
+  assert.ok(!items.some(([l, p]) => l.includes('Breakout retest') && p > 0));
 });
 
 test('Strategy 3 trap-avoidance: retest held + RSI>=70 scores a Reversal item', () => {
@@ -618,7 +618,7 @@ test('Strategy 4 (Squeeze Momentum): expanding + histogram matches bias + rising
 test('Strategy 4: histogram opposite bias does not score', () => {
   const m15 = baseSnap({ bbExpanding: true, macdHistogram: -2, macdHistogramRising: true });
   const { items } = Scoring.buildContinuation([baseSnap({}), m15, null], 1);
-  assert.ok(!items.some(([l]) => l.includes('Squeeze momentum')));
+  assert.ok(!items.some(([l, p]) => l.includes('Squeeze momentum') && p > 0));
 });
 
 test('Strategy 5 (Mean Reversion): price at BB extreme + stochastic exhaustion cross both score independently', () => {
@@ -644,7 +644,7 @@ test('Strategy 6 (Momentum Swing): above-cloud + stoch bullish entry both score;
   const m15 = baseSnap({ stochBullishCrossFromOversold: true });
   assert.ok(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Stochastic bullish entry (oversold cross)'));
   const below = baseSnap({ ichimokuAboveCloud: false, ichimokuBelowCloud: true });
-  assert.ok(!Scoring.buildContinuation([below, null, null], 1).items.some(([l]) => l.includes('Ichimoku')));
+  assert.ok(!Scoring.buildContinuation([below, null, null], 1).items.some(([l, p]) => l.includes('Ichimoku') && p > 0));
 });
 
 test('Strategy 7 (Trend Following): plain MACD cross matching bias scores; EMA stack is NOT re-scored as a second line', () => {
@@ -694,12 +694,12 @@ test('Strategy 12 (Pullback Retracements): EMA match + tight pullback + healthy 
 
 test('Strategy 12: RSI outside 40-60 (not a healthy pullback) does not score', () => {
   const m15 = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 75 });
-  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
 });
 
 test('Strategy 12: pullback distance beyond 0.3x ATR does not score', () => {
   const m15 = baseSnap({ emaStackBullish: true, ema21: 100, close: 101, atr: 1, rsi: 50 });
-  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
 });
 
 test('Strategy 13 (Liquidity Sweep): bearish rejection warns against a bullish bias', () => {
