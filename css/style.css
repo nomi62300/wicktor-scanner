@@ -210,6 +210,14 @@ input:focus-visible {
   justify-content: center;
   color: var(--text3);
   flex-shrink: 0;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.avatar-btn:hover { border-color: var(--border-strong); }
+.avatar-btn.logged-in {
+  color: var(--gold-text);
+  border-color: var(--gold);
 }
 
 /* ---- Top strip ---- */

@@ -10,11 +10,66 @@ Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 Phase 8, outcome-logging, OI 15m%, the extended 7-TF panel, the
 CoinPaprika fallback tier, sloped regression-channel levels, all of
 Phase 5 Stages 0-4 (strategy-enrichment indicator math through
-advanced-tier scoring — the full 12-strategy batch), and a Flows 1Y
-column added in follow-up sessions with the owner present. Deliberately
-left unmerged on a branch pending review, per standing branch discipline
+advanced-tier scoring — the full 12-strategy batch), Phase 3 (real
+Supabase Auth + account-scoped watchlist), and a Flows 1Y column added
+in follow-up sessions with the owner present. Deliberately left
+unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
+
+### Added (Phase 3 — real Supabase Auth + account-scoped Watchlist)
+Scope explicitly excludes tiering (Phase 4) per the owner's call — no
+`tier` column, no gating logic, nothing tiering-shaped. This phase is
+Auth + Watchlist only.
+
+- **Real email/password accounts**, additive alongside the existing
+  `ACCESS_CODE_HASH` gate (coexist, confirmed with the owner — not a
+  replacement). Email confirmation disabled on signup, matching the
+  reason password was chosen over magic link in the first place (no
+  dependency on Supabase's default email deliverability). New
+  `supabase/config.toml` `[auth]`/`[auth.email]` sections, pushed via
+  `supabase config push` — confirmed live the previous
+  `enable_confirmations` default was actually `true`, which would have
+  silently reintroduced the exact email-dependency risk being avoided.
+- New `js/auth.js`: Supabase JS client (via CDN, no build step) +
+  session management + `watchlist.{list,add,remove}`. New Account panel
+  (topbar avatar button, previously decorative/unwired) reusing the
+  existing settings-panel visual pattern — sign in / create account /
+  sign out.
+- New `watchlist` table + RLS policies
+  (`supabase/migrations/*_watchlist.sql`), first real database schema
+  for this project (Supabase was previously proxy-only). **Found and
+  fixed a real bug during live verification**: RLS policies alone don't
+  grant access — creating a table via raw SQL (not the Studio table
+  editor) leaves `authenticated`/`anon` with zero base SQL-level GRANTs,
+  so the first live star-toggle attempt failed with "permission denied
+  for table watchlist" (Postgres 42501) despite correct RLS policies.
+  Fixed with a second migration adding the missing `GRANT`s.
+- New Watchlist tab (6th nav tab): account-scoped, price + 24h% per
+  starred symbol (Bybit tickers, same pattern as the rest of the app).
+  No sparkline in this pass — scoped down deliberately rather than
+  half-built, needs per-symbol historical candles this tab doesn't
+  otherwise fetch.
+- Existing star-toggle now dual-writes to Supabase when logged in
+  (Watchlist tab's data source), while continuing to work exactly as
+  before via localStorage when logged out — owner's explicit call,
+  with an explicitly flagged future intent to eventually require login
+  for starring (not done now, not scope creep if asked for later).
+  Clean-slate migration, also owner-confirmed: no import path from the
+  pre-existing localStorage watchlist into the new account-scoped table.
+- **Security-sensitive — cross-account RLS isolation verified live, not
+  skipped**: created two real test accounts. A completely unfiltered
+  `select *` on the watchlist table (no `.eq('user_id', ...)` at all)
+  while authenticated as account 2 returned zero rows despite account
+  1's real starred coin existing in the same table — proof RLS is
+  enforced at the database level, not just by client-side query
+  filtering. Both test accounts and their test rows deleted after
+  verification via the Admin API.
+- No new tests added (this phase is UI/infrastructure, not
+  scoring/indicator logic) — verified entirely through live signup,
+  sign-in, sign-out, star-sync, and the cross-account RLS check above.
+  All 103 existing tests still pass, confirming no regression to
+  anything scoring-related.
 
 ### Added (Phase 8 — News tab, roadmap complete)
 - New "News" tab: a plain dense list of the existing Snitch feed

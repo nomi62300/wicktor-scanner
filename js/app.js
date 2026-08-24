@@ -111,15 +111,31 @@
     navFlows: document.getElementById('nav-flows'),
     navHeatmap: document.getElementById('nav-heatmap'),
     navNews: document.getElementById('nav-news'),
+    navWatchlist: document.getElementById('nav-watchlist'),
     viewScanner: document.getElementById('view-scanner'),
     viewDashboard: document.getElementById('view-dashboard'),
     viewFlows: document.getElementById('view-flows'),
     viewHeatmap: document.getElementById('view-heatmap'),
     viewNews: document.getElementById('view-news'),
+    viewWatchlist: document.getElementById('view-watchlist'),
     dashboardGrid: document.getElementById('dashboard-grid'),
     flowsGrid: document.getElementById('flows-grid'),
     heatmapGridContainer: document.getElementById('heatmap-grid-container'),
     newsFeedContainer: document.getElementById('news-feed-container'),
+    watchlistContainer: document.getElementById('watchlist-container'),
+    accountBtn: document.getElementById('account-btn'),
+    accountBackdrop: document.getElementById('account-backdrop'),
+    accountPanel: document.getElementById('account-panel'),
+    accountClose: document.getElementById('account-close'),
+    accountSignedOut: document.getElementById('account-signed-out'),
+    accountSignedIn: document.getElementById('account-signed-in'),
+    accountEmail: document.getElementById('account-email'),
+    accountPassword: document.getElementById('account-password'),
+    accountError: document.getElementById('account-error'),
+    accountSigninBtn: document.getElementById('account-signin-btn'),
+    accountSignupBtn: document.getElementById('account-signup-btn'),
+    accountSignoutBtn: document.getElementById('account-signout-btn'),
+    accountEmailDisplay: document.getElementById('account-email-display'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -659,6 +675,7 @@
     const coin = state.renderedCoins[idx];
     if (!coin) return;
     const key = `${coin.rawSymbol}:${coin.market}`;
+    const nowStarred = !state.watchlist.has(key);
     if (state.watchlist.has(key)) state.watchlist.delete(key);
     else state.watchlist.add(key);
     // coin.watchlisted is baked in once per scan (computeCoin) and this
@@ -669,6 +686,19 @@
     coin.watchlisted = state.watchlist.has(key);
     saveJson(STORAGE_KEYS.watchlist, [...state.watchlist]);
     renderAll();
+
+    // Logged-in users additionally sync to the account-scoped Supabase
+    // watchlist (the Watchlist tab's data source) — localStorage stays
+    // the source of truth for the star's own visual state either way,
+    // per the owner's explicit "keep it local for now" call. Fire-and-
+    // forget: a sync failure shouldn't block the star from working.
+    const user = Auth.getUser();
+    if (user) {
+      const action = nowStarred
+        ? Auth.watchlist.add(coin.rawSymbol, coin.market)
+        : Auth.watchlist.remove(coin.rawSymbol, coin.market);
+      action.catch(e => console.warn('[App] watchlist sync failed', e));
+    }
   }
 
   function openTradingView(idx) {
@@ -768,6 +798,45 @@
     runScan();
   }
 
+  // ------------------------------------------------------------- Account
+  function openAccountPanel() {
+    el.accountError.textContent = '';
+    el.accountBackdrop.classList.add('open');
+    el.accountPanel.classList.add('open');
+  }
+  function closeAccountPanel() {
+    el.accountBackdrop.classList.remove('open');
+    el.accountPanel.classList.remove('open');
+  }
+
+  async function submitAccountForm(mode) {
+    const email = el.accountEmail.value.trim();
+    const password = el.accountPassword.value;
+    el.accountError.textContent = '';
+    if (!email || !password) {
+      el.accountError.textContent = 'Enter both email and password.';
+      return;
+    }
+    try {
+      if (mode === 'signUp') await Auth.signUp(email, password);
+      else await Auth.signIn(email, password);
+      el.accountPassword.value = '';
+      closeAccountPanel();
+    } catch (e) {
+      el.accountError.textContent = e.message || 'Something went wrong.';
+    }
+  }
+
+  // Reflects the current auth state into the account panel + the topbar
+  // avatar button. Called once at startup and on every Auth.onChange fire
+  // (sign-in/sign-up/sign-out all route through the same listener).
+  function renderAccountState(user) {
+    el.accountSignedOut.hidden = !!user;
+    el.accountSignedIn.hidden = !user;
+    el.accountBtn.classList.toggle('logged-in', !!user);
+    if (user) el.accountEmailDisplay.textContent = user.email;
+  }
+
   // ------------------------------------------------------------ Scheduling
   function scheduleRefresh() {
     if (state.refreshTimer) clearInterval(state.refreshTimer);
@@ -814,6 +883,16 @@
     el.navFlows.addEventListener('click', () => switchTab('flows'));
     el.navHeatmap.addEventListener('click', () => switchTab('heatmap'));
     el.navNews.addEventListener('click', () => switchTab('news'));
+    el.navWatchlist.addEventListener('click', () => switchTab('watchlist'));
+    el.accountBtn.addEventListener('click', openAccountPanel);
+    el.accountClose.addEventListener('click', closeAccountPanel);
+    el.accountBackdrop.addEventListener('click', closeAccountPanel);
+    el.accountSigninBtn.addEventListener('click', () => submitAccountForm('signIn'));
+    el.accountSignupBtn.addEventListener('click', () => submitAccountForm('signUp'));
+    el.accountSignoutBtn.addEventListener('click', async () => {
+      await Auth.signOut();
+      closeAccountPanel();
+    });
     el.flowsGrid.addEventListener('click', (e) => {
       const row = e.target.closest('.flows-row');
       if (row) toggleFlowsRow(row.dataset.categoryId);
@@ -830,7 +909,7 @@
   // scan — it's supporting market context, not part of the scan cycle.
   // Cached at the Api layer so revisiting a tab within the cache window
   // doesn't refetch.
-  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap', 'news'];
+  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap', 'news', 'watchlist'];
   let dashboardLoaded = false;
   let flowsLoaded = false;
   let newsLoaded = false;
@@ -864,6 +943,9 @@
     if (tab === 'news' && !newsLoaded) {
       newsLoaded = true;
       refreshNews();
+    }
+    if (tab === 'watchlist') {
+      refreshWatchlistTab();
     }
   }
 
@@ -911,6 +993,40 @@
     });
     const articles = data ? Api.allNews(data.articles) : [];
     el.newsFeedContainer.innerHTML = Render.newsFeedHtml(articles);
+  }
+
+  // Account-scoped Watchlist tab (Phase 3). v1 scope: price + 24h% only,
+  // no sparkline yet — kept out for now rather than half-built, same as
+  // other "not urgent" scope calls this session; a real sparkline needs
+  // per-symbol historical candles this tab doesn't otherwise fetch.
+  async function refreshWatchlistTab() {
+    const user = Auth.getUser();
+    if (!user) {
+      el.watchlistContainer.innerHTML = Render.watchlistHtml(null, []);
+      return;
+    }
+    const entries = await Auth.watchlist.list();
+    if (!entries.length) {
+      el.watchlistContainer.innerHTML = Render.watchlistHtml(user, []);
+      return;
+    }
+    const [spotTickers, linearTickers] = await Promise.all([
+      Api.bybitTickers('spot').catch(() => []),
+      Api.bybitTickers('linear').catch(() => [])
+    ]);
+    const bySymbol = new Map();
+    spotTickers.forEach(t => bySymbol.set(`${t.symbol}:SPOT`, t));
+    linearTickers.forEach(t => bySymbol.set(`${t.symbol}:PERP`, t));
+    const rows = entries.map(e => {
+      const t = bySymbol.get(`${e.symbol}:${e.market}`);
+      return {
+        symbol: e.symbol,
+        market: e.market,
+        price: t ? parseFloat(t.lastPrice) : null,
+        change24h: t ? parseFloat(t.price24hPcnt) * 100 : null
+      };
+    });
+    el.watchlistContainer.innerHTML = Render.watchlistHtml(user, rows);
   }
 
   function toggleFlowsRow(categoryId) {
@@ -1032,6 +1148,11 @@
       bindStaticEvents();
       scheduleRefresh();
       runScan();
+      // Additive to the access gate above, not gated behind it in either
+      // direction — Auth has its own independent session, unrelated to
+      // the beta access-code check.
+      Auth.onChange(renderAccountState);
+      Auth.init().then(renderAccountState);
     });
   }
 

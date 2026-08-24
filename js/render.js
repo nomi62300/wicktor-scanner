@@ -622,5 +622,28 @@ const Render = (() => {
     return `<div class="news-feed-list">${rows}</div>`;
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsFeedHtml, newsSectionHtml, esc };
+  // Phase 3: account-scoped Watchlist tab. `user` is a Supabase user
+  // object or null (not signed in) — `rows` is [] either way a signed-in
+  // user just hasn't starred anything yet, or price lookups failed.
+  function watchlistHtml(user, rows) {
+    if (!user) {
+      return `<div class="loading-state">Sign in (account icon, top right) to build a watchlist that syncs across devices.</div>`;
+    }
+    if (!rows.length) {
+      return `<div class="loading-state">No coins starred yet. Star a coin from the Scanner to add it here.</div>`;
+    }
+    const body = rows.map(r => `
+      <tr>
+        <td>${esc(r.symbol)} <span style="color:var(--text3);font-size:11px;">${esc(r.market)}</span></td>
+        <td class="mono">${r.price != null ? '$' + esc(String(r.price)) : '--'}</td>
+        <td>${pctCellHtml(r.change24h)}</td>
+      </tr>`).join('');
+    return `
+      <table class="flows-table">
+        <thead><tr><th>Coin</th><th>Price</th><th>24h</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>`;
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, extendedTfPanelHtml, newsFeedHtml, newsSectionHtml, watchlistHtml, esc };
 })();

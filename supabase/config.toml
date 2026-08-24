@@ -5,3 +5,18 @@
 # real deployed origins.
 [functions.cmc-proxy]
 verify_jwt = false
+
+# Phase 3: real Supabase Auth (email/password), additive alongside the
+# existing access-code gate in js/app.js — see project memory for why
+# (owner's explicit call: coexist, don't replace). Password chosen over
+# magic link specifically to avoid depending on Supabase's default email
+# deliverability for login to work — email confirmation disabled here for
+# the same reason, so signup doesn't reintroduce that same dependency.
+[auth]
+enabled = true
+site_url = "https://beta.wicktor.top"
+additional_redirect_urls = ["https://nomi62300.github.io", "http://localhost:8000"]
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
