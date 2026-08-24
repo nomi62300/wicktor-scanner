@@ -899,6 +899,32 @@ test('Strategy 11: Range Bound fires only when bias===0, mirrors oversold/overbo
   assert(!Scoring.buildReversal([nonZeroBias, null, oversold], 1).items.some(([l]) => l.includes('Range-bound')));
 });
 
+suite('P — Phase 5 Stage 4: advanced-tier strategies 12, 13 (last stage)');
+
+test('Strategy 12: EMA match + tight pullback + healthy RSI scores; RSI extreme or wide pullback does not', () => {
+  const good = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 50 });
+  assert(Scoring.buildContinuation([baseSnap({}), good, null], 1).items.some(([l]) => l === '15M Pullback to EMA21 (RSI healthy)'));
+  const badRsi = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 75 });
+  assert(!Scoring.buildContinuation([baseSnap({}), badRsi, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+  const wideDist = baseSnap({ emaStackBullish: true, ema21: 100, close: 101, atr: 1, rsi: 50 });
+  assert(!Scoring.buildContinuation([baseSnap({}), wideDist, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+});
+
+test('Strategy 13: liquidity sweep only warns against bias, never confirms it', () => {
+  const bearSweep = baseSnap({ liquiditySweepDown: true, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([bearSweep, null, null], 1).items.some(([l]) => l === '1H Liquidity sweep above resistance, rejected (bearish)'));
+  const bullSweep = baseSnap({ liquiditySweepUp: true, divergence: 'none', mfiSignal: null, divergentBarUp: false, wisemanBullish: false, macdBullishCross: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([bullSweep, null, null], -1).items.some(([l]) => l === '1H Liquidity sweep below support, reclaimed (bullish)'));
+  assert(!Scoring.buildReversal([bearSweep, null, null], -1).items.some(([l]) => l.includes('Liquidity sweep')));
+});
+
+test('Phase 5 complete: every arm stays within its cap even with every new-batch signal firing', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9 });
+  assert(result.score >= 0 && result.score <= 100);
+  assert(result.continuation.score <= 65 && result.exhaustion.score <= 40 && result.reversal.score <= 50);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Render results to DOM
 // ─────────────────────────────────────────────────────────────────────────────

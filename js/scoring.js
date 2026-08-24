@@ -251,6 +251,21 @@ const Scoring = (() => {
       }
     }
 
+    // Strategy 12 (Pullback Retracements), 15M. Tighter pullback
+    // tolerance (0.3x ATR) than Strategy 1's 0.5x — this is a precision
+    // entry-timing strategy, not just "was there a MACD cross nearby."
+    // RSI 40-60 = healthy pullback, not already reversal-territory.
+    if (m15) {
+      const emaTrendMatch = (bias === 1 && m15.emaStackBullish) ||
+        (bias === -1 && m15.ema9 != null && m15.ema21 != null && m15.ema9 < m15.ema21);
+      const pulledBackTight = m15.ema21 != null && m15.close != null && m15.atr != null &&
+        Math.abs(m15.close - m15.ema21) <= 0.3 * m15.atr;
+      const rsiHealthy = m15.rsi != null && m15.rsi >= 40 && m15.rsi <= 60;
+      if (emaTrendMatch && pulledBackTight && rsiHealthy) {
+        items.push(['15M Pullback to EMA21 (RSI healthy)', 12]); score += 12;
+      }
+    }
+
     return { score: Math.min(65, score), items };
   }
 
@@ -372,6 +387,17 @@ const Scoring = (() => {
         items.push(['1H Bearish MACD divergence', 15]); score += 15;
       } else if (bias === -1 && primary.macdDivergence === 'bull') {
         items.push(['1H Bullish MACD divergence', 15]); score += 15;
+      }
+
+      // Strategy 13 (Liquidity Sweep): same "warns against current bias"
+      // shape as Divergent Bar/Wiseman above, same 15-pt tier as
+      // Divergent Bar (same wick-rejection family). A rejection above
+      // resistance warns against an active uptrend; a reclaim below
+      // support warns against an active downtrend.
+      if (bias === 1 && primary.liquiditySweepDown) {
+        items.push(['1H Liquidity sweep above resistance, rejected (bearish)', 15]); score += 15;
+      } else if (bias === -1 && primary.liquiditySweepUp) {
+        items.push(['1H Liquidity sweep below support, reclaimed (bullish)', 15]); score += 15;
       }
     }
     const m15 = tfSnapshots[1];

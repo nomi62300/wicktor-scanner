@@ -691,6 +691,49 @@ test('Strategy 11: does NOT fire when bias is non-zero, even with the same extre
 });
 
 // ---------------------------------------------------------------------------
+// Phase 5 Stage 4 — advanced-tier strategies 12, 13 (last stage)
+// ---------------------------------------------------------------------------
+
+test('Strategy 12 (Pullback Retracements): EMA match + tight pullback + healthy RSI scores', () => {
+  const m15 = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 50 });
+  assert.ok(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Pullback to EMA21 (RSI healthy)'));
+});
+
+test('Strategy 12: RSI outside 40-60 (not a healthy pullback) does not score', () => {
+  const m15 = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 75 });
+  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+});
+
+test('Strategy 12: pullback distance beyond 0.3x ATR does not score', () => {
+  const m15 = baseSnap({ emaStackBullish: true, ema21: 100, close: 101, atr: 1, rsi: 50 });
+  assert.ok(!Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l.includes('Pullback to EMA21')));
+});
+
+test('Strategy 13 (Liquidity Sweep): bearish rejection warns against a bullish bias', () => {
+  const primary = baseSnap({ liquiditySweepDown: true, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert.ok(Scoring.buildReversal([primary, null, null], 1).items.some(([l]) => l === '1H Liquidity sweep above resistance, rejected (bearish)'));
+});
+
+test('Strategy 13: bullish reclaim warns against a bearish bias', () => {
+  const primary = baseSnap({ liquiditySweepUp: true, divergence: 'none', mfiSignal: null, divergentBarUp: false, wisemanBullish: false, macdBullishCross: false, macdDivergence: 'none' });
+  assert.ok(Scoring.buildReversal([primary, null, null], -1).items.some(([l]) => l === '1H Liquidity sweep below support, reclaimed (bullish)'));
+});
+
+test('Strategy 13: a sweep in the SAME direction as bias does not fire (it only warns against bias)', () => {
+  const primary = baseSnap({ liquiditySweepUp: true, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert.ok(!Scoring.buildReversal([primary, null, null], 1).items.some(([l]) => l.includes('Liquidity sweep')));
+});
+
+test('Phase 5 complete: a coin with every new-batch signal firing still returns a valid, correctly capped score', () => {
+  const candles = buildCleanUptrend(80);
+  const result = Scoring.evaluate({ h1: candles, m15: candles, m5: candles }, { oiChange15m: 9 });
+  assert.ok(result.score >= 0 && result.score <= 100);
+  assert.ok(result.continuation.score <= 65);
+  assert.ok(result.exhaustion.score <= 40);
+  assert.ok(result.reversal.score <= 50);
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`);

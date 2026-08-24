@@ -8,12 +8,47 @@ project uses [Semantic Versioning](https://semver.org/).
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
 outcome-logging, OI 15m%, the extended 7-TF panel, the CoinPaprika
-fallback tier, sloped regression-channel levels, Phase 5 Stages 0-3
-(strategy-enrichment indicator math + snapshot wiring + scalping-tier +
-swing-tier scoring), and a Flows 1Y column added in follow-up sessions
-with the owner present. Deliberately left unmerged on a branch pending
-review, per standing branch discipline (`main` auto-deploys live). Not
-version-bumped or tagged; that happens at merge time.
+fallback tier, sloped regression-channel levels, all of Phase 5 Stages
+0-4 (strategy-enrichment indicator math through advanced-tier scoring —
+the full 12-strategy batch), and a Flows 1Y column added in follow-up
+sessions with the owner present. Deliberately left unmerged on a branch
+pending review, per standing branch discipline (`main` auto-deploys
+live). Not version-bumped or tagged; that happens at merge time.
+
+### Added (Phase 5 Stage 4 — advanced-tier scoring, strategies 12/13 — batch complete)
+- **Strategy 12 (Pullback Retracements)**: 15M EMA trend match + a
+  tight pullback to EMA21 (within 0.3x ATR — tighter than Strategy 1's
+  0.5x, since this is a precision entry-timing strategy) + RSI 40-60
+  (healthy, not already reversal-territory) (+12).
+- **Strategy 13 (Liquidity Sweep)**: reuses `liquiditySweepUp`/
+  `liquiditySweepDown` from Stage 1. Same "warns against current bias"
+  shape as the existing Divergent Bar/Wiseman items, same 15-pt tier as
+  Divergent Bar (same wick-rejection family) — a rejection above
+  resistance warns against an active uptrend, a reclaim below support
+  warns against an active downtrend.
+- 7 new targeted tests. Live smoke-tested against real Bybit data, no
+  console errors, existing behavior unaffected. All 103 tests pass.
+
+**Phase 5 (strategy-enrichment) is now complete — all 5 stages, all 12
+of the owner's original strategies, shipped.** `computeBias()`/
+`alignmentCeiling()` were never touched at any stage; every change is
+additional Continuation/Exhaustion/Reversal point items, exactly as
+scoped.
+
+### Stage 5 review pass (required by the plan, not skipped)
+With this many items now able to fire on the same coin, the existing
+65/40/50 caps are being hit regularly, not just in edge cases — observed
+live tonight (e.g. one real coin's Continuation total reached 85 points
+across 5 simultaneously-firing items before the 65 cap trimmed it).
+This means some lower-priority signals are effectively getting silently
+truncated on strongly-confirming coins. **Flagged for the owner's
+review, not rebalanced unilaterally** — deciding which items should
+"make room" for others on a maxed-out coin is a product judgment call,
+not something to guess at. The caps themselves (`Math.min(65/40/50,
+score)`) were already confirmed as intentional hard backstops, not
+budgets, per the original plan — this finding is about whether the
+*point values* underneath them need rebalancing now that so many items
+compete for the same capped total, not about the cap mechanism itself.
 
 ### Added (Phase 5 Stage 3 — swing-tier scoring, strategies 6/7/8/9/11)
 - **Strategy 6 (Momentum Swing)**: 1H price above/below the Ichimoku
