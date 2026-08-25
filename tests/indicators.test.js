@@ -635,6 +635,127 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase C4 — the setup scoring model
+// ---------------------------------------------------------------------------
+
+function c4Snap(over) {
+  return Object.assign(neutralSnap({}), {
+    regime: 'trending', lineOrder: 1, triggers: [],
+    levelsAbove: [102, 106], levelsBelow: [98, 94], close: 100, atr: 1
+  }, over);
+}
+const TRIG = (name, direction, barsAgo = 0) => ({ name, direction, barsAgo });
+const emptyArm = { score: 0, items: [] };
+
+test('C4: no entry trigger means no trade, however good the backdrop', () => {
+  const tf = [c4Snap({}), c4Snap({}), c4Snap({ triggers: [] })];
+  const r = Scoring.scoreSetup(tf, { score: 90, items: [] }, emptyArm, emptyArm);
+  assert.strictEqual(r.score, 0);
+  assert.strictEqual(r.direction, 0);
+  assert.strictEqual(r.reason, 'no entry trigger');
+});
+
+test('C4: direction comes from the trigger, NOT from 1H alignment', () => {
+  // 1H mouth is bearish, but the entry timeframe fires a bullish trigger.
+  // The old model would have refused this outright.
+  const tf = [
+    c4Snap({ lineOrder: -1 }),
+    c4Snap({ lineOrder: -1 }),
+    c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)] })
+  ];
+  const r = Scoring.scoreSetup(tf, { score: 50, items: [] }, emptyArm, emptyArm);
+  assert.strictEqual(r.direction, 1, 'trigger direction wins');
+  assert.ok(r.score > 0, 'and the setup is scoreable rather than vetoed');
+});
+
+test('C4: bias===0 is scoreable — the 38%-blind case', () => {
+  // No line order anywhere: the old model returned a hardcoded 15 and AVOID.
+  const tf = [
+    c4Snap({ lineOrder: 0, regime: 'ranging' }),
+    c4Snap({ lineOrder: 0, regime: 'ranging' }),
+    c4Snap({ lineOrder: 0, triggers: [TRIG('stochCrossFromExtreme', 1)] })
+  ];
+  const r = Scoring.scoreSetup(tf, { score: 55, items: [] }, emptyArm, emptyArm);
+  assert.ok(r.score > 15, `a ranging market with a clean entry must beat the old floor, got ${r.score}`);
+});
+
+test('C4: breakout triggers are not rewarded like mean-reversion ones', () => {
+  const mk = name => Scoring.scoreSetup(
+    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG(name, 1)] })],
+    { score: 50, items: [] }, emptyArm, emptyArm).score;
+  // levelBreak measured negative in every regime tested; stoch-from-extreme
+  // was the strongest cell found.
+  assert.ok(mk('stochCrossFromExtreme') > mk('levelBreak'));
+  assert.ok(mk('stochCrossFromExtreme') > mk('bandBreakout'));
+});
+
+test('C4: a squeeze does not promote its own breakout', () => {
+  const inRegime = regime => Scoring.scoreSetup(
+    [c4Snap({ regime }), c4Snap({ regime }), c4Snap({ triggers: [TRIG('levelBreak', 1)] })],
+    { score: 50, items: [] }, emptyArm, emptyArm).score;
+  assert.ok(inRegime('squeeze') <= inRegime('trending'),
+    'squeeze+breakout was the worst-measured cell; it must not score above a trending one');
+});
+
+test('C4: higher-timeframe disagreement costs points but does not veto', () => {
+  const withCtx = order => Scoring.scoreSetup(
+    [c4Snap({ lineOrder: order }), c4Snap({ lineOrder: order }),
+     c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)] })],
+    { score: 50, items: [] }, emptyArm, emptyArm);
+  const agree = withCtx(1), oppose = withCtx(-1);
+  assert.ok(agree.score > oppose.score, 'agreement should be worth more');
+  assert.ok(oppose.score > 0, 'but disagreement must remain tradeable, not vetoed');
+});
+
+test('C4: risk:reward gates rather than grades', () => {
+  // Target far, stop near -> viable. Target near, stop far -> not viable.
+  const viable = Scoring.scoreSetup(
+    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)],
+      levelsAbove: [101, 120], levelsBelow: [99, 98] })],
+    { score: 60, items: [] }, emptyArm, emptyArm);
+  const poor = Scoring.scoreSetup(
+    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)],
+      levelsAbove: [101, 101.2], levelsBelow: [90, 80] })],
+    { score: 60, items: [] }, emptyArm, emptyArm);
+  assert.strictEqual(poor.gated, true);
+  assert.ok(poor.score <= 45, 'a non-viable ratio caps the score');
+  assert.ok(viable.score > poor.score);
+});
+
+test('C4: scalp mode does not decay trigger age, swing mode does', () => {
+  // Each mode reads its entry from a different index (scalp 5M, swing 15M),
+  // so the trigger has to be placed on the timeframe that mode actually uses.
+  const at = (barsAgo, mode) => {
+    const entryIdx = Scoring.MODES[mode].entry;
+    const tf = [c4Snap({}), c4Snap({}), c4Snap({})];
+    tf[entryIdx] = c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1, barsAgo)] });
+    return Scoring.scoreSetup(tf, { score: 50, items: [] }, emptyArm, emptyArm, mode).score;
+  };
+  // Measured: 5M trigger outcome is flat from 0 to 7 bars, so a uniform
+  // freshness decay would be wrong on the primary scalping timeframe.
+  assert.strictEqual(at(0, 'scalp'), at(4, 'scalp'));
+  // 1H decays (+0.519 at <=0 vs +0.245 at <=7), so swing mode does.
+  assert.ok(at(0, 'swing') > at(4, 'swing'));
+});
+
+test('C4: score stays inside 0-100 under extreme inputs', () => {
+  const tf = [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)] })];
+  const hi = Scoring.scoreSetup(tf, { score: 100, items: [] }, emptyArm, emptyArm);
+  const lo = Scoring.scoreSetup(tf, { score: 0, items: [] },
+    { score: 40, items: [] }, { score: 50, items: [] });
+  assert.ok(hi.score >= 0 && hi.score <= 100);
+  assert.ok(lo.score >= 0 && lo.score <= 100);
+});
+
+test('C4: evaluate() no longer applies the alignment veto', () => {
+  const cs = buildCleanUptrend(90);
+  const r = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert.strictEqual(r.ceiling, null, 'no band cap');
+  assert.ok(['avoid', 'watch', 'excellent'].includes(r.alignmentChain), 'chain still reported');
+  assert.ok(r.setup && typeof r.setup.score === 'number');
+});
+
+// ---------------------------------------------------------------------------
 // Phase C3 — entry triggers and their age
 // ---------------------------------------------------------------------------
 

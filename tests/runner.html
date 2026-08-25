@@ -343,14 +343,19 @@ test('ceiling: mirror bearish case, full confirm → excellent', () => {
   assertEqual(Scoring.alignmentCeiling(tf, -1), 'excellent');
 });
 
-test('evaluate(): flat 15M (sleeping) caps a strong uptrend to AVOID despite a decent score', () => {
+test('evaluate(): C4 removed the alignment veto — the chain is reported, not enforced', () => {
   const cs = uptrend(80);
   const flat = [];
   for (let i = 0; i < 80; i++) flat.push(flatCandle(i, 100));
   const result = Scoring.evaluate({ h1: cs, m15: flat, m5: cs });
-  assertEqual(result.ceiling, 'avoid');
-  const band = Scoring.bandLabel(result.score, null, result.ceiling);
-  assertEqual(band.text, 'AVOID');
+  // The classic 1H->15M->5M chain still says "avoid" and is still surfaced...
+  assertEqual(result.alignmentChain, 'avoid');
+  // ...but it no longer caps the band. Capping here is precisely what made
+  // 38% of the universe unscoreable regardless of the setup on offer.
+  assertEqual(result.ceiling, null);
+  // Higher-timeframe disagreement is now a scored component instead, so it
+  // costs points rather than vetoing.
+  assert(result.score >= 0 && result.score <= 100);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

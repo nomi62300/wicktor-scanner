@@ -49,6 +49,196 @@ const Scoring = (() => {
 
   const BAND_RANK = { avoid: 0, watch: 1, excellent: 2 };
 
+  // ======================================================================
+  // Phase C4 — setup scoring
+  //
+  // Replaces tradeQualityScore()'s alignment-dominated blend. The problem it
+  // solves: bias came from 1H alone and `if (bias === 0) return 15` short-
+  // circuited everything, so 38% of the top-40 perps were unscoreable —
+  // hardcoded AVOID no matter what 5M and 15M showed. A ranging 1H is prime
+  // scalping territory, so the scanner went blind exactly where a scalping
+  // product needs to see. Strategy 11 (Range Bound), written for that case,
+  // was dead code for the same reason.
+  //
+  // The structural fix is that DIRECTION NOW COMES FROM THE TRIGGER, not
+  // from 1H's Alligator. 1H becomes context that agrees or disagrees, never
+  // a veto. A coin with no 1H alignment but a clean 5M entry is now scored
+  // on its merits.
+  //
+  // Design discipline: structure from principle, direction-of-effect from
+  // measurement, weights kept round. The measurements below rest on one
+  // 100-bar window across 60 coins with overlapping forward windows, so they
+  // are strong enough to say "do not reward breakouts" and far too thin to
+  // justify a fitted coefficient. Fitting weights to n=63 would be
+  // overfitting dressed as rigour.
+  //
+  // What the measurements established (all direction-balanced, since the
+  // fixture window carries heavy drift):
+  //   - 5M stochCrossFromExtreme in a trending 15M context: +0.571 ATR over
+  //     12 bars, the strongest cell found. In a transition context: +0.359.
+  //   - levelBreak is negative in every regime tested (5M trending -0.141,
+  //     5M ranging -0.429, 15M/1H squeeze -0.605 with near-perfect
+  //     bull/bear symmetry). bandBreakout likewise (15M trending -0.492).
+  //     Breakout-chasing is not rewarded anywhere in this data.
+  //   - Squeeze breakouts specifically are the worst cell measured, which
+  //     settles whether "coiled, about to release" deserves credit: no.
+  //   - Regime must come from 1H/15M and never 5M (C1: 5M regime is
+  //     anti-predictive at all seven horizons tested).
+  //   - R:R has no monotonic relationship with outcome (C2), so it gates
+  //     rather than grades.
+  //   - Freshness decays on 1H (+0.519 at <=0 bars vs +0.245 at <=7) but is
+  //     flat on 5M, so decay is applied per-timeframe rather than uniformly.
+  // ======================================================================
+
+  // Mode = which timeframe plays which role. Indices into the [1H, 15M, 5M]
+  // snapshot array. Phase D adds a swing mode; the shape is already here so
+  // that stays a config change rather than a rewrite.
+  const MODES = {
+    scalp: { entry: 2, confirm: 1, context: 0, entryDecayPerBar: 0 },
+    swing: { entry: 1, confirm: 0, context: 0, entryDecayPerBar: 8 }
+  };
+
+  // How much credit a trigger type earns given the CONFIRM timeframe's
+  // regime, 0-100. Encodes direction-of-effect only — the ordering is
+  // measured, the exact numbers are round and deliberately coarse.
+  const TRIGGER_FIT = {
+    trending:   { stochCrossFromExtreme: 100, macdCross: 55, liquiditySweep: 60, levelBreak: 25, bandBreakout: 25 },
+    transition: { stochCrossFromExtreme: 80,  macdCross: 45, liquiditySweep: 50, levelBreak: 30, bandBreakout: 30 },
+    ranging:    { stochCrossFromExtreme: 70,  macdCross: 35, liquiditySweep: 55, levelBreak: 10, bandBreakout: 20 },
+    // Every squeeze cell with a usable sample measured negative, worst of
+    // all being the breakout out of it. Nothing here is promoted.
+    squeeze:    { stochCrossFromExtreme: 45,  macdCross: 30, liquiditySweep: 35, levelBreak: 10, bandBreakout: 15 },
+    unknown:    { stochCrossFromExtreme: 40,  macdCross: 25, liquiditySweep: 30, levelBreak: 15, bandBreakout: 15 }
+  };
+
+  /**
+   * The actionable half of the score: is there an entry here, right now?
+   *
+   * Continuation and friends are built from STATES, which is why the old
+   * model could call a setup excellent without being able to say where the
+   * entry was. This reads the entry timeframe's discrete EVENTS instead.
+   *
+   * Freshness decay is per-mode and zero for scalping on purpose: measured,
+   * a 5M trigger is no worse at 3 bars old than at 0 (flat from 0 to 7),
+   * while a 1H one halves over the same span. A uniform decay would have
+   * felt obviously right and been wrong on the primary scalping timeframe.
+   */
+  function entryQuality(entrySnap, confirmRegime, mode) {
+    if (!entrySnap || !entrySnap.triggers || !entrySnap.triggers.length) {
+      return { score: 0, trigger: null, direction: 0 };
+    }
+    const fitTable = TRIGGER_FIT[confirmRegime] || TRIGGER_FIT.unknown;
+    let best = null;
+    for (const t of entrySnap.triggers) {
+      const fit = fitTable[t.name] != null ? fitTable[t.name] : 30;
+      const decayed = Math.max(0, fit - t.barsAgo * mode.entryDecayPerBar);
+      if (!best || decayed > best.score) best = { score: decayed, trigger: t, direction: t.direction };
+    }
+    return best || { score: 0, trigger: null, direction: 0 };
+  }
+
+  /**
+   * Does the wider market agree with the direction the trigger proposes?
+   *
+   * Deliberately NOT a veto — that veto is exactly what blanked 38% of the
+   * universe. Disagreement costs points and can still leave a tradeable
+   * setup, which is what makes counter-trend scalps at range extremes
+   * scoreable at all.
+   *
+   * Reads `lineOrder`, not `alignment`: alignment is zeroed by a jaw touch,
+   * which conflates "that move was invalidated" with "there is no trend
+   * here". Regime quality is taken from the confirm timeframe because C1
+   * measured 1H and 15M as reliable and 5M as anti-predictive.
+   */
+  const REGIME_QUALITY = { trending: 100, transition: 70, ranging: 55, squeeze: 35, unknown: 25 };
+
+  function contextQuality(tfSnapshots, direction, mode) {
+    const confirm = tfSnapshots[mode.confirm];
+    const context = tfSnapshots[mode.context];
+    if (!confirm) return 0;
+
+    const regimeScore = REGIME_QUALITY[confirm.regime] != null ? REGIME_QUALITY[confirm.regime] : 25;
+
+    // Agreement is scored on both higher timeframes, each contributing half.
+    // A flat mouth is genuinely neutral, not a soft negative — an undecided
+    // higher timeframe is much better news than an opposing one.
+    const agreeOne = snap => {
+      if (!snap || !direction || snap.lineOrder == null) return 50;
+      if (snap.lineOrder === 0) return 50;
+      return snap.lineOrder === direction ? 100 : 15;
+    };
+    const agreement = (agreeOne(confirm) + agreeOne(context)) / 2;
+
+    return 0.5 * regimeScore + 0.5 * agreement;
+  }
+
+  /**
+   * Combines the three components and applies the risk gate.
+   *
+   * The components are chosen to be genuinely distinct rather than three
+   * views of one signal — discrete entry events, higher-timeframe regime
+   * state, and the taught method's own confirmation states. That matters
+   * because the audit found the old model double-counting RSI across four
+   * places, and C1 found ADX/spread/bandwidth collinear at r>0.7.
+   *
+   * R:R is a GATE, not a term: C2 measured no monotonic relationship between
+   * ratio and outcome, so scoring "higher is better" would actively select
+   * worse trades. Below the viability threshold the setup is capped rather
+   * than scaled, because the objection is categorical — you are risking more
+   * than the setup can pay — not a matter of degree.
+   */
+  const WEIGHTS = { entry: 0.40, context: 0.35, method: 0.25 };
+  const NO_RR_CAP = 45; // ceiling applied when risk:reward is not viable
+
+  function scoreSetup(tfSnapshots, continuation, exhaustion, reversal, modeName = 'scalp') {
+    const mode = MODES[modeName] || MODES.scalp;
+    const entrySnap = tfSnapshots[mode.entry];
+    const confirmSnap = tfSnapshots[mode.confirm];
+    const confirmRegime = confirmSnap ? confirmSnap.regime : 'unknown';
+
+    const entry = entryQuality(entrySnap, confirmRegime, mode);
+    const direction = entry.direction;
+
+    // No entry event means no trade to score, however good the backdrop
+    // looks. This is the distinction the old model could not make.
+    if (!direction) {
+      return {
+        score: 0, direction: 0, trigger: null, regime: confirmRegime,
+        components: { entry: 0, context: 0, method: continuation.score },
+        riskReward: null, gated: false, reason: 'no entry trigger'
+      };
+    }
+
+    const context = contextQuality(tfSnapshots, direction, mode);
+    const method = continuation.score; // already a 0-100 mean (Audit F3)
+
+    let raw = WEIGHTS.entry * entry.score + WEIGHTS.context * context + WEIGHTS.method * method;
+
+    // Exhaustion and reversal are bias-aware since B2, so they can be read
+    // against the trigger's direction rather than a 1H-derived bias.
+    raw -= reversal.score * 0.25;
+    raw -= Math.max(0, exhaustion.score - 25) * 0.2;
+
+    const rr = Indicators.riskReward(entrySnap, direction);
+    let gated = false;
+    if (rr && !rr.viable) { raw = Math.min(raw, NO_RR_CAP); gated = true; }
+
+    return {
+      score: Math.max(0, Math.min(100, Math.round(raw))),
+      direction,
+      trigger: entry.trigger,
+      regime: confirmRegime,
+      components: {
+        entry: Math.round(entry.score),
+        context: Math.round(context),
+        method: Math.round(method)
+      },
+      riskReward: rr,
+      gated,
+      reason: gated ? 'risk:reward below 1.0' : null
+    };
+  }
+
   // tfSnapshots is always ordered [1H, 15M, 5M] — same order everywhere else.
   const TF_LABELS = ['1H', '15M', '5M'];
 
@@ -604,14 +794,52 @@ const Scoring = (() => {
     ];
     if (!tfSnapshots[0]) return null; // need at least 1H data
 
+    const modeName = (extras && extras.mode) || 'scalp';
+
+    // computeBias/alignmentCeiling still run, but their role has changed.
+    // They no longer decide whether a coin is tradeable — the C4 setup model
+    // does that, using the trigger for direction. They stay because the
+    // breakdown builders and the UI's per-TF display are written against
+    // them, and because the alignment story is still worth showing even when
+    // it isn't what gates the score.
     const { bias, count } = computeBias(tfSnapshots);
-    const ceiling = alignmentCeiling(tfSnapshots, bias);
-    const continuation = buildContinuation(tfSnapshots, bias, extras && extras.oiChange15m);
-    const exhaustion = buildExhaustion(tfSnapshots, bias);
-    const reversal = buildReversal(tfSnapshots, bias);
+    // alignmentCeiling is deliberately NOT applied any more. It was the
+    // 1H->15M->5M veto: no 1H alignment meant ceiling 'avoid', which capped
+    // the band no matter how good the setup was. Removing the veto from
+    // scoring while leaving it here would have preserved the exact blindness
+    // C4 exists to fix through a second path — measured, XMR scored 80 on
+    // the new model and was still forced to AVOID by it.
+    //
+    // Nothing replaces it, because higher-timeframe agreement is now a
+    // scored component (35% of the blend) rather than a gate. bandLabel
+    // treats a null ceiling as "no cap", so callers need no change. The
+    // function stays exported: it is still the honest answer to "does the
+    // classic confirmation chain hold", which the UI may want to show.
+    const alignmentChain = alignmentCeiling(tfSnapshots, bias);
+    const ceiling = null;
+
+    // Provisional pass to get the trigger's direction, then rebuild the
+    // breakdowns against it. Exhaustion and reversal are direction-aware
+    // (B2), and scoring them against a 1H bias the setup may not share would
+    // penalise the wrong side — a counter-trend scalp would be charged for
+    // exhaustion of a trend it is not taking.
+    const probe = scoreSetup(
+      tfSnapshots,
+      buildContinuation(tfSnapshots, bias, extras && extras.oiChange15m),
+      buildExhaustion(tfSnapshots, bias),
+      buildReversal(tfSnapshots, bias),
+      modeName
+    );
+    const scoringBias = probe.direction || bias;
+
+    const continuation = buildContinuation(tfSnapshots, scoringBias, extras && extras.oiChange15m);
+    const exhaustion = buildExhaustion(tfSnapshots, scoringBias);
+    const reversal = buildReversal(tfSnapshots, scoringBias);
+    const setup = scoreSetup(tfSnapshots, continuation, exhaustion, reversal, modeName);
+    const score = setup.score;
+
     const dir = directionValue(tfSnapshots);
     const regime = regimeLabel(dir, count);
-    const score = tradeQualityScore({ bias, count, continuation, exhaustion, reversal, tfSnapshots });
 
     // Crossing Lips: a non-invalidating, UI-only early-warning flag — the
     // Alligator is still in the current trend's order but price just
@@ -624,9 +852,17 @@ const Scoring = (() => {
     ));
 
     return {
-      bias, alignCount: count, ceiling, tfSnapshots,
+      bias, alignCount: count, ceiling, alignmentChain, tfSnapshots,
       direction: dir, regime, score,
       continuation, exhaustion, reversal,
+      // C4: the setup model's own output. `setup.direction` is the tradeable
+      // direction (from the trigger) and can legitimately differ from
+      // `bias`, which is still the 1H Alligator's opinion.
+      setup,
+      setupDirection: setup.direction,
+      trigger: setup.trigger,
+      contextRegime: setup.regime,
+      riskReward: setup.riskReward,
       crossingLipsWarning,
       // Math.round(null) is 0, not null — a missing RSI used to render as a
       // confident "RSI 0" instead of "--".
@@ -640,7 +876,8 @@ const Scoring = (() => {
   }
 
   return { computeBias, alignmentCeiling, buildContinuation, buildExhaustion, buildReversal,
-           directionValue, regimeLabel, tradeQualityScore, bandLabel, evaluate };
+           directionValue, regimeLabel, tradeQualityScore, bandLabel, evaluate,
+           scoreSetup, entryQuality, contextQuality, MODES, TRIGGER_FIT, WEIGHTS };
 })();
 
 if (typeof module !== 'undefined') module.exports = Scoring;
