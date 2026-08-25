@@ -793,6 +793,19 @@ const Scoring = (() => {
       Indicators.analyzeTimeframe(dropUnclosed(candlesByTf.m5))
     ];
     if (!tfSnapshots[0]) return null; // need at least 1H data
+    return evaluateSnapshots(tfSnapshots, extras);
+  }
+
+  /**
+   * The scoring half of evaluate(), split out so callers that have already
+   * built snapshots can reuse it. Backtesting is the reason: a validator
+   * walking thousands of historical bars needs to control slicing and
+   * timestamp-align the context timeframes itself, and re-implementing this
+   * logic there would mean measuring a copy that can silently drift from
+   * what production actually does.
+   */
+  function evaluateSnapshots(tfSnapshots, extras) {
+    if (!tfSnapshots || !tfSnapshots[0]) return null;
 
     const modeName = (extras && extras.mode) || 'scalp';
 
@@ -877,7 +890,8 @@ const Scoring = (() => {
 
   return { computeBias, alignmentCeiling, buildContinuation, buildExhaustion, buildReversal,
            directionValue, regimeLabel, tradeQualityScore, bandLabel, evaluate,
-           scoreSetup, entryQuality, contextQuality, MODES, TRIGGER_FIT, WEIGHTS };
+           evaluateSnapshots, scoreSetup, entryQuality, contextQuality,
+           MODES, TRIGGER_FIT, WEIGHTS };
 })();
 
 if (typeof module !== 'undefined') module.exports = Scoring;
