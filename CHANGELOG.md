@@ -17,6 +17,59 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Changed (Phase C4 — the setup scoring model)
+Replaces `tradeQualityScore()`'s alignment-dominated blend. **59 of 60
+fixture scores changed, 26 band flips, mean |delta| 23.1.**
+
+**The structural fix: direction now comes from the trigger, not from 1H's
+Alligator.** 1H becomes context that agrees or disagrees, never a veto.
+
+**Solves the 38%-blind problem.** Of the 21 fixture coins with no 1H
+alignment — every one previously a hardcoded 15/AVOID regardless of what was
+on offer — 6 now surface as WATCH or better, including **XMR at 80/EXCELLENT
+in a RANGING 1H regime**, exactly the mean-reversion scalp the old model was
+structurally unable to see.
+
+Model: **entry 40% / context 35% / method 25%**, with R:R as a gate.
+- *entry* — the entry timeframe's discrete triggers, credited via a
+  (regime × trigger) fit table.
+- *context* — confirm-TF regime plus higher-TF agreement, **scored rather
+  than enforced**. Reads `lineOrder` not `alignment`, so an invalidated
+  trend isn't mistaken for a range.
+- *method* — `buildContinuation()`'s existing 0-100 mean.
+- *R:R* — gates at 1.0 instead of grading (C2 found no monotonic
+  relationship, so "higher is better" would select worse trades).
+  Non-viable caps the score at 45.
+
+Discipline: **structure from principle, direction-of-effect from
+measurement, weights round.** The evidence is one 100-bar window across 60
+coins with overlapping forward windows — strong enough to say "don't reward
+breakouts", far too thin to justify fitted coefficients. Fitting weights to
+n=63 would be overfitting dressed as rigour.
+
+Measured effects encoded: `stochCrossFromExtreme` in a trending 15M context
++0.571 ATR (strongest cell found); `levelBreak` negative in *every* regime
+(−0.141 to −0.605, with near-perfect bull/bear symmetry); squeeze+breakout
+the worst cell measured, so a squeeze does not promote its own breakout;
+freshness decays on 1H but is flat on 5M, so decay is per-mode and **zero
+for scalping**.
+
+**A second-path bug caught mid-phase.** Removing the veto from scoring left
+it in place in `bandLabel()` via `alignmentCeiling`, so the identical
+blindness persisted — XMR scored 80 and was *still* forced to AVOID.
+`evaluate()` now returns `ceiling: null`, with the classic chain preserved
+as `alignmentChain` for display. Band thresholds left at 80/50 rather than
+recalibrated: they yield EXCELLENT 7% / WATCH 18% / AVOID 75%, selective
+without fitting thresholds to one sample.
+
+Also: the CONT/EXH/REV breakdowns are now rebuilt against the trigger's
+direction, since exhaustion and reversal became direction-aware in B2 —
+otherwise a counter-trend scalp is charged for exhaustion of a trend it
+isn't taking.
+
+`MODES` already carries a `swing` config, so Phase D's dual scoring is a
+config change rather than a rewrite. 11 new tests.
+
 ### Removed (the `maxAgeMinutes` freshness filter)
 Removed from the scan pipeline and from Settings, at the owner's call. It was
 broken and conceptually wrong, in that order.
