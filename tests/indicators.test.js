@@ -986,15 +986,37 @@ test('C3: analyzeTimeframe exposes triggers with sane shape', () => {
 const rrBase = { close: 100, atr: 1, levelsAbove: [101, 103, 106], levelsBelow: [99, 97, 94] };
 const RRP = () => Indicators.RR_PARAMS;
 
-test('C2 rr: target is a fixed R-multiple of the stop', () => {
+test('C2 rr: target is a fixed PRICE MOVE, so the ratio varies with stop width', () => {
   const r = Indicators.riskReward(rrBase, 1);
-  // stop 100 -> 99 plus a 0.25 ATR buffer = 1.25 risk; target = 3R
+  // stop 100 -> 99 plus a 0.25 ATR buffer = 1.25 risk
   assert.ok(Math.abs(r.riskAtr - 1.25) < 1e-9, `expected 1.25 ATR risk, got ${r.riskAtr}`);
-  assert.ok(Math.abs(r.target - (100 + RRP().targetR * 1.25)) < 1e-9);
-  assert.strictEqual(r.ratio, RRP().targetR);
+  // Target is targetPct of ENTRY, not a multiple of risk: a 3R-style fixed
+  // multiple meant a 1.5% move for one signal and a 75% move for another,
+  // and hit its objective on 4.7% of trades.
+  assert.ok(Math.abs(r.target - (100 + 100 * RRP().targetPct / 100)) < 1e-9);
+  // ratio is now an OUTPUT of the two distances, never an input
+  assert.ok(Math.abs(r.ratio - (100 * RRP().targetPct / 100) / 1.25) < 1e-9);
   // the nearest real level is still surfaced, as the likely stall point
   assert.strictEqual(r.firstObstacle, 101);
   assert.ok(Math.abs(r.structuralTargetR - (1 / 1.25)) < 1e-9);
+});
+
+test('C2 rr: a fee-unwinnable stop (1R under minRiskPct) is not viable', () => {
+  // Structure is perfectly good; the stop is simply too tight for the round
+  // trip to be recoverable, which is a fee fact, not a chart fact.
+  const tight = Object.assign({}, rrBase, { close: 100000, atr: 1, levelsBelow: [99999] });
+  const r = Indicators.riskReward(tight, 1);
+  assert.ok(r.riskPct < RRP().minRiskPct, `expected a sub-floor risk, got ${r.riskPct}`);
+  assert.strictEqual(r.stopFromStructure, true, 'structure itself is still fine');
+  assert.strictEqual(r.feeViable, false);
+  assert.strictEqual(r.viable, false, 'must not be tradeable despite good structure');
+});
+
+test('C2 rr: an absurdly WIDE stop is also not viable', () => {
+  const wide = Object.assign({}, rrBase, { close: 100, atr: 1, levelsBelow: [50] });
+  const r = Indicators.riskReward(wide, 1);
+  assert.ok(r.riskPct > RRP().maxRiskPct, `expected an over-cap risk, got ${r.riskPct}`);
+  assert.strictEqual(r.viable, false);
 });
 
 test('C2 rr: stop sits beyond the opposing level by the buffer', () => {

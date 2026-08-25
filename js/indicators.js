@@ -722,7 +722,9 @@ const Indicators = (() => {
     stopBufferAtr: 0.25,
     minStopAtr: 0.4,
     fallbackStopAtr: 1.0,
-    targetR: 3.0          // target as a multiple of risk — see the note below
+    targetPct: 4.0,       // objective as % of ENTRY PRICE — see the note below
+    minRiskPct: 1.0,      // below this, fees are unwinnable
+    maxRiskPct: 25.0      // above this the structure is pathological
   };
 
   /**
@@ -732,30 +734,49 @@ const Indicators = (() => {
    *
    *   fees in R = (fee % of price) / (1R as % of price)
    *
-   * Only the stop appears in that. Measured on 5M entries, a 5M structural
-   * stop puts 1R at 0.255% of price against a 0.110% taker round trip — fees
-   * eat 0.43R, against a gross edge of +0.082R. Riding the 1H structure
-   * instead puts 1R at 0.952%, fees at 0.115R, and the gross edge RISES to
-   * +0.127R because you stop being knocked out by noise. Net goes from
-   * -0.35R to +0.011R at taker, +0.085R at maker. 15M (0.415%) and 30M
-   * (0.581%) were both measured and both dominated: best gross, worst net.
+   * Only the stop appears in that. A 5M structural stop is far too tight to
+   * survive it; riding the 1H structure is what makes the model viable.
+   *
+   * CORRECTION (measured 2026-08-25, tools/analyze-riskpct.js). The "1R =
+   * 0.952% of price" figure previously quoted here came from
+   * sweep-stop-target.js, which was NOT computing what this function does:
+   * it took levelsBelow[0] unfiltered — a 1H level can sit on the wrong side
+   * of a 5M close, yielding a meaninglessly small distance — and buffered
+   * with the 5M ATR. This function filters to levels genuinely against the
+   * trade and buffers with the STOP source's ATR. Production 1R is therefore
+   * a MEDIAN OF ~2.4%, ranging from under 1% to over 25%, not 0.952%.
+   * The choice of 1H still stands; only the absolute figure was wrong.
+   *
+   * That correction is what motivates the floor and the cap below.
    *
    * The buffer and floor are measured in the STOP source's own ATR, since
    * that is the timeframe whose noise could wick you out of that level.
    *
-   * Target is an R-multiple rather than the second structural level. C2
-   * chose structure when the stop was also structural on the same
-   * timeframe; with a 1H stop the risk unit is ~4x larger and a nearby 5M
-   * level is no longer a proportionate objective. Measured with a 1H stop:
-   * 3R +0.127 > 2R +0.112 > struct2 +0.109 > 1.5R +0.095 > 1R +0.066,
-   * monotonically increasing in target size. Note this REVERSES C2's
-   * finding, and the reason is instructive — C2 measured random entries,
-   * where letting winners run does not pay. With a real signal it does.
+   * TARGET IS A PRICE MOVE, NOT AN R-MULTIPLE. This replaces the fixed 3R,
+   * and the reason is the correction above: when 1R ranges from 0.5% to 25%
+   * of price, "3R" means a 1.5% move for one signal and a 75% move for
+   * another. The market does not care how far away your invalidation level
+   * sits. Measured, the fixed 3R hit its target on 4.7% of trades and timed
+   * out on 74.8% — it was not a 3R strategy at all, it was a four-hour hold
+   * scored at mark-to-market.
    *
-   * A consequence worth stating plainly: with a fixed R-multiple the ratio
-   * is 3.0 by construction, so the old `viable` gate can never fire. It now
-   * reports something that can still be false — whether the stop is riding
-   * real structure rather than a synthetic fallback.
+   * Both fixture sets agree on a ~4% objective, which is why it was chosen:
+   *
+   *              1%      2%      3%      4%      5%      (target move)
+   *   out-samp  +.057   +.067   +.076   +.086   +.097
+   *   in-samp   +.051   +.068   +.087   +.094   +.085
+   *
+   * The R-multiple framing does NOT survive the same test — the two sets
+   * disagree completely on the best multiple (0.75R out-of-sample, 2R
+   * in-sample), which is what a fitted parameter looks like. Agreement
+   * across independent periods is the whole reason to prefer this form.
+   *
+   * The floor is the other half. Below ~1% risk, the 0.11% taker round trip
+   * costs more than 0.11R and the edge cannot cover it: that bucket loses
+   * at EVERY target tested (-0.18R to -0.25R). Both the floor and the cap
+   * report through `viable`, which scoring.js already uses to cap the score
+   * at NO_RR_CAP — so an unwinnable-by-fees setup can no longer reach
+   * EXCELLENT no matter how good its structure looks.
    */
   function riskReward(entrySnap, direction, opts = {}) {
     const t = Object.assign({}, RR, opts.params);
@@ -788,10 +809,18 @@ const Indicators = (() => {
     if (flooredStop) riskDist = t.minStopAtr * stopAtr;
 
     // --- target -----------------------------------------------------------
-    const rewardDist = t.targetR * riskDist;
+    // A fixed share of PRICE, so the objective stays a move the market can
+    // actually deliver inside the hold window regardless of stop width.
+    const rewardDist = close * (t.targetPct / 100);
     // The nearest real level in the trade's direction is still reported, so
     // the UI can show where price is likely to stall on the way.
     const structuralNext = toward.length ? toward[0] : null;
+
+    const riskPct = (riskDist / close) * 100;
+    // Fees are charged on price, not on R: at 1R under minRiskPct the round
+    // trip costs more than the measured edge, whatever the target. Too wide
+    // and the "stop" is no longer describing this trade's structure.
+    const feeViable = riskPct >= t.minRiskPct && riskPct <= t.maxRiskPct;
 
     return {
       entry: close,
@@ -800,12 +829,14 @@ const Indicators = (() => {
       firstObstacle: structuralNext,
       structuralTargetR: structuralNext != null ? Math.abs(structuralNext - close) / riskDist : null,
       riskAtr: riskDist / entryAtr,        // expressed in ENTRY-TF ATR, for display
-      riskPct: (riskDist / close) * 100,   // what actually determines fee burden
+      riskPct,                             // what actually determines fee burden
       rewardAtr: rewardDist / entryAtr,
-      ratio: t.targetR,
+      rewardPct: t.targetPct,
+      ratio: rewardDist / riskDist,        // now VARIES — it is an output, not an input
       stopFromStructure,
       stopWidenedToFloor: flooredStop,
-      viable: stopFromStructure
+      feeViable,
+      viable: stopFromStructure && feeViable
     };
   }
 

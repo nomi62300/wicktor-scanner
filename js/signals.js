@@ -31,9 +31,14 @@ const SignalJournal = (() => {
   const HOLD_BARS = 48;        // 5M bars before a signal times out (~4h)
   const BAR_MS = 5 * 60 * 1000;
 
-  // [Rmultiple, fractionClosed, stopMovesToR]
-  const PLAN_A = [[1, 1 / 3, 0], [2, 1 / 3, 1], [3, 1 / 3, null]];
-  const PLAN_B = [[3, 1, null]];
+  // [fractionOfTarget, fractionClosed, stopMovesToRmultipleOfTarget]
+  //
+  // Expressed as fractions of the TARGET rather than fixed R multiples.
+  // The target is now a ~4% price move, so its size in R varies per signal
+  // (1R ranges from 1% to 25% of price); hardcoded 1R/2R/3R rungs would sit
+  // far beyond the objective on wide-stop setups and never fill.
+  const PLAN_A = [[1 / 3, 1 / 3, 0], [2 / 3, 1 / 3, 1 / 3], [1, 1 / 3, null]];
+  const PLAN_B = [[1, 1, null]];
 
   function client() {
     // Auth owns the Supabase client and already degrades gracefully when the
@@ -51,7 +56,11 @@ const SignalJournal = (() => {
    * intrabar order is unknowable from OHLC, so the pessimistic reading is
    * the only honest one, and it matches how the backtest measured.
    */
-  function realisedR(bars, direction, entry, risk, plan) {
+  function realisedR(bars, direction, entry, risk, plan, targetR) {
+    // targetR is the objective expressed in R for THIS signal. Defaults to 3
+    // only so older rows, logged while the target was a fixed 3R multiple,
+    // still resolve against the geometry they were created with.
+    const tR = targetR || 3;
     let stopR = -1, remaining = 1, realised = 0, rung = 0, reason = 'timeout';
     for (const b of bars) {
       const stopPx = entry + direction * stopR * risk;
@@ -61,7 +70,8 @@ const SignalJournal = (() => {
         return { r: realised, reason: stopR >= 0 ? 'breakeven' : 'stop' };
       }
       while (rung < plan.length) {
-        const [mult, frac, newStop] = plan[rung];
+        const [frac0fTarget, frac, newStop] = plan[rung];
+        const mult = frac0fTarget * tR;
         const tp = entry + direction * mult * risk;
         const hit = direction === 1 ? b.h >= tp : b.l <= tp;
         if (!hit) break;
@@ -69,7 +79,7 @@ const SignalJournal = (() => {
         realised += take * mult;
         remaining -= take;
         rung++;
-        if (newStop != null) stopR = newStop;
+        if (newStop != null) stopR = newStop * tR;
         if (remaining <= 1e-9) return { r: realised, reason: 'target' };
       }
     }
@@ -150,8 +160,11 @@ const SignalJournal = (() => {
       const window = after.slice(0, HOLD_BARS);
       const complete = after.length >= HOLD_BARS;
 
-      const a = realisedR(window, sig.direction, sig.entry, risk, PLAN_A);
-      const b = realisedR(window, sig.direction, sig.entry, risk, PLAN_B);
+      // Recovered from the stored trade spec rather than assumed, so rows
+      // logged under the old fixed-3R geometry still resolve correctly.
+      const targetR = Math.abs(sig.target - sig.entry) / risk;
+      const a = realisedR(window, sig.direction, sig.entry, risk, PLAN_A, targetR);
+      const b = realisedR(window, sig.direction, sig.entry, risk, PLAN_B, targetR);
       // Leave it open unless the trade actually finished or the horizon
       // elapsed — a half-walked path would bank a mark-to-market number as
       // though it were a result.
