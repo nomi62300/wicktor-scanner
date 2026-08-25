@@ -13,28 +13,40 @@ const Render = (() => {
     return d.innerHTML;
   }
 
-  // Fixed-size SVG icons for the 5-tier per-TF confidence state — Unicode
-  // arrow glyphs (▲/↗/▼/↘/—) render thin, low-contrast, or near-illegible
-  // at small sizes across different fonts/devices/OSes; explicit stroke
-  // width and sizing keeps every state visually distinct at a glance.
-  const TF_ICONS = {
-    strong_bull: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1.5l5 9h-10z"/></svg>',
-    weak_bull:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5L9.5 2.5M4.5 2.5H9.5V7.5"/></svg>',
-    strong_bear: '<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 10.5l-5-9h10z"/></svg>',
-    weak_bear:   '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5L9.5 9.5M4.5 9.5H9.5V4.5"/></svg>',
-    neutral:     '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6H10"/></svg>'
+  // Matches app.js's formatPrice() rules, kept local since render.js has
+  // no dependency on app.js — used for the sloped-channel level value,
+  // the one place render.js formats a raw number rather than a
+  // pre-formatted string already prepared by app.js.
+  function formatPriceForDisplay(n) {
+    if (n == null || isNaN(n)) return '--';
+    if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (n >= 1) return n.toFixed(2);
+    return n.toFixed(4);
+  }
+
+  // Card's Active TF row (4H/1H/15M/5M): a compact chip per TF — name,
+  // trend triangle, % change — replacing the old Alligator-confidence
+  // arrow row. Simple last-candle-vs-previous trend (see app.js's
+  // tfChipData()), not the 5-tier confidence state; that state is a
+  // 1H/15M/5M-only scoring concept without a natural 4H analog.
+  const TF_TREND_ICONS = {
+    up:   '<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1.5l5 9h-10z"/></svg>',
+    down: '<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><path d="M6 10.5l-5-9h10z"/></svg>',
+    flat: '<svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 6H10"/></svg>'
   };
-  const TF_ICON_META = {
-    strong_bull: ['tf-up', 'Clean uptrend'],
-    weak_bull:   ['tf-weak-up', 'Weakening (recent lips dip)'],
-    strong_bear: ['tf-down', 'Clean downtrend'],
-    weak_bear:   ['tf-weak-down', 'Recovering (recent lips dip)'],
-    neutral:     ['tf-flat', 'Neutral / mixed']
-  };
-  function tfArrowHtml(confidence) {
-    const key = TF_ICON_META[confidence] ? confidence : 'neutral';
-    const [cls, title] = TF_ICON_META[key];
-    return `<span class="${cls}" title="${title}">${TF_ICONS[key]}</span>`;
+  function tfChipHtml(chip) {
+    const color = chip.trend === 'up' ? 'var(--green-text)' : chip.trend === 'down' ? 'var(--red-text)' : 'var(--text3)';
+    const pctText = chip.pct == null ? '(--)' : `(${chip.pct > 0 ? '+' : ''}${chip.pct.toFixed(2)}%)`;
+    return `<div class="tf-chip">
+      <div class="tf-chip-top">
+        <span class="tf-chip-name">${esc(chip.label)}</span>
+        <span class="tf-chip-trend" style="color:${color}">${TF_TREND_ICONS[chip.trend]}</span>
+      </div>
+      <div class="tf-chip-pct" style="color:${color}">${pctText}</div>
+    </div>`;
+  }
+  function tfChipRowHtml(tfChips) {
+    return `<div class="tf-chip-row">${tfChips.map(tfChipHtml).join('')}</div>`;
   }
 
   function rsiColor(v) {
@@ -127,8 +139,6 @@ const Render = (() => {
    */
   function cardHtml(coin, idx) {
     const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
-    const tfRow = coin.tfConfidence.map((c, i) =>
-      `<span class="tf-item">${TF_LABELS[i]} ${tfArrowHtml(c)}</span>`).join('');
     const rsiRow = coin.rsiByTf.map((v, i) =>
       `<span style="color:${rsiColor(v)}">${TF_LABELS[i]} ${v != null ? v : '--'}</span>`).join(' &middot; ');
     const unlockSevereCls = coin.unlock && coin.unlock.severity === 'red' ? ' unlock-severe' : '';
@@ -159,7 +169,7 @@ const Render = (() => {
         ${sideBadgeHtml(coin.side)}
       </div>
       <div class="tf-label">Active TF</div>
-      <div class="tf-row">${tfRow}</div>
+      ${tfChipRowHtml(coin.tfChips)}
       <div class="rsi-row">RSI: ${rsiRow}</div>
       <div class="cer-row">
         <span class="cer-cont">CONT ${coin.continuation.score}</span>
@@ -199,14 +209,166 @@ const Render = (() => {
     container.innerHTML = coins.map((c, i) => cardHtml(c, i)).join('');
   }
 
+  // Exhaustion/Reversal keep their existing point-sum scoring untouched —
+  // this is display-only. Every item here is a fixed-max binary fire/
+  // no-fire EXCEPT Exhaustion's RSI-extremity item, which is genuinely
+  // graded (points scale with how far RSI sits past its threshold), so it
+  // needs its own known ceiling to turn into a fair percentage for icon
+  // tiering. Fixed items always render at 100% of their own max when
+  // shown (they only ever appear in `items` already fully fired), so the
+  // icon is trivially a check for those — still useful for a consistent
+  // glance across all three blocks, and correct: they aren't partial.
+  const ITEM_MAX_LOOKUP = [
+    [/RSI approaching (overbought|oversold)/i, 40],
+    [/RSI divergence/i, 20],
+    [/RSI extreme/i, 15],
+    [/Divergent Bar/i, 15],
+    [/MACD reversal cross/i, 15],
+    [/MACD divergence/i, 15],
+    [/Liquidity sweep/i, 15],
+    [/AC decelerating/i, 12],
+    [/Wiseman AO reversal/i, 12],
+    [/Range-bound/i, 12],
+    [/Stochastic exhaustion crossover/i, 10],
+    [/Stochastic divergence/i, 10],
+    [/MFI Squat/i, 10],
+    [/Retest into (overbought|oversold)/i, 10],
+    [/BB extreme/i, 8]
+  ];
+  function itemOwnMax(label) {
+    const hit = ITEM_MAX_LOOKUP.find(([re]) => re.test(label));
+    return hit ? hit[1] : null;
+  }
+
+  const EXHAUSTION_REVERSAL_EXPLANATIONS = [
+    [/RSI approaching (overbought|oversold)/i, '5M RSI distance from neutral — the further past 68/32, the more stretched the move looks.'],
+    [/RSI extreme/i, '1H RSI at or past 75 — historically overextended territory for the current move.'],
+    [/AC decelerating/i, 'Accelerator Oscillator (momentum of momentum) slowing on 1H, ahead of AO’s own zero-cross — an early exhaustion tell.'],
+    [/BB extreme/i, 'Price on 5M closing at or past a Bollinger Band edge — a mean-reversion stretch point.'],
+    [/Stochastic exhaustion crossover/i, 'A Stochastic cross on 5M coming out of an already-extreme oversold/overbought read.'],
+    [/RSI divergence/i, 'Price made a new high/low that RSI didn’t confirm — a classic momentum-divergence warning.'],
+    [/MFI Squat/i, 'Falling range-per-volume with rising volume on 1H — effort without result, a reversal warning.'],
+    [/Divergent Bar/i, 'The Alligator’s mouth is in the opposite order to the current bias — a structural warning the trend may be turning.'],
+    [/Wiseman AO reversal/i, 'An Awesome Oscillator shape signal warning against the current bias, independent of the main AO-direction check.'],
+    [/Retest into (overbought|oversold)/i, 'A retest that’s holding, but RSI is already at an extreme — the riskier variant of a plain retest.'],
+    [/MACD reversal cross/i, 'MACD turning against the current bias while price sits within 1x ATR of a real support/resistance level.'],
+    [/MACD divergence/i, 'MACD made a new high/low that price didn’t confirm — momentum diverging from price.'],
+    [/Liquidity sweep/i, 'A wick swept past a level and rejected back inside — a stop-hunt pattern that warns against the current bias.'],
+    [/Stochastic divergence/i, 'Stochastic %K diverging from price on 15M — the same divergence concept, a faster oscillator.'],
+    [/Range-bound/i, 'Price at a range extreme with RSI confirming, while no clear 1H trend bias exists — a mean-reversion setup, not a trend play.']
+  ];
+  function exhaustionReversalExplanation(label) {
+    const hit = EXHAUSTION_REVERSAL_EXPLANATIONS.find(([re]) => re.test(label));
+    return hit ? hit[1] : 'One of the signals feeding this score.';
+  }
+
   function breakdownBlockHtml(label, colorVar, val, items) {
-    const rows = items.map(([label, pts]) =>
-      `<div class="breakdown-item"><span>${esc(label)}</span><span style="color:${colorVar}">+${pts}</span></div>`
-    ).join('');
+    const rows = items.map(([itemLabel, pts]) => {
+      const max = itemOwnMax(itemLabel);
+      const tier = max ? continuationTier(Math.min(100, (pts / max) * 100)) : { icon: '&#10003;', color: colorVar, bg: colorVar };
+      const info = `<span class="cont-info" title="${esc(exhaustionReversalExplanation(itemLabel))}">i</span>`;
+      return `<div class="breakdown-item">
+        <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(itemLabel)}${info}</span>
+      </div>`;
+    }).join('');
     return `
     <div class="block">
       <div class="block-title-row"><span style="color:${colorVar}">${label}</span><span>${val}/100</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${val}%;background:${colorVar}"></div></div>
+      ${rows}
+    </div>`;
+  }
+
+  // Continuation-only breakdown (Audit F3 follow-up): each item is a 0-100
+  // sub-score now (see buildContinuation()'s own doc comment in scoring.js),
+  // so a raw "+NN%" reads slower than a tier icon at a glance. Bucketed at
+  // the same >=66/33-66/<33 cutoffs already used pre-redesign as breakout-
+  // proximity's own "worth mentioning" threshold, so the tiering isn't a
+  // new number pulled from nowhere. OI is shown as a 1-10 magnitude chip
+  // instead of an icon, per the owner's request — a check/cross doesn't
+  // suit "how much did open interest move," a number does. Items scoring
+  // 0 stay visible but dimmed, not hidden — hiding them was the original
+  // bug report: the visible list looked like it should sum to more than
+  // the header score.
+  function continuationTier(pct) {
+    if (pct >= 66) return { icon: '&#10003;', color: 'var(--green-text)' };
+    if (pct >= 33) return { icon: '!', color: 'var(--gold-text)' };
+    return { icon: '&#10005;', color: 'var(--text3)' };
+  }
+
+  // Plain-English explanation per signal, matched by a stable substring
+  // since labels carry dynamic content (weakening TFs, ADX value, OI %).
+  // Checked in order — first match wins — so more specific patterns are
+  // listed before their broader relatives (e.g. the two MACD-cross
+  // variants before the plain "MACD trend-following cross").
+  const CONTINUATION_EXPLANATIONS = [
+    [/alligator aligned|not aligned/i, 'How many of the three timeframes (1H/15M/5M) currently agree with the trade’s bias, and whether any are showing early weakness.'],
+    [/^AO /i, 'Awesome Oscillator momentum on 1H — confirms whether momentum is building in the trade’s direction.'],
+    [/last (up|down) fractal/i, 'Whether price is currently past the most recent confirmed swing point on 1H.'],
+    [/MFI Green/i, 'Money Flow Index volume+range read — green means healthy participation behind the move.'],
+    [/key level/i, 'How close price is to — or already past — the nearest fractal-based level on 15M, in ATR terms.'],
+    [/Perp OI/i, 'How much perpetual open interest moved in the last 15 minutes. A big swing means fresh capital is actively entering, not just existing positions drifting.'],
+    [/EMA 9\/21/i, 'Whether the 9 and 21 EMA on 1H are stacked in the trade’s direction — a basic trend filter.'],
+    [/MACD (bullish|bearish) cross on EMA21 pullback/i, 'A MACD cross on 15M that happened while price was pulled back near its 21 EMA — a timed entry, not just any cross.'],
+    [/BB squeeze breakout/i, 'Bollinger Band width expanding while price closes outside the band on 15M — a volatility breakout moment.'],
+    [/ADX trend strength/i, 'Average Directional Index on 15M — measures how strong the underlying trend is, regardless of direction.'],
+    [/Breakout retest held/i, 'Price on 1H sitting back near a level it already broke past, holding above/below it — a retest-and-hold pattern.'],
+    [/Squeeze momentum expansion/i, 'MACD histogram on 15M rising in the trade’s direction while volatility expands — oscillator-based momentum confirmation.'],
+    [/Ichimoku cloud/i, 'Whether price on 1H sits above or below the Ichimoku cloud — a broader trend-position filter.'],
+    [/Stochastic (bullish|bearish) entry/i, 'A Stochastic %K/%D cross on 15M coming out of oversold/overbought — a timing signal for entries.'],
+    [/MACD trend-following cross/i, 'A plain directional MACD cross on 1H, independent of price location — confirms momentum turned in the trade’s direction.'],
+    [/Pullback to EMA21/i, 'Price on 15M pulled back tightly to its 21 EMA with RSI in a healthy 40-60 range — not overextended, not reversing.']
+  ];
+  function continuationExplanation(label) {
+    const hit = CONTINUATION_EXPLANATIONS.find(([re]) => re.test(label));
+    return hit ? hit[1] : 'One of the signals feeding the Continuation score.';
+  }
+
+  // Splits a trailing "(...)" qualifier off a label so it can be colored
+  // by its own sentiment independent of the leading tier icon — e.g. a
+  // clean "3TF aligned" is still a green check, but the "(1H/15M
+  // weakening)" qualifier inside it is worth flagging amber on its own,
+  // not just folded into the same green as the rest of the line.
+  function splitLabelQualifier(label) {
+    const m = label.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    if (!m) return { main: label, qualifier: null, qualifierColor: null };
+    const [, main, qualifier] = m;
+    let qualifierColor = null;
+    if (/weakening/i.test(qualifier)) qualifierColor = 'var(--gold-text)';
+    else if (/clean/i.test(qualifier)) qualifierColor = 'var(--green-text)';
+    return { main, qualifier, qualifierColor };
+  }
+
+  function infoIconHtml(label) {
+    return `<span class="cont-info" title="${esc(continuationExplanation(label))}">i</span>`;
+  }
+
+  function continuationItemHtml([label, pct]) {
+    const isOi = label.startsWith('Perp OI');
+    const { main, qualifier, qualifierColor } = splitLabelQualifier(label);
+    const qualifierHtml = qualifier
+      ? ` <span style="color:${qualifierColor || 'var(--text3)'}">(${esc(qualifier)})</span>` : '';
+    const rowStyle = pct > 0 ? '' : ' style="opacity:0.5"';
+    if (isOi) {
+      const tier = continuationTier(pct);
+      const tenScale = Math.round(pct / 10);
+      return `<div class="breakdown-item"${rowStyle}>
+        <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+        <span class="cont-chip" style="color:${tier.color};border-color:${tier.color}">${tenScale}/10</span>
+      </div>`;
+    }
+    const tier = continuationTier(pct);
+    return `<div class="breakdown-item"${rowStyle}>
+      <span><span class="cont-icon" style="color:${tier.color};background:${tier.color}55">${tier.icon}</span>${esc(main)}${qualifierHtml}${infoIconHtml(label)}</span>
+    </div>`;
+  }
+
+  function continuationBlockHtml(score, items) {
+    const rows = items.map(continuationItemHtml).join('');
+    return `
+    <div class="block">
+      <div class="block-title-row"><span style="color:var(--green)">Continuation</span><span>${score}/100</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${score}%;background:var(--green)"></div></div>
       ${rows}
     </div>`;
   }
@@ -296,13 +458,21 @@ const Render = (() => {
         <div class="block-title-row"><span>Direction</span><span style="color:${coin.direction >= 0 ? 'var(--green-text)' : 'var(--red-text)'}">${coin.direction > 0 ? '+' : ''}${coin.direction}</span></div>
         ${directionGaugeHtml(coin.direction)}
       </div>
-      ${breakdownBlockHtml('Continuation', 'var(--green)', coin.continuation.score, coin.continuation.items)}
+      ${continuationBlockHtml(coin.continuation.score, coin.continuation.items)}
       ${breakdownBlockHtml('Exhaustion', 'var(--gold)', coin.exhaustion.score, coin.exhaustion.items)}
       ${breakdownBlockHtml('Reversal', 'var(--text3)', coin.reversal.score, coin.reversal.items)}
       <div class="news-section-label" style="margin-top:2px;">Key levels</div>
       <div class="levels-grid">
-        <div class="level-box"><div class="level-box-label">Resistance</div><div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div></div>
-        <div class="level-box"><div class="level-box-label">Support</div><div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div></div>
+        <div class="level-box">
+          <div class="level-box-label">Resistance</div>
+          <div class="level-box-value" style="color:var(--red-text)">$${esc(coin.resistance)}</div>
+          ${coin.resistanceSloped ? `<div class="level-box-sloped">Channel: $${esc(formatPriceForDisplay(coin.resistanceSloped.value))} <span style="color:var(--text3)">(r&sup2; ${coin.resistanceSloped.r2.toFixed(2)})</span></div>` : ''}
+        </div>
+        <div class="level-box">
+          <div class="level-box-label">Support</div>
+          <div class="level-box-value" style="color:var(--green-text)">$${esc(coin.support)}</div>
+          ${coin.supportSloped ? `<div class="level-box-sloped">Channel: $${esc(formatPriceForDisplay(coin.supportSloped.value))} <span style="color:var(--text3)">(r&sup2; ${coin.supportSloped.r2.toFixed(2)})</span></div>` : ''}
+        </div>
       </div>
       ${newsSectionHtml(newsResult)}
     `;
@@ -310,58 +480,67 @@ const Render = (() => {
 
   // ------------------------------------------------------------ Top strip
 
-  function topStripHtml(data) {
-    const pulseTile = (label, val) => {
-      if (val == null) {
-        return `
-        <div class="strip-tile">
-          <div class="strip-label">${label}</div>
-          <div class="strip-value" style="color:var(--text3)">No data</div>
-          <div class="gauge-track"><div class="gauge-dot" style="left:50%;opacity:0.3"></div></div>
-          <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
-        </div>`;
-      }
-      const biasLabel = val >= 0 ? 'Bullish' : 'Bearish';
-      const colorVar = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+  // Shared market-overview tile builders — used by both the always-visible
+  // top strip and the Dashboard tab, so the two stay visually consistent
+  // and never drift into duplicated markup.
+  function pulseTileHtml(label, val) {
+    if (val == null) {
       return `
-        <div class="strip-tile">
-          <div class="strip-label">${label}</div>
-          <div class="strip-value" style="color:${colorVar}">${biasLabel} ${Math.abs(val)}</div>
-          <div class="gauge-track"><div class="gauge-dot" style="left:${((val + 100) / 200 * 100).toFixed(0)}%"></div></div>
-          <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
-        </div>`;
-    };
+      <div class="strip-tile">
+        <div class="strip-label">${label}</div>
+        <div class="strip-value" style="color:var(--text3)">No data</div>
+        <div class="gauge-track"><div class="gauge-dot" style="left:50%;opacity:0.3"></div></div>
+        <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
+      </div>`;
+    }
+    const biasLabel = val >= 0 ? 'Bullish' : 'Bearish';
+    const colorVar = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+    return `
+      <div class="strip-tile">
+        <div class="strip-label">${label}</div>
+        <div class="strip-value" style="color:${colorVar}">${biasLabel} ${Math.abs(val)}</div>
+        <div class="gauge-track"><div class="gauge-dot" style="left:${((val + 100) / 200 * 100).toFixed(0)}%"></div></div>
+        <div class="gauge-labels"><span>Bearish</span><span>Bullish</span></div>
+      </div>`;
+  }
 
+  function fngTileHtml(data) {
     const fngVal = data.fearGreed ? data.fearGreed.value : null;
-    const fngTile = `
+    return `
       <div class="strip-tile">
         <div class="strip-label">Fear &amp; Greed</div>
         <div class="strip-value" style="color:var(--gold-text)">${fngVal != null ? fngVal + ' ' + data.fearGreed.label : '--'}</div>
         <div class="gauge-track fear-greed"><div class="gauge-dot" style="left:${fngVal != null ? fngVal : 50}%"></div></div>
         <div class="gauge-labels"><span>Fear</span><span>Greed</span></div>
       </div>`;
+  }
 
-    const domTile = `
+  function domTileHtml(data) {
+    return `
       <div class="strip-tile">
         <div class="strip-label">BTC Dominance</div>
         <div class="strip-value mono">${data.btcDominance != null ? data.btcDominance.toFixed(1) + '%' : '--'}</div>
         <div class="fill-bar"><div style="width:${data.btcDominance || 0}%"></div></div>
       </div>`;
+  }
 
+  function mcapTileHtml(data) {
     const mcapChangeColor = (data.mcapChange24h || 0) >= 0 ? 'var(--green-text)' : 'var(--red-text)';
     const mcapArrow = (data.mcapChange24h || 0) >= 0 ? '&#9650;' : '&#9660;';
-    const mcapTile = `
+    return `
       <div class="strip-tile">
         <div class="strip-label">Market Cap &middot; 24h</div>
         <div class="strip-value mono">${data.mcap || '--'} <span style="font-size:11px;color:${mcapChangeColor}">${mcapArrow} ${Math.abs(data.mcapChange24h || 0).toFixed(1)}%</span></div>
       </div>`;
+  }
 
-    // Top Sectors and Narratives used to be two separate tiles built from
-    // the exact same state.narrativePerf array (just sliced to different
-    // lengths) — genuinely redundant, especially obvious when only 1-2
-    // sectors resolve and both tiles show the identical single entry.
-    // Consolidated into one.
-    const sectorTile = (data.narrativeSectors && data.narrativeSectors.length)
+  // Top Sectors and Narratives used to be two separate tiles built from
+  // the exact same state.narrativePerf array (just sliced to different
+  // lengths) — genuinely redundant, especially obvious when only 1-2
+  // sectors resolve and both tiles show the identical single entry.
+  // Consolidated into one.
+  function sectorTileHtml(data) {
+    return (data.narrativeSectors && data.narrativeSectors.length)
       ? `<div class="strip-tile">
           <div class="strip-label">Top Sectors &middot; 7D</div>
           <div class="strip-list">
@@ -376,23 +555,215 @@ const Render = (() => {
           <div class="strip-label">Top Sectors &middot; 7D</div>
           <div class="strip-value" style="color:var(--text3)">--</div>
         </div>`;
+  }
 
-    const listTile = (label, list, colorVar) => `
+  function moversListTileHtml(label, list, colorVar) {
+    return `
       <div class="strip-tile">
         <div class="strip-label">${label} &middot; 24h</div>
         <div class="strip-list">
-          ${list.map(x => `<div><span>${esc(x.symbol)}</span><span style="color:${colorVar}">${x.change > 0 ? '+' : ''}${x.change.toFixed(1)}%</span></div>`).join('')}
+          ${(list || []).map(x => `<div><span>${esc(x.symbol)}</span><span style="color:${colorVar}">${x.change > 0 ? '+' : ''}${x.change.toFixed(1)}%</span></div>`).join('')}
         </div>
       </div>`;
+  }
 
+  function topStripHtml(data) {
     return [
-      pulseTile('Pulse Spot', data.pulseSpot),
-      pulseTile('Pulse Perp', data.pulsePerp),
-      fngTile, domTile, mcapTile, sectorTile,
-      listTile('Top Gainers', data.gainers || [], 'var(--green-text)'),
-      listTile('Top Losers', data.losers || [], 'var(--red-text)')
+      pulseTileHtml('Pulse Spot', data.pulseSpot),
+      pulseTileHtml('Pulse Perp', data.pulsePerp),
+      fngTileHtml(data), domTileHtml(data), mcapTileHtml(data), sectorTileHtml(data),
+      moversListTileHtml('Top Gainers', data.gainers || [], 'var(--green-text)'),
+      moversListTileHtml('Top Losers', data.losers || [], 'var(--red-text)')
     ].join('');
   }
 
-  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, newsSectionHtml, esc };
+  // Dashboard tab (B1): the always-visible top strip's tiles at full
+  // depth — top 5 by market cap (new) and top 10 gainers/losers (vs the
+  // strip's compact top 3) — plus the same dominance/mcap/F&G/sectors
+  // tiles reused as-is. Altcoin Season Index is intentionally NOT built:
+  // CoinGecko's free /coins/markets `price_change_percentage` param only
+  // supports 1h/24h/7d/14d/30d/200d/1y, not a 90d window, so computing it
+  // accurately would mean ~50-100 individual per-coin market_chart calls —
+  // exactly the kind of load already producing live 429s/CORS failures on
+  // the existing endpoints. Flagged back rather than shipping a silent
+  // approximation on the wrong window.
+  function top5MarketCapTileHtml(list) {
+    if (!list || !list.length) {
+      return `<div class="strip-tile">
+          <div class="strip-label">Top 5 &middot; Market Cap</div>
+          <div class="strip-value" style="color:var(--text3)">--</div>
+        </div>`;
+    }
+    return `<div class="strip-tile">
+        <div class="strip-label">Top 5 &middot; Market Cap</div>
+        <div class="strip-list">
+          ${list.map(c => {
+            const chg = c.change24h;
+            const color = chg >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+            const sign = chg >= 0 ? '+' : '';
+            const price = c.price >= 1 ? c.price.toFixed(2) : c.price;
+            return `<div><span>${esc(c.symbol)} <span class="mono" style="color:var(--text3)">$${esc(String(price))}</span></span><span style="color:${color}">${chg != null ? sign + chg.toFixed(1) + '%' : '--'}</span></div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  function dashboardHtml(data) {
+    return [
+      domTileHtml(data), mcapTileHtml(data), fngTileHtml(data), sectorTileHtml(data),
+      top5MarketCapTileHtml(data.top5MarketCap),
+      moversListTileHtml('Top 10 Gainers', data.gainers10 || [], 'var(--green-text)'),
+      moversListTileHtml('Top 10 Losers', data.losers10 || [], 'var(--red-text)')
+    ].join('');
+  }
+
+  // Market Flows (B2): sector/category cards with click-through to
+  // constituent coins. `expandedIds` is a Set of categoryId strings
+  // currently expanded — kept in app.js state, passed in here so this
+  // stays a pure render function like everything else in this file.
+  function pctCellHtml(val) {
+    if (val == null) return '<span style="color:var(--text3)">--</span>';
+    const color = val >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+    const sign = val >= 0 ? '+' : '';
+    return `<span style="color:${color}">${sign}${val.toFixed(1)}%</span>`;
+  }
+
+  function marketFlowsHtml(sectorPerf, expandedIds) {
+    if (!sectorPerf || !sectorPerf.length) {
+      return '<div class="loading-state">Loading sector data...</div>';
+    }
+    const sorted = [...sectorPerf].sort((a, b) => (b.mcap || 0) - (a.mcap || 0));
+    const rows = sorted.map(sector => {
+      const isOpen = expandedIds && expandedIds.has(sector.categoryId);
+      const coinRows = isOpen
+        ? sector.coins.slice(0, 15).map(c => `
+            <tr class="flows-coin-row">
+              <td>${esc((c.symbol || '').toUpperCase())} <span style="color:var(--text3)">${esc(c.name || '')}</span></td>
+              <td class="mono">${c.market_cap != null ? '$' + esc(String(Math.round(c.market_cap).toLocaleString())) : '--'}</td>
+              <td>${pctCellHtml(c.price_change_percentage_24h_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_7d_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_30d_in_currency)}</td>
+              <td>${pctCellHtml(c.price_change_percentage_1y_in_currency)}</td>
+            </tr>`).join('')
+        : '';
+      return `
+        <tr class="flows-row" data-category-id="${esc(sector.categoryId)}" role="button" tabindex="0" aria-expanded="${isOpen}">
+          <td>${isOpen ? '&#9660;' : '&#9654;'} ${esc(sector.name)}</td>
+          <td class="mono">${sector.mcap != null ? '$' + esc(String(Math.round(sector.mcap).toLocaleString())) : '--'}</td>
+          <td>${pctCellHtml(sector.weightedChange24h)}</td>
+          <td>${pctCellHtml(sector.weightedChange7d)}</td>
+          <td>${pctCellHtml(sector.weightedChange30d)}</td>
+          <td>${pctCellHtml(sector.weightedChange1y)}</td>
+        </tr>
+        ${isOpen ? `<tr class="flows-coins-wrap"><td colspan="6">
+          <table class="flows-coins-table"><thead><tr>
+            <th>Coin</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th><th>1y</th>
+          </tr></thead><tbody>${coinRows}</tbody></table>
+        </td></tr>` : ''}`;
+    }).join('');
+
+    return `
+      <div class="flows-note">Market cap shown is the top-50-by-cap coins fetched per category, not the full category total. Click a row to see its coins. 30D/1Y come from a separate extended-window source and load a moment after the rest — a &quot;--&quot; there means that window isn&#39;t available for the sector, not that it&#39;s flat.</div>
+      <table class="flows-table">
+        <thead><tr><th>Category</th><th>Market Cap</th><th>24h</th><th>7d</th><th>30d</th><th>1y</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // Heatmap (B5): flattens every coin across the same category set Flows
+  // uses (dedup by symbol, keep the highest-mktcap instance — a coin can
+  // appear in multiple categories), tile size ~ sqrt(market cap) (keeps
+  // one giant BTC tile from swallowing the whole grid), color = 24h%. No
+  // 1h toggle — that window isn't fetched anywhere else and this tab is
+  // explicitly the lowest-priority one on the roadmap, not worth a new
+  // CoinGecko window just for a toggle.
+  function heatmapHtml(sectorPerf) {
+    if (!sectorPerf || !sectorPerf.length) {
+      return '<div class="loading-state">Loading sector data...</div>';
+    }
+    const bySymbol = new Map();
+    sectorPerf.forEach(sector => {
+      (sector.coins || []).forEach(c => {
+        const existing = bySymbol.get(c.id);
+        if (!existing || (c.market_cap || 0) > (existing.market_cap || 0)) {
+          bySymbol.set(c.id, c);
+        }
+      });
+    });
+    const coins = [...bySymbol.values()]
+      .filter(c => c.market_cap != null)
+      .sort((a, b) => b.market_cap - a.market_cap)
+      .slice(0, 120);
+    if (!coins.length) return '<div class="loading-state">No coin data yet.</div>';
+
+    const maxSqrt = Math.sqrt(coins[0].market_cap);
+    const MIN_PX = 56, MAX_PX = 168;
+
+    const tiles = coins.map(c => {
+      const size = Math.round(MIN_PX + (Math.sqrt(c.market_cap) / maxSqrt) * (MAX_PX - MIN_PX));
+      const chg = c.price_change_percentage_24h_in_currency;
+      // Color intensity scales with |chg|, capped at 10% for full saturation
+      // — keeps a +40% meme-coin spike from just looking identical to +11%.
+      const intensity = chg == null ? 0 : Math.min(1, Math.abs(chg) / 10);
+      const bg = chg == null
+        ? 'var(--surf2)'
+        : chg >= 0
+          ? `color-mix(in srgb, var(--green) ${20 + intensity * 55}%, var(--surf2))`
+          : `color-mix(in srgb, var(--red) ${20 + intensity * 55}%, var(--surf2))`;
+      const fontSize = Math.max(10, Math.round(size / 6));
+      return `
+        <div class="heatmap-tile" style="width:${size}px;height:${size}px;background:${bg};font-size:${fontSize}px;" title="${esc((c.name || '').toString())}">
+          <div class="heatmap-symbol">${esc((c.symbol || '').toUpperCase())}</div>
+          <div class="heatmap-chg">${chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%' : '--'}</div>
+        </div>`;
+    }).join('');
+
+    return `<div class="heatmap-grid">${tiles}</div>`;
+  }
+
+  // Phase 8 News tab: a plain dense list of the existing Snitch feed
+  // (already integrated for per-card badges/detail-modal sections) as
+  // its own top-level tab — confirmed scope with the owner: an
+  // additional surface, not a replacement for the existing per-card
+  // treatment, which stays exactly as-is. Reuses the same
+  // tweetBadgeHtml()/sentTagHtml()/timeAgo() helpers newsSectionHtml()
+  // already uses, so the two surfaces render news identically.
+  function newsFeedHtml(articles) {
+    if (!articles) return '<div class="loading-state">Loading news...</div>';
+    if (!articles.length) return '<div class="loading-state">No recent news.</div>';
+    const rows = articles.map(a => `
+      <div class="news-feed-item">
+        <a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" class="news-headline">${esc(a.headline)}</a>
+        <div class="news-meta">
+          <span class="news-src">${tweetBadgeHtml(a.url)}${esc(a.source)} &middot; ${timeAgo(a.time)} ago${a.tickers && a.tickers.length ? ' &middot; ' + esc(a.tickers.join(', ')) : ''}</span>
+          ${sentTagHtml(a.sentiment)}
+        </div>
+      </div>`).join('');
+    return `<div class="news-feed-list">${rows}</div>`;
+  }
+
+  // Phase 3: account-scoped Watchlist tab. `user` is a Supabase user
+  // object or null (not signed in) — `rows` is [] either way a signed-in
+  // user just hasn't starred anything yet, or price lookups failed.
+  function watchlistHtml(user, rows) {
+    if (!user) {
+      return `<div class="loading-state">Sign in (account icon, top right) to build a watchlist that syncs across devices.</div>`;
+    }
+    if (!rows.length) {
+      return `<div class="loading-state">No coins starred yet. Star a coin from the Scanner to add it here.</div>`;
+    }
+    const body = rows.map(r => `
+      <tr>
+        <td>${esc(r.symbol)} <span style="color:var(--text3);font-size:11px;">${esc(r.market)}</span></td>
+        <td class="mono">${r.price != null ? '$' + esc(String(r.price)) : '--'}</td>
+        <td>${pctCellHtml(r.change24h)}</td>
+      </tr>`).join('');
+    return `
+      <table class="flows-table">
+        <thead><tr><th>Coin</th><th>Price</th><th>24h</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>`;
+  }
+
+  return { renderCardGrid, cardHtml, detailModalHtml, topStripHtml, dashboardHtml, marketFlowsHtml, heatmapHtml, newsFeedHtml, newsSectionHtml, watchlistHtml, esc };
 })();

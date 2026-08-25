@@ -4,6 +4,1019 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] - on branch `terminal-build/phase-0-1`
+
+Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
+Phase 8, outcome-logging, OI 15m%, the extended 7-TF panel, the
+CoinPaprika fallback tier, sloped regression-channel levels, all of
+Phase 5 Stages 0-4 (strategy-enrichment indicator math through
+advanced-tier scoring — the full 12-strategy batch), Phase 3 (real
+Supabase Auth + account-scoped watchlist), and a Flows 1Y column added
+in follow-up sessions with the owner present. Deliberately left
+unmerged on a branch pending review, per standing branch discipline
+(`main` auto-deploys live). Not version-bumped or tagged; that happens
+at merge time.
+
+### Changed (Phase C4 — the setup scoring model)
+Replaces `tradeQualityScore()`'s alignment-dominated blend. **59 of 60
+fixture scores changed, 26 band flips, mean |delta| 23.1.**
+
+**The structural fix: direction now comes from the trigger, not from 1H's
+Alligator.** 1H becomes context that agrees or disagrees, never a veto.
+
+**Solves the 38%-blind problem.** Of the 21 fixture coins with no 1H
+alignment — every one previously a hardcoded 15/AVOID regardless of what was
+on offer — 6 now surface as WATCH or better, including **XMR at 80/EXCELLENT
+in a RANGING 1H regime**, exactly the mean-reversion scalp the old model was
+structurally unable to see.
+
+Model: **entry 40% / context 35% / method 25%**, with R:R as a gate.
+- *entry* — the entry timeframe's discrete triggers, credited via a
+  (regime × trigger) fit table.
+- *context* — confirm-TF regime plus higher-TF agreement, **scored rather
+  than enforced**. Reads `lineOrder` not `alignment`, so an invalidated
+  trend isn't mistaken for a range.
+- *method* — `buildContinuation()`'s existing 0-100 mean.
+- *R:R* — gates at 1.0 instead of grading (C2 found no monotonic
+  relationship, so "higher is better" would select worse trades).
+  Non-viable caps the score at 45.
+
+Discipline: **structure from principle, direction-of-effect from
+measurement, weights round.** The evidence is one 100-bar window across 60
+coins with overlapping forward windows — strong enough to say "don't reward
+breakouts", far too thin to justify fitted coefficients. Fitting weights to
+n=63 would be overfitting dressed as rigour.
+
+Measured effects encoded: `stochCrossFromExtreme` in a trending 15M context
++0.571 ATR (strongest cell found); `levelBreak` negative in *every* regime
+(−0.141 to −0.605, with near-perfect bull/bear symmetry); squeeze+breakout
+the worst cell measured, so a squeeze does not promote its own breakout;
+freshness decays on 1H but is flat on 5M, so decay is per-mode and **zero
+for scalping**.
+
+**A second-path bug caught mid-phase.** Removing the veto from scoring left
+it in place in `bandLabel()` via `alignmentCeiling`, so the identical
+blindness persisted — XMR scored 80 and was *still* forced to AVOID.
+`evaluate()` now returns `ceiling: null`, with the classic chain preserved
+as `alignmentChain` for display. Band thresholds left at 80/50 rather than
+recalibrated: they yield EXCELLENT 7% / WATCH 18% / AVOID 75%, selective
+without fitting thresholds to one sample.
+
+Also: the CONT/EXH/REV breakdowns are now rebuilt against the trigger's
+direction, since exhaustion and reversal became direction-aware in B2 —
+otherwise a counter-trend scalp is charged for exhaustion of a trend it
+isn't taking.
+
+`MODES` already carries a `swing` config, so Phase D's dual scoring is a
+config change rather than a rewrite. 11 new tests.
+
+### Removed (the `maxAgeMinutes` freshness filter)
+Removed from the scan pipeline and from Settings, at the owner's call. It was
+broken and conceptually wrong, in that order.
+
+**Broken:** dropping a coin took an early `return` that skipped
+`activeKeys.add()`, so `clearDiscoveredIfMissing()` then deleted that coin's
+discovery timestamp, and the next scan re-discovered it with a fresh one. A
+persistently trending coin therefore **flickered on a ~20-minute cycle** and
+its "discovered X ago" label reset each time, instead of being filtered once.
+Removing the filter also repairs that label, since the deletion path was the
+thing corrupting it.
+
+**Wrong:** freshness is not quality. The filter hid the highest-scoring
+persistent setups precisely *because* they had persisted. And measured, a
+trigger-age window predicts nothing extra on 5M (flat from 0 to 7 bars), so
+even the concept it reached for is better served by trigger age — a market
+event, rather than a bookkeeping artefact of when this browser first happened
+to see the symbol.
+
+Zero score change; scoring never read it.
+
+### Added (Phase C3 — entry triggers and trigger age)
+`Indicators.detectTriggers()` reports discrete entry EVENTS and how many
+bars ago each last fired: `[{name, direction, barsAgo}]`, freshest first,
+`barsAgo: 0` = the last closed bar. Five types — `macdCross`,
+`stochCrossFromExtreme`, `bandBreakout`, `levelBreak`, `liquiditySweep`.
+Additive: **zero score change** on all 60 fixture coins. Cost is negligible
+— `analyzeTimeframe()` now runs at 0.305 ms/call, still below the 0.380 ms
+measured in the original audit because F5's cleanup freed more than this
+adds.
+
+Everything else in the snapshot answers "what is true right now"; this
+answers "what just happened". Continuation scoring is built almost entirely
+from STATES (EMA stacked, above cloud, ADX high), which is why it can say a
+setup looks good without being able to say there is an entry *here, now*.
+
+**Age is the point.** Every existing cross field was evaluated only at the
+final bar, so a cross that fired one bar earlier was invisible — the signal
+existed for exactly one scan and then vanished. Measured on 5M: **90% of
+coins have a trigger within 8 bars, but only 12% fired on the current bar**,
+so last-bar-only evaluation was discarding roughly 78 points of real signal
+every scan. This is also what freshness should have been keyed on all along,
+rather than the discovery-timestamp hack that produced the 20-minute flicker.
+
+Detection only — no grading. Which triggers matter and how fast a stale one
+decays is a C4 scoring decision.
+
+**Findings, direction-balanced to remove the drift that contaminated the
+first C2 run.** On 5M:
+
+| trigger | balanced | bull / bear |
+|---|---|---|
+| `stochCrossFromExtreme` | **+0.568** | +0.545 / +0.592 |
+| `levelBreak` | **−0.217** | −0.211 / −0.222 |
+| `bandBreakout` | −0.183 | −0.061 / −0.305 |
+
+Near-perfect long/short symmetry on the first two means these are genuinely
+drift-neutral: **at 5M, mean-reversion entries work and breakout entries
+fade.** `levelBreak` is negative on all three timeframes. This independently
+cross-validates the C1 result that 5M momentum is contrarian — two separate
+analyses, same conclusion, which is much stronger evidence than either alone.
+
+Freshness itself is *directionally* supported but not firmly established:
+5M and 1H both peak at delay 0-1 and decay to negative by delay 6-7, while
+15M is erratic (worst at delay 0, best at delay 3-4 — no plausible
+mechanism). Caveat that applies to all of the above: forward windows
+overlap heavily, so the effective sample is materially smaller than the
+raw n suggests, and this is one 100-bar window across 60 coins.
+
+New tooling: `validate-trigger-age.js`. 9 tests cover age reporting, the
+freshest-firing rule when a trigger repeats, lookback bounds, the
+extreme-required condition on stochastic crosses, and the transition
+requirement that stops a multi-bar band excursion re-firing every bar.
+
+### Added (Phase C2 — risk:reward)
+`Indicators.riskReward(snapshot, direction)` returns entry / stop / target /
+ratio plus provenance flags, and `analyzeTimeframe()` now exposes the
+nearest-first structural level lists it needs. Additive: **zero score
+change** on all 60 fixture coins, since nothing reads it until C4.
+
+The arithmetic is trivial and the definitions are the whole problem, so
+they were chosen by forward simulation rather than plausibility
+(`tools/compare-rr-definitions.js` — enter at bar i's close, walk i+1..i+24,
+stop or target first, both-touched counted as a stop, timeouts marked to
+market, ~1,500 simulated trades per pairing per timeframe).
+
+- **Stop** = last opposing fractal + 0.25 ATR buffer, floored at 0.4 ATR.
+  The floor is load-bearing: a swing low 0.1 ATR under entry produces a
+  ~27:1 ratio that noise removes instantly. It fires on 13-21% of real
+  setups. Widening (rather than rejecting) is the conservative direction —
+  it lowers the reported ratio rather than flattering it.
+- **Target** = the **second** structural level, not the nearest. Measured
+  across both 15M and 5M and every stop variant, the nearest level yields a
+  median ratio of 0.23-0.83 — risking more than the target pays — while the
+  second yields 0.75-1.70. The nearest fractal is where price stalls, not an
+  objective. `firstObstacle` is returned separately so the UI can still show
+  that stall.
+- Levels report whether they were **observed or synthesised**
+  (`nearestLevels()` silently substituted a `price ± ATR×1.5` buffer when no
+  fractal existed, which would make R:R a fabricated ratio presented as a
+  measurement).
+
+**A methodology correction caught mid-analysis.** The first version of the
+comparison was long-only, and the fixture window carries **+11.6% mean drift
+on 1H with 80% of coins up**. That produced a fake +0.79R "expectancy" on
+random entries and ranked wide ATR targets best purely because they
+harvested the drift. The tool now runs both directions and averages, with
+long and short reported separately so bias stays visible instead of being
+averaged away. The best definition under the corrected measurement
+(`structure` stop / `structure-2` target on 5M) shows long +0.064 vs short
++0.059 — near-perfect symmetry, i.e. genuinely drift-neutral.
+
+**The finding that changes the plan: R:R is not a quality score.**
+Drift-neutral balanced expectancy is indistinguishable from zero for *every*
+stop/target pairing tested (best +0.08R, with its long and short halves
+disagreeing by more than that). There is no monotonic "higher R:R = better
+trade" relationship, because a wider target's win-rate penalty cancels its
+payoff gain — median-ratio-3.0 definitions won 20-34% of the time, ratio-1.0
+definitions won 50-59%. Scoring R:R as "more is better" would actively
+select worse trades. This revises the Phase C plan, which proposed R:R as a
+weighted 25% component.
+
+Its honest uses instead: a **viability gate** (below 1.0 you are risking
+more than the setup can pay — rejects ~40% of real setups), a position-
+sizing input for the bot, and the actionable entry/stop/target numbers a
+paying user needs. Edge has to come from signal selection; geometry alone
+has none.
+
+New tooling: `explore-rr.js` (geometry distributions),
+`compare-rr-definitions.js` (drift-neutral forward simulation). 10 tests
+cover the second-level target rule, the stop floor's suppression of
+manufactured ratios, long/short mirror symmetry, fallback flagging, and
+refusal to guess on unusable input.
+
+### Added (Phase C1 — market regime classification)
+`Indicators.classifyRegime()` labels each timeframe **trending / squeeze /
+transition / ranging**, plus the raw inputs behind it (`lineOrder`,
+`alligatorSpreadAtr`, `bbBandwidthPct`) and a general `percentileRank()`
+helper. Purely additive: **zero score change** on all 60 fixture coins,
+since nothing reads it until C4.
+
+Built on the Alligator's own geometry rather than a bolted-on trend
+filter — Williams already describes the indicator as *sleeping* (lines
+converged) versus *eating* (lines fanned and ordered), and
+`alligatorSpreadAtr` makes that measurable, keeping regime inside the
+taught method. It reads `lineOrder` rather than `alignment`, because
+`alignment` is forced to 0 by a jaw touch and so conflates "this move was
+invalidated" with "there is no trend here". Measured: `lineOrder` is
+non-zero for 78-87% of timeframes while `alignment` is only 42-65%.
+
+Thresholds are calibrated against frozen fixtures, not convention:
+- **spread >= 0.5 ATR** sits in the measured gap between ordered mouths
+  (p25 0.41-0.59) and closed ones (p75 0.35-0.40).
+- **ADX >= 20**, Wilder's "a trend exists" line, deliberately not the 25
+  "strong trend" line: on 5M only ~25% of coins clear 25. The gate is not
+  redundant with spread despite r=0.73 — 22-38% of wide-spread coins sit
+  below ADX 20, and those are *stale fans* (lines still spread from a move
+  whose momentum is gone) that must not read as trending.
+- **squeeze at the 10th percentile** of bandwidth's own history, not the
+  textbook 20th: 5M bandwidth percentile has a median of 18, so a 20
+  threshold labels a fifth of all 5M coins as squeezing and starves
+  transition to zero.
+
+A precedence chain rather than a weighted blend, because the three inputs
+are strongly collinear (adx-spread 0.73, adx-bandwidth 0.71) and adding
+them would triple-count one underlying signal.
+
+**The significant finding — regime is not valid on 5M.** Forward-validated
+over 4,860 classifications (classify at bar i, measure i+1..i+N, no future
+data entering the classification):
+
+| TF | trending vs ranging forward efficiency | verdict |
+|---|---|---|
+| 1H | +0.10 at 12 bars, positive at every horizon 4-20 | reliable |
+| 15M | +0.12 at 6-8 bars, positive 4-16 | reliable |
+| 5M | **negative at all seven horizons tested** | do not use |
+
+The 5M inversion is systematic, not sampling noise — it held at 3, 4, 6,
+8, 12, 16 and 20 bars with n>1000. Every input here is a lagging
+description of a completed move (jaw is SMMA(13) displaced 8; ADX(14) is
+double-smoothed), so on 5M the mouth finishes fanning only once the move is
+spent and mean reversion follows — a short-horizon momentum reading acting
+as a contrarian one. This contradicted the originally proposed
+regime-first-on-5M architecture and changes it: **regime comes from 1H and
+15M; 5M's role is entry triggering, not regime.** The 5M value is still
+recorded (honest math, useful for display) but must not be treated as
+predictive.
+
+An earlier backward-looking validation suggested the same 5M problem but
+was not trustworthy — it classified only the final bar (n=6-13 per bucket)
+and its result flipped sign with the window, i.e. it was noise. Both the
+throwaway and the forward version are kept in `tools/` so the difference in
+method is visible.
+
+New tooling: `explore-regime.js` (input distributions),
+`calibrate-regime.js` (threshold sweeps), `validate-regime-forward.js`
+(predictive validation). 11 new tests cover the precedence chain, boundary
+inclusivity, the stale-fan case, and graceful degradation on missing input.
+
+### Added (Phase A — frozen-fixture regression harness)
+`tools/` now holds a three-part harness: `capture-fixtures.js` freezes raw
+Bybit candles (5M/15M/1H/4H, 60 coins) to JSON, `score-fixtures.js` scores
+those frozen candles with the current code, and `diff-scores.js` compares
+two snapshots — refusing outright to diff across different fixture
+captures, since that measures the market moving rather than the code
+change. Verified deterministic: re-scoring the same fixtures diffs to
+zero. 4H is captured now despite being display-only, because the
+regime/context work needs real 4H history and re-capturing later would
+break comparability with the committed baseline.
+
+### Fixed (Phase B — scoring correctness, measured on frozen fixtures)
+Four independent correctness fixes ahead of the scoring restructure.
+Cumulative effect across the 60-coin sample: **38 scores changed, 6 band
+flips, mean |delta| 6.92**, band mix AVOID 42→41 / WATCH 16→18 /
+EXCELLENT 2→1.
+
+**B1 — score on closed candles, not the in-progress bar.** Bybit returns
+the still-forming candle as the newest element, so every indicator was
+reading a provisional bar and the same coin scored differently depending
+purely on when in the candle a scan fired. Also a methodology correction:
+Alligator/AO/fractal is a bar-close method, so a signal read off an
+unclosed bar isn't the signal the method defines. Done in
+`Scoring.evaluate()` rather than `Api.fetchCandleSet()` so scoring owns
+its input contract — the bot shares this file but not the fetch layer.
+Display price is unaffected. Largest single contributor: 37 scores
+changed, 5 band flips, worst XPL 60→15, SOL 62→21, NVDA 88→66.
+
+**B2 — mirror all directional logic for shorts.** Four asymmetries all
+leaning the same way: `!aoRising` credited flat/unavailable AO as bearish
+confirmation (12 free TQS points); the 40–75 RSI "healthy" band was
+applied unmirrored so a short at RSI 30 was penalised as if oversold;
+`buildExhaustion()` took no bias at all and penalised shorts for the
+market being overbought — the condition that supports the short; and
+"1H RSI extreme" was long-only with no bearish mirror. Symmetry is now
+structural (folding `100 - rsi` for bearish bias) rather than two sets of
+constants hoping to stay in sync. Measured: long-biased coins moved 0.00
+on average, short-biased +4.21 — only the broken side moved.
+
+**B3 — retire Alligator invalidation when the mouth flips.** A jaw touch
+earned in a bearish move stayed active after the mouth flipped bullish,
+and since `alignment` is forced to 0 whenever the flag is set, a valid new
+setup could be suppressed by an event from the opposite trend. Zero score
+change on the sample — the leak fires somewhere in history for 92% of
+TF-series but had always self-corrected by the final bar, the only bar the
+live score reads. It matters considerably more for anything walking
+history bar by bar, i.e. the bot's backtesting.
+
+**B4 — bounded ATR bucketing, honest lookback, null-safe RSI.**
+`bucketedAtr()` snapped sub-0.1% ATR up to 0.1%, inflating genuinely
+low-volatility pairs by up to 10x and contaminating every ATR-relative
+distance check; worst case is now 1.25x. `nearestLevels()`'s `lookback`
+defaulted to 150 against a 100-candle fetch and never constrained
+anything. `Math.round(null)` is 0, so a missing RSI rendered as "RSI 0".
+
+11 new tests cover the directional-symmetry invariants and the
+invalidation lifecycle, so a future one-sided rule fails loudly instead of
+skewing quietly. 113/113 browser, 81/82 Node (1 pre-existing unrelated
+`fractals`/`heikinAshi` fixture failure, untouched).
+
+### Removed (Audit F5 — dead snapshot fields)
+`analyzeTimeframe()` was returning 15 fields no caller ever read:
+`macdSeries`/`stochSeries` (full 100-element series × 3 TF × 120 coins —
+the worst offenders), `bbSqueeze` (a 20-bar loop computed and discarded),
+`adxPrev`, `plusDI`, `minusDI`, `tenkanKijunBullishCross`, `macdLine`,
+`macdSignal`, `bbMiddle`, `bbBandwidth`, `stochK`, `stochD`, `tenkan`,
+`kijun`. Stage 3's MACD/Stochastic divergence ended up reusing
+`macdResult.macdLine`/`stochResult.k` locally instead of the exposed
+series fields, and the two Stage-1 assertion tests that pinned
+`snap.macdLine`/`snap.stochK`/`snap.tenkan` were the only remaining
+readers — updated to assert against the underlying indicator functions
+directly instead. Confirmed via `git grep` across every non-indicators.js
+source file before removal. Zero scoring/UI behavior change — verified
+112/112 browser tests and 73/74 Node tests (the 1 failure is the
+pre-existing, unrelated `fractals`/`heikinAshi` case). Cuts ~563 KB/scan
+of retained-but-unused payload.
+
+### Fixed (Audit F4 — Auth hard-fails if the Supabase CDN is unavailable)
+`js/auth.js` called `window.supabase.createClient()` at module-load time
+with no guard. Verified: with `window.supabase` undefined (CDN blocked,
+offline, outage) it threw a `TypeError` that aborted the whole IIFE,
+leaving the global `Auth` unassigned — every later call site (star
+clicks, the Watchlist tab, the Account panel) then threw `ReferenceError`
+instead of degrading. The scanner itself only survived because the
+star-click throw happened to land after the localStorage write — luck of
+statement ordering, not design. Now wrapped in try/catch; on failure
+`Auth` still exists with a null client, `getUser()`/`init()` resolve to
+signed-out state, `signUp`/`signIn` reject with a catchable message the
+Account panel's existing error display already renders, and `signOut` is
+a no-op. Re-verified by re-running `js/auth.js` standalone under a
+`window` with no `supabase` global: `Auth` defines, no throw anywhere in
+the call chain.
+
+### Changed (Card TF row redesigned: 4H added, modal panel removed)
+Replaced the card's Alligator-confidence Active TF row (1H/15M/5M
+triangle icons) with a compact 4-chip row — 4H/1H/15M/5M, each showing
+name, a simple trend triangle (up/down/flat dash), and % change. The
+modal's old 7-timeframe "All timeframes" panel (1M/5M/15M/30M/1H/4H/1D)
+is removed entirely — 4H now lives on the card itself instead of
+needing a click to see it, and the other three (1M/30M/1D) weren't kept.
+
+The new trend reading is deliberately simpler than the old Alligator-
+confidence tiering it replaces: last-candle-close vs the one before it,
+same concept the removed modal panel already used, not a 5-tier
+confidence state (that's a 1H/15M/5M scoring-only concept with no
+natural 4H analog, and mixing two different "trend" ideas across four
+chips in one small row would read as inconsistent).
+
+**Real cost tradeoff, accepted deliberately**: 4H candles are now
+fetched for every scanned coin (`Api.fetchCandleSet()`'s 4th parallel
+request, small 30-candle limit since it's display-only, never fed to
+`Scoring.evaluate()`) instead of lazily only when a coin's modal opened.
+That's roughly +1 Bybit request per coin per scan, replacing the old
+7-request-per-modal-open panel — net request volume across a typical
+session should still be lower (240 small requests once vs repeated
+7-request bursts per coin inspected), but it does mean every scan is
+slightly heavier regardless of how many coins get a closer look.
+
+`Api.fetchExtendedTimeframes()` and the modal's lazy-load path
+(`loadExtendedTfPanel()` in `app.js`) are removed as dead code along
+with it. 113/113 browser tests, 73/74 Node tests (1 pre-existing
+unrelated failure, untouched by this change since it's render/api/app
+only — scoring.js wasn't touched).
+
+### Changed (Icon boldness fix + same pattern extended to Exhaustion/Reversal)
+Two follow-ups from live review of the icon redesign:
+- The icon circles were far more washed out live than in the mockup that
+  was approved — shipped at 13% background alpha vs the mockup's solid
+  fill. Bumped to 33% (`color + '55'`) for real contrast against the
+  card's near-black background, and the OI row now gets the same leading
+  tier icon as every other item (previously it only had the trailing
+  X/10 chip, no icon, making it visually inconsistent with the rest).
+- Exhaustion and Reversal get the same icon treatment — explicitly
+  **display-only, scoring untouched**: `tradeQualityScore()` reads
+  `exhaustion.score`/`reversal.score` directly, so rescaling their
+  underlying 0-40/0-50 point-sum to a percentage-mean like Continuation
+  would have silently changed every coin's live Trade Quality Score,
+  which wasn't what was asked. Instead, each item's own known point
+  ceiling (a lookup table in `render.js`, e.g. RSI-divergence maxes at
+  20, BB-extreme at 8) turns its existing point value into a percentage
+  for icon-tier purposes only — the actual score sum is identical to
+  before. Every item here is a fixed-max binary fire/no-fire except
+  Exhaustion's RSI-extremity item, which is genuinely graded (points
+  scale with how far RSI sits past 68/32), so it's the one item that can
+  actually land on ! or ✕ instead of always ✓. Per-item point suffixes
+  ("+12") dropped from Exhaustion/Reversal rows too — the header bar is
+  now the only place a number appears, matching Continuation.
+
+### Changed (Continuation breakdown — icon-based, at-a-glance display)
+Follow-up to the F3 percentage redesign, requested after reviewing it
+live: raw "+NN%" numbers on 12-16 line items read slower than a status
+icon. `js/render.js` now buckets each item at the same >=66/33-66/<33
+cutoffs that were already breakout-proximity's own "worth mentioning"
+threshold pre-redesign (so the tiering isn't an arbitrary new number):
+green check (confirming), amber `!` (partial), dim gray cross (not
+currently active). This bucketing needed no scoring.js changes — the
+tiered alligator-alignment percentages (100/80/65/50/30/0) already
+happened to land in the right bucket per tier without any special-casing.
+
+OI shows as a `X/10` chip instead of an icon (a check/cross doesn't suit
+"how much did open interest move," a magnitude does). A label's trailing
+`(...)` qualifier is now colored independently of the leading icon —
+"(weakening)" reads amber, "(clean)" reads green — so a green-check item
+can still visibly flag a weakening sub-state instead of burying it in
+the same color as everything else.
+
+Zero-value applicable items are now shown dimmed rather than omitted
+(`scoring.js`'s `add()` always pushes to `items`, not just when > 0) —
+fixes the exact transparency gap flagged when reviewing a real card:
+the visible items alone summed to a higher average than the header
+score, because 4 applicable-but-inactive signals were invisible. They're
+part of the mean either way; now they're part of what you can see too.
+
+Each item also gets a small hover-tooltip info icon (`title=` attribute,
+matching the convention already used for TF icons and tweet badges)
+explaining what that specific signal measures.
+
+### Changed (Audit F3 — Continuation redesigned as a percentage mean)
+The old design summed ~17 fixed-point items (theoretical max ~218) and
+clipped at 65 — increasingly saturating for the best coins as Phase 5
+added more items (0/40 on `main`, 13/40 after Phase 5, per the audit).
+Since Continuation stays display-only (Q1: wiring it into
+`tradeQualityScore()` would double-count alignment), a maxed diagnostic
+that can't tell two EXCELLENT coins apart was a real loss of information.
+
+Redesigned as an unweighted mean of 0-100 sub-scores, one per signal,
+three kinds:
+- **Continuous where a natural magnitude exists** — breakout proximity
+  now uses `breakoutProximityPct()` directly instead of gating a flat 10
+  points behind a 66% threshold; the same function now also grades the
+  1H breakout-retest distance. ADX strength is scaled (50 ADX → 100%,
+  matching Audit F2's thresholds) and pulled out of the BB-squeeze block
+  into its own standalone item — trend strength is informative on its
+  own, not just alongside a live breakout. OI 15m% is now magnitude-
+  scaled against a 15% reference instead of a flat ±8 past a 5% gate.
+- **Binary events, always included** (a cross either happened or it
+  didn't) — 100 if fired, 0 if not. "No cross this bar" is real
+  information about that specific signal, so it still counts toward the
+  mean rather than being silently dropped.
+- **Structurally inapplicable, excluded from the mean** — OI 15m% only
+  exists for perps; scoring it 0 on spot coins would unfairly drag down
+  every spot card for lacking a signal it was never going to have.
+
+Fixes a latent, previously-unflagged display bug as a side effect:
+`breakdownBlockHtml()` in `render.js` has always labeled every bar
+`val/100` with a `width:${val}%` fill, but Continuation's real ceiling
+was 65 — a maxed coin visually read as "65% full." Now genuinely 0-100,
+so the label is honest for the first time. `render.js` items now render
+with a `%` suffix to make the new scale explicit.
+
+Live-verified against 12 real Bybit symbols: scores spread meaningfully
+(6% to 53%) instead of clustering at a flat capped number — two
+EXCELLENT-band coins (DOGE 53%, UNI 34%) now visibly differ where they'd
+have both read "65" before. 113/113 browser tests (was 112 — added a
+near-zero-OI coverage case), 73/74 Node tests (1 pre-existing unrelated
+failure).
+
+### Changed (Tour temporarily disabled)
+`TOUR_ENABLED = false` gates both the manual "Take the tour" button and
+the auto-trigger on first scan. `TOUR_STEPS` is stale against this
+build's new tabs (Dashboard, Flows, Heatmap, News, Watchlist), so it's
+parked rather than shown wrong. The auto-trigger guard also skips marking
+`tourSeen` while disabled, so visitors during this window still get the
+auto-tour once it's re-enabled and rewritten to match. Steps content
+untouched — re-enable by flipping the flag once amended.
+
+### Changed (branch-only — preview deploy unlocked)
+`MAINTENANCE_MODE` is committed `false` on this branch only, so the new
+Vercel preview deploy (`wicktor-terminal-preview`, tracking
+`terminal-build/phase-0-1`) is testable without the access code. `main`
+is untouched and still locked at `true` — `beta.wicktor.top` never reads
+this branch. **Must flip back to `true` before this branch is ever
+merged into `main`.**
+
+### Added (Audit F2 — ADX actually wired in)
+The original plan specified an ADX Continuation multiplier; it was never
+built, and two comments in `scoring.js` incorrectly asserted it existed
+(used to justify not re-scoring ADX in Strategy 7). Post-audit measurement
+against 38 live coins showed why the Continuation multiplier was the
+wrong home for it anyway: `count=3` coins vary across only 1 distinct
+Continuation value but 6 distinct ADX bands — ADX is the thing that
+actually separates otherwise-identical top candidates, but Continuation
+doesn't feed the Trade Quality Score at all (see F1/F3 below), so it
+would have had zero effect on ranking regardless.
+
+Wired instead into `tradeQualityScore()`'s `momentumScore`, since ADX
+measures trend *strength* (not direction — that's alignment's job):
+1H ADX < 20 (weak/ranging, per Wilder's own convention and Strategy 2's
+existing `adx>=25` "strong" threshold) subtracts 10, ADX >= 25
+(established trend) adds 15, 20-25 (developing) is neutral. At
+momentumScore's 0.3 TQS weight that's a ±3 to +4.5 point nudge — present
+but not dominant. Both stale comments corrected to point at the real
+mechanism. Live-verified against 10 real Bybit symbols (BTC/ETH/SOL/XRP/
+DOGE/ADA/LINK/AVAX/INJ/UNI): scores stay bounded 0-100, no crashes,
+directionally sane (INJ's 42.8 ADX pushes it up, weak-trend coins get
+pulled down). 112/112 browser tests, 73/74 Node tests unchanged.
+
+### Changed (Provider split — CoinPaprika becomes the primary bulk source)
+CoinGecko's free tier rate-limits constantly, and that was **not
+cosmetic**: sector data feeds `topNarrativeCandidates()` into the scan
+universe, so a throttled run silently shrank which coins got scanned. A
+live run was observed logging `stopping with 1/16 sectors`, and a patient
+out-of-band capture with 4s delays and 4 retries still only completed
+10/16. This is a signal-correctness fix.
+
+Split by **capability**, not by feature:
+- **CoinPaprika** — primary bulk source: symbol→mcap map, global metrics,
+  Dashboard Top-5, and a new fast sector engine feeding the scan
+  universe, Top Sectors strip tile, and Heatmap.
+- **CoinGecko** — specialist only: the Flows tab's 30D/1Y windows, now
+  fetched lazily on tab open instead of during every scan.
+- **CMC** — untouched emergency reserve. Its Edge Function was **not**
+  modified; it remains metered with a 2-path whitelist.
+
+**Measured result: a full cold scan now issues ZERO CoinGecko requests**
+(previously up to 23), replaced by 3 CoinPaprika calls. `marketCapMap()`
+cold: 1 request / ~600ms / 961 symbols, versus 4 paginated requests plus
+4.5s of inter-page delays. `fastSectorPerformance()`: 2 requests / ~1.1s
+for 13 sectors, versus 17 requests under a 20s deadline.
+
+Correctness cross-checks before switching:
+- Market-cap-weighted sector math agrees closely where both providers
+  returned data — 6 of 8 comparable sectors within 2.8pp (AI +1.7,
+  DePIN −0.3, Layer 1 −0.3, Layer 2 −2.0, Meme −2.8, Oracle +1.5).
+- Bybit top-120 symbols resolving to a market cap: CoinPaprika 107/120 in
+  one request vs CoinGecko 111/120 in four. Live, 18 of 20 rendered cards
+  resolve MCap.
+
+Deliberate behaviour changes, each verified rather than assumed:
+- **`Privacy` is excluded from the CoinPaprika path.** Its only
+  substantive tag, `privacy-security`, conflates privacy with security —
+  ZEC/XMR/DASH sit alongside LTC, WLD, FIL and VET, which inflated the
+  sector to #2 in the top-4 rotation on non-privacy coins' momentum. The
+  strict `privacy` tag is the opposite failure at 3 coins. Privacy still
+  works normally on the CoinGecko/Flows path.
+- **`Modular Blockchain` and `Data Availability` have no CoinPaprika
+  tag** and warn-and-skip, the same contract the CoinGecko path uses.
+- **Narrative candidates are now validated against Bybit's live spot
+  symbol set** before injection, using the instruments-info response
+  `refreshXStockSet()` already fetches (zero extra requests). A sector
+  tag is a claim about a token, not about where it trades: `BNSOLUSDT`
+  was caught live, and liquid-staking entries (METH/RSETH/CBETH/STETH/
+  MSOL) would otherwise pass `isTradeableUsdtPair()` purely because
+  "<SYMBOL>USDT" ends in USDT, then burn three Bybit round-trips each.
+- **Narrative injection now fires deterministically.** It was previously
+  best-effort and, on a cold cache, essentially never ran. The scan
+  universe therefore grows more reliably than before — intended, but it
+  does mean scans do more work.
+- **The candidate set changes materially.** Against the captured
+  CoinGecko baseline there was zero overlap, partly because CoinGecko
+  failed to fetch six sectors (RWA, Gaming, Metaverse, Liquid Staking,
+  Restaking, DeFi) that CoinPaprika returns reliably.
+- **Displayed global figures step** (BTC.D 57.0% vs 59.1%, total mcap
+  $2.80T vs $2.70T) — different coin coverage, both legitimate.
+
+Flows is now two-phase and merges rather than replaces: CoinPaprika rows
+render immediately, then CoinGecko's extended windows merge in per-sector
+keyed on name. Verified with CoinGecko fully blocked — Flows still
+rendered all 13 rows with `--` in 30D/1Y instead of collapsing to one
+row, and the scanner was unaffected. Its note copy now explains that a
+`--` means "window unavailable", not "flat".
+
+Known gap: CoinPaprika has no tokenized-stock coverage, so with the
+xStocks setting on those cards show `—` for MCap unless the CoinGecko
+tier runs. That setting is off by default and `—` is already documented
+behaviour for unmatched coins.
+
+Guards added: 30d/1y normalize to `null`, never CoinPaprika's literal
+`0`, since `pctCellHtml` only renders `--` for null and a raw 0 would
+claim every sector was flat. Implausible symbols (28 in the top 1000,
+e.g. `USDC.e`, `BTC.B`, `ZBCN ` with a trailing space) are rejected.
+Tag resolution ranks by coin-count rather than array order, which array
+order would have gotten wrong for `Infrastructure` (21-coin
+"Computing & Cloud Infrastructure" over the 71-coin "Infrastructure").
+
+`tests/runner.html` now loads `js/api.js` and covers all of the above:
+112 tests pass, up from 103.
+
+### Added (Phase 3 — real Supabase Auth + account-scoped Watchlist)
+Scope explicitly excludes tiering (Phase 4) per the owner's call — no
+`tier` column, no gating logic, nothing tiering-shaped. This phase is
+Auth + Watchlist only.
+
+- **Real email/password accounts**, additive alongside the existing
+  `ACCESS_CODE_HASH` gate (coexist, confirmed with the owner — not a
+  replacement). Email confirmation disabled on signup, matching the
+  reason password was chosen over magic link in the first place (no
+  dependency on Supabase's default email deliverability). New
+  `supabase/config.toml` `[auth]`/`[auth.email]` sections, pushed via
+  `supabase config push` — confirmed live the previous
+  `enable_confirmations` default was actually `true`, which would have
+  silently reintroduced the exact email-dependency risk being avoided.
+- New `js/auth.js`: Supabase JS client (via CDN, no build step) +
+  session management + `watchlist.{list,add,remove}`. New Account panel
+  (topbar avatar button, previously decorative/unwired) reusing the
+  existing settings-panel visual pattern — sign in / create account /
+  sign out.
+- New `watchlist` table + RLS policies
+  (`supabase/migrations/*_watchlist.sql`), first real database schema
+  for this project (Supabase was previously proxy-only). **Found and
+  fixed a real bug during live verification**: RLS policies alone don't
+  grant access — creating a table via raw SQL (not the Studio table
+  editor) leaves `authenticated`/`anon` with zero base SQL-level GRANTs,
+  so the first live star-toggle attempt failed with "permission denied
+  for table watchlist" (Postgres 42501) despite correct RLS policies.
+  Fixed with a second migration adding the missing `GRANT`s.
+- New Watchlist tab (6th nav tab): account-scoped, price + 24h% per
+  starred symbol (Bybit tickers, same pattern as the rest of the app).
+  No sparkline in this pass — scoped down deliberately rather than
+  half-built, needs per-symbol historical candles this tab doesn't
+  otherwise fetch.
+- Existing star-toggle now dual-writes to Supabase when logged in
+  (Watchlist tab's data source), while continuing to work exactly as
+  before via localStorage when logged out — owner's explicit call,
+  with an explicitly flagged future intent to eventually require login
+  for starring (not done now, not scope creep if asked for later).
+  Clean-slate migration, also owner-confirmed: no import path from the
+  pre-existing localStorage watchlist into the new account-scoped table.
+- **Security-sensitive — cross-account RLS isolation verified live, not
+  skipped**: created two real test accounts. A completely unfiltered
+  `select *` on the watchlist table (no `.eq('user_id', ...)` at all)
+  while authenticated as account 2 returned zero rows despite account
+  1's real starred coin existing in the same table — proof RLS is
+  enforced at the database level, not just by client-side query
+  filtering. Both test accounts and their test rows deleted after
+  verification via the Admin API.
+- No new tests added (this phase is UI/infrastructure, not
+  scoring/indicator logic) — verified entirely through live signup,
+  sign-in, sign-out, star-sync, and the cross-account RLS check above.
+  All 103 existing tests still pass, confirming no regression to
+  anything scoring-related.
+
+### Added (Phase 8 — News tab, roadmap complete)
+- New "News" tab: a plain dense list of the existing Snitch feed
+  (`snitch.wicktor.top/news.json`, already integrated for per-card
+  badges and the detail-modal's news section) as its own top-level
+  surface — confirmed scope with the owner: additional, not a
+  replacement. The existing per-card treatment is completely unchanged
+  and unaffected (verified live: badges and modal news section both
+  still render exactly as before).
+- New `Api.allNews(articles, limit=100)`: every article newest-first,
+  same normalized shape and sentiment-mapping as the existing
+  `newsForSymbol()`, just without the per-symbol ticker filter. New
+  `Render.newsFeedHtml()` reuses the exact same `tweetBadgeHtml()`/
+  `sentTagHtml()`/`timeAgo()` helpers the modal's news section already
+  uses, so both surfaces render news identically. No new fetch path —
+  reuses the same `fetchAllNews()` 5-min cache both surfaces already
+  share.
+- Live-verified: a real scan populated the News tab with real live
+  headlines, sources, timestamps, sentiment tags, and ticker tags; the
+  Scanner tab's per-card badges and detail-modal news section confirmed
+  unaffected; no console errors.
+
+**This completes the full priority list for tonight's session**:
+CoinPaprika fallback, sloped regression-channel levels, all of Phase 5
+(strategy-enrichment), and Phase 8 (News tab). Wyckoff tagging was
+explicitly deferred (parked alongside SMC, needs real research first —
+see memory).
+
+### Added (Phase 5 Stage 4 — advanced-tier scoring, strategies 12/13 — batch complete)
+- **Strategy 12 (Pullback Retracements)**: 15M EMA trend match + a
+  tight pullback to EMA21 (within 0.3x ATR — tighter than Strategy 1's
+  0.5x, since this is a precision entry-timing strategy) + RSI 40-60
+  (healthy, not already reversal-territory) (+12).
+- **Strategy 13 (Liquidity Sweep)**: reuses `liquiditySweepUp`/
+  `liquiditySweepDown` from Stage 1. Same "warns against current bias"
+  shape as the existing Divergent Bar/Wiseman items, same 15-pt tier as
+  Divergent Bar (same wick-rejection family) — a rejection above
+  resistance warns against an active uptrend, a reclaim below support
+  warns against an active downtrend.
+- 7 new targeted tests. Live smoke-tested against real Bybit data, no
+  console errors, existing behavior unaffected. All 103 tests pass.
+
+**Phase 5 (strategy-enrichment) is now complete — all 5 stages, all 12
+of the owner's original strategies, shipped.** `computeBias()`/
+`alignmentCeiling()` were never touched at any stage; every change is
+additional Continuation/Exhaustion/Reversal point items, exactly as
+scoped.
+
+### Stage 5 review pass (required by the plan, not skipped)
+With this many items now able to fire on the same coin, the existing
+65/40/50 caps are being hit regularly, not just in edge cases — observed
+live tonight (e.g. one real coin's Continuation total reached 85 points
+across 5 simultaneously-firing items before the 65 cap trimmed it).
+This means some lower-priority signals are effectively getting silently
+truncated on strongly-confirming coins. **Flagged for the owner's
+review, not rebalanced unilaterally** — deciding which items should
+"make room" for others on a maxed-out coin is a product judgment call,
+not something to guess at. The caps themselves (`Math.min(65/40/50,
+score)`) were already confirmed as intentional hard backstops, not
+budgets, per the original plan — this finding is about whether the
+*point values* underneath them need rebalancing now that so many items
+compete for the same capped total, not about the cap mechanism itself.
+
+### Added (Phase 5 Stage 3 — swing-tier scoring, strategies 6/7/8/9/11)
+- **Strategy 6 (Momentum Swing)**: 1H price above/below the Ichimoku
+  cloud matching bias (+12); 15M Stochastic entry cross from oversold/
+  overbought matching bias (+10).
+- **Strategy 7 (Trend Following)**: 1H plain directional MACD cross
+  (+12) — no EMA21-pullback requirement, unlike Strategy 1's 15M cross,
+  and a different timeframe entirely, so the two don't overlap. The
+  strategy's other listed condition, "EMA stack aligned with bias," is
+  deliberately NOT re-scored as a second line — only two EMAs exist
+  (9/21), so it's the identical underlying signal already scored by
+  Strategy 1's "1H EMA 9/21 bullish trend," not a genuinely distinct
+  3+-EMA stack. ADX handled via the existing Q1 multiplier design, no
+  redundant line here either.
+- **Strategy 8 (Trend Reversals)**: MACD turning against the current
+  bias while price sits within 1x ATR of an existing fractal-based key
+  level (+15, Reversal) — a reversal at a level that matters, not any
+  MACD flip. The strategy's RSI-divergence condition reuses the existing
+  item unchanged.
+- **Strategy 9 (Divergence Play)**: MACD divergence on 1H (+15) and
+  Stochastic divergence on 15M (+10), both reusing the existing generic
+  `divergence()` function against `macdSeries`/`stochSeries` (added to
+  the snapshot in Stage 1 for exactly this) — confirmed no new
+  "macdDivergence()" function was needed, since `divergence()` was
+  never RSI-specific internally. New `macdDivergence`/`stochDivergence`
+  snapshot fields computed once in `analyzeTimeframe()`.
+- **Strategy 11 (Range Bound)**: explicitly a non-trending strategy —
+  only fires when `bias===0` (1H sleeping), Reversal arm only, never
+  Continuation. 5M price at a BB extreme + RSI confirming oversold/
+  overbought (+12, mirrored for both directions). Confirmed safe:
+  `buildReversal` already computes unconditionally regardless of bias
+  (only `alignmentCeiling`/`tradeQualityScore` treat `bias===0`
+  specially), so `computeBias()`'s own handling is untouched.
+- 18 new targeted tests. Live smoke-tested against real Bybit data:
+  a real coin's modal showed "1H Price above Ichimoku cloud" firing
+  correctly alongside every earlier-stage item, no console errors, score
+  correctly capped. All 100 tests pass.
+
+### Added (Phase 5 Stage 2 — scalping-tier scoring, strategies 1-5)
+**This is the first stage in this batch that changes live signal
+output** — Stage 0/1 were purely additive/inert; from here on,
+`buildContinuation`/`buildExhaustion`/`buildReversal` read the new
+Stage 1 fields and can change a coin's Continuation/Exhaustion/Reversal
+score and band. `computeBias()`/`alignmentCeiling()` are untouched.
+- **Strategy 1 (Scalping EMA)**: 1H EMA9/21 stack matching bias (+10);
+  15M MACD cross on a genuine EMA21 pullback, within 0.5x ATR (+14).
+- **Strategy 2 (Volatility Breakout)**: 15M BB bandwidth expanding with
+  a close outside the band on the bias side (+12), ADX>=25 adds a
+  separate confirmation (+8). Approximated: the snapshot only carries
+  the current bar's squeeze state, not multi-bar squeeze history, so
+  this reads the live expansion+breakout moment rather than
+  reconstructing exactly when the squeeze itself started.
+  Noted honestly in code comments, not silently overclaimed.
+- **Strategy 3 (Breakout Retest)**: 1H price above/below its fractal
+  level AND within 0.5x ATR of it (+15, Continuation); the same
+  condition with RSI>=70/<=30 scores a separate Reversal trap-risk item
+  (+10) — distinct from the existing plain RSI-extreme Exhaustion check
+  (different threshold/arm/condition, not a duplicate). Approximated:
+  full spec ("broke out within 8 bars, retested, closed back above")
+  needs multi-bar candle history the scoring layer doesn't have: this
+  reads the live near-level state instead.
+- **Strategy 4 (Squeeze Momentum)**: 15M BB expanding + MACD histogram
+  matching bias and rising (+14) — oscillator-driven, deliberately
+  distinct from Strategy 2's price-driven condition.
+- **Strategy 5 (Mean Reversion)**: 5M price at a BB extreme (+8) and a
+  Stochastic exhaustion crossover from overbought/oversold (+10),
+  Exhaustion arm, bias-independent — two separate lines so a partial
+  confirm still shows partial pressure.
+- 24 new targeted tests (12 conditions x pass/fail case) verify each
+  strategy in isolation. Live smoke-tested against real Bybit data per
+  the plan's own requirement for this stage: multiple real coins showed
+  the new items firing correctly alongside every existing item, scores
+  still correctly capped at 65/40/50, no console errors.
+
+### Added (Phase 5 Stage 1 — strategy-enrichment snapshot wiring)
+- Wired the 6 new indicators into `analyzeTimeframe()`'s per-timeframe
+  snapshot: last-bar readings (`ema9`/`ema21`, `macdLine`/`macdSignal`/
+  `macdHistogram`, `bbUpper`/`bbLower`/`bbMiddle`/`bbPercentB`/
+  `bbBandwidth`, `adx`/`plusDI`/`minusDI`, `stochK`/`stochD`,
+  `tenkan`/`kijun`/`ichimokuAboveCloud`/`ichimokuBelowCloud`) plus simple
+  derived state in the same style as the existing `aoRising`/`acRising`
+  pattern (`emaStackBullish`, `macdBullishCross`/`macdBearishCross`/
+  `macdHistogramRising`, `bbSqueeze`/`bbExpanding`,
+  `stochBullishCrossFromOversold`/`stochBearishCrossFromOverbought`,
+  `tenkanKijunBullishCross`, `liquiditySweepUp`/`liquiditySweepDown`).
+  Full `macdSeries`/`stochSeries` also carried for Stage 2+'s MACD/
+  Stochastic divergence, which reuses the existing `divergence()`
+  function directly — it was already fully generic (never RSI-specific
+  internally), no new divergence function needed.
+- **Still deliberately inert** — nothing in `scoring.js` reads any of
+  these fields yet; `Scoring.evaluate()` output is unchanged. Strategy-
+  specific combinations (e.g. "pullback within 0.3x ATR of EMA21")
+  deliberately NOT computed here — those belong in `scoring.js` in
+  Stage 2+, combining these raw readings with a strategy's own
+  threshold, not baked into the shared snapshot.
+- Verified: new fields match calling the Stage 0 functions directly at
+  the same index; `Scoring.evaluate()`'s continuation items contain no
+  Stage-1-indicator-derived labels yet. Live-verified: a full scan
+  completes normally with cards rendering correctly, no new console
+  errors, no visible performance regression despite six new indicators
+  now computing per timeframe per coin.
+
+### Added (Flows: 1Y column, MTD/YTD stand-in)
+- Added `1y` to `sectorPerformance7d()`'s existing `price_change_percentage`
+  request (verified live, same one-request-per-category cost as before)
+  and a matching 1Y column in the Flows table and its expanded coin list.
+  True calendar-anchored MTD/YTD would need per-coin historical lookups
+  (CoinGecko's rolling-window param has no "since a specific date"
+  option) — real new cost and complexity across ~a few hundred unique
+  coins. Owner's call: 30D (already shipped) + 1Y cover the same
+  medium/long-term intent without it. Fully additive — 24h/7d/30d
+  columns and all existing callers unchanged.
+
+### Added (Phase 5 Stage 0 — strategy-enrichment indicator math)
+- Six new indicator functions in `js/indicators.js`, standard/textbook
+  formulas only (Appel MACD, Bollinger BBands, Wilder ADX, Lane slow
+  Stochastic, Hosoda Ichimoku, no proprietary variants): `ema()`,
+  `macd()`, `bollingerBands()`, `adx()` (reuses the existing
+  `trueRange()`/`smma()` rather than reimplementing Wilder's smoothing),
+  `stochastic()`, `ichimoku()` (snapshot-only, no forward-plotting — the
+  `current*` fields are the -26-shifted read matching what a real chart
+  overlays on today's candle), and `liquiditySweep()` (wick-rejection
+  pattern modeled directly on the existing `divergentBar()`'s shape,
+  reusing `fractals()`/`lastFractal()` — no new S/R notion).
+- **Pure math only — this stage is deliberately inert.** Nothing wired
+  into `analyzeTimeframe()`, `scoring.js`, `app.js`, or `render.js` yet;
+  app behavior is unchanged. Matches the paused backlog plan's own
+  staged build order (`~/.claude/plans/i-have-shifted-to-clever-hopcroft.md`
+  section 4.4) — later stages fold these into 12 scoring strategies
+  across the Continuation/Exhaustion/Reversal arms, which changes live
+  signal output and deserves its own separate review pass.
+- Verified directionally against synthetic uptrend/downtrend candles
+  (MACD/ADX/Stochastic/Bollinger all behave correctly in both
+  directions) and via hand-computed exact values (EMA seed value,
+  Ichimoku tenkan/kijun window midpoints, MACD histogram identity). Full
+  Wilder-published-worked-example cross-check for ADX specifically was
+  not done — self-consistency and directional tests only.
+
+### Added (Sloped regression-channel levels — v2 key levels)
+- New `Indicators.linearRegression(points)` (pure OLS fit, returns
+  `{slope, intercept, r2}`) and `Indicators.regressionChannelLevels()`,
+  which fits a line through the last several fractal pivot highs/lows
+  (up to 6, minimum 3) instead of taking just the nearest one, then
+  projects that line to the current bar for a level that moves with the
+  trend. Gated on fit quality (`r2 >= 0.6` default) — a poor fit returns
+  `null`, meaning "not confident, don't show one," not a bad line.
+- Deliberately **additive**, not a replacement for the existing flat
+  `nearestLevels()` result — too much already depends on the flat level
+  (breakout-proximity scoring shipped earlier this session, the modal's
+  Key Levels display) to swap the underlying computation under them, on
+  both the live site and the bot. New `resistanceSloped`/`supportSloped`
+  snapshot fields sit alongside the unchanged `resistance`/`support`.
+- Modal's Key Levels box shows the sloped channel as a secondary line
+  under the flat value, with its r² so the reader can judge confidence,
+  when a confident fit exists — otherwise no second line at all.
+- Live-verified: a real coin's modal showed both a resistance channel
+  (r²=0.90) and support channel (r²=0.60) computed from real fractal
+  pivots, alongside the unchanged flat levels.
+
+### Added (CoinPaprika fallback tier)
+- Inserted as the middle tier in both `coingeckoGlobal()` and
+  `coingeckoMarketCaps()`: CoinGecko → CoinPaprika (free, direct, no
+  quota to protect) → CMC via the Supabase proxy (metered, last resort).
+  Verified live in three ways: (1) direct browser `fetch()` to
+  `api.coinpaprika.com` from this origin succeeds with a real
+  `access-control-allow-origin: *` header — genuinely CORS-open, not
+  just curl-reachable; (2) a real, unforced fallback fired during this
+  session's own testing — `coingeckoGlobal()` hit CoinGecko's rate limit
+  mid-scan and fell through to CoinPaprika automatically, and the UI's
+  BTC Dominance/Market Cap tiles showed CoinPaprika's real values; (3)
+  simulated a full CoinGecko+CoinPaprika outage to confirm the CMC proxy
+  still answers as the final fallback. All three tiers reshape their
+  response to CoinGecko's own field names, so no caller needs to change
+  regardless of which source actually answered.
+
+### Added (Phase 6 — Breakout-proximity)
+- New Continuation scoring item evaluated on 15M: `Indicators.
+  breakoutProximityPct(distance, atr)` (pure, unit-tested) measures how
+  close price sits to its own fractal-based key level in ATR terms. A
+  close already past the level scores "Confirmed breakout" (+14); within
+  1 ATR of it (proximity >= 66%) scores "Approaching key level" (+10).
+  Reuses the existing `resistance`/`support`/`atr`/`close` fields already
+  on every per-TF snapshot — no new indicator plumbing needed.
+
+### Added (Phase 7 — Heatmap)
+- New "Heatmap" tab: every coin across the same 16-category set Flows
+  uses, deduped by CoinGecko id (a coin can appear in multiple
+  categories, highest-mktcap instance wins), tile size ~ sqrt(market cap)
+  so one giant BTC tile can't swallow the grid, color = 24h% intensity
+  (capped at 10% magnitude for full saturation). Shares Flows' data fetch
+  — opening Heatmap first triggers the same `sectorPerformance7d()` call
+  Flows uses, not a duplicate. No 1h-color toggle (that window isn't
+  fetched anywhere else, and this is explicitly the lowest-priority tab
+  on the roadmap — not worth a new CoinGecko window just for it).
+
+### Added (Outcome-logging journal)
+- New `journal.html` + `js/journal.js`, isolated from the main scanning
+  page (own small theme-toggle copy, no dependency on `app.js`/
+  `render.js`'s DOM assumptions). New shared `js/outcomes.js` module
+  (`wicktor:outcomes` localStorage key, capped at 200 entries) used by
+  both the main page's logging hook and the journal page's read/write.
+- Logging hook: `openModal()` in `js/app.js` now logs `{key, band, score,
+  side, entryPrice}` the first time a coin's detail modal opens (deduped
+  per-key within a 1-hour window so repeat opens in one sitting don't
+  spam duplicate entries) — purely additive, main page UI/behavior
+  unchanged otherwise.
+- Journal page: aggregate stats (logged/resolved/win rate/wins/losses/
+  breakeven), full entry table, Win/Loss/Breakeven buttons per unresolved
+  entry. Linked from the main page's Settings panel.
+- New `priceRaw` numeric field added to the coin object (existing `price`
+  field is a display-formatted string with thousands separators, not
+  safely `parseFloat`-able) — purely additive.
+
+### Added (Extended 7-timeframe panel)
+- Detail modal now shows all 7 timeframes (1M/5M/15M/30M/1H/4H/1D): last
+  close + last-candle % change, informational only — doesn't touch
+  scoring. Lazy-fetched fresh on modal open (the scan pipeline doesn't
+  retain raw candles per coin) via new `Api.fetchExtendedTimeframes()`;
+  race-guarded so a closed/switched modal doesn't render stale data if
+  the fetch resolves late.
+- `INTERVAL_MAP` in `js/api.js` extended with 1m/30m/4h/1d (previously
+  only 1h/15m/5m existed, matching the scan's own fixed 3 timeframes).
+
+### Added (OI 15m%)
+- New Continuation scoring item, perpetuals only: `Api.
+  openInterestChange15m(symbol)` (Bybit `/v5/market/open-interest`,
+  verified live) computes % open-interest change over the trailing 15
+  minutes. `|change| >= 5%` (significance threshold) scores a soft
+  confirmation (+8) — magnitude-based, not signed by bias, since a large
+  swing in open interest either way means fresh capital is actively
+  committing to the current move. `Scoring.evaluate()` gained an optional
+  second `extras` parameter (`{oiChange15m}`) to thread this through
+  without changing the existing single-argument call signature anywhere
+  else. Spot-market coins pass `null` — no item, no crash.
+
+### Added (Phase 2 — Market Flows)
+- New "Flows" tab: sortable-by-market-cap category table (Artificial
+  Intelligence, DePIN, RWA, Gaming, Layer 1/2, Meme, etc. — the same
+  16-keyword set already used for the Top Sectors tile) with 24h/7d/30d
+  market-cap-weighted % change per category. Click a row to expand its
+  top-15 constituent coins with the same columns.
+- `Api.sectorPerformance7d()` extended to fetch `price_change_percentage=
+  24h,7d,30d` in the same request (verified live that CoinGecko accepts
+  multiple comma-separated windows at no extra cost) instead of just 7d,
+  and now also returns each category's total market cap (sum of the top
+  50 coins fetched, not the full category — labeled as such in the UI).
+  This made the roadmap's originally-planned daily-snapshot GitHub Actions
+  workflow + new Supabase table unnecessary — real 24h/7d/30d numbers
+  come from one existing request, no new infrastructure needed.
+- Fully additive to existing callers (`topNarrativeCandidates()`, the
+  Top Sectors top-strip tile) — neither reads the new fields, both
+  continue working unchanged.
+
+### Added (Phase 1 — Dashboard)
+- New "Dashboard" tab alongside the existing Scanner view: BTC dominance,
+  market cap + 24h%, Fear & Greed, Top Sectors (reused from the existing
+  top strip), a new Top 5 by Market Cap tile, and Top 10 Gainers/Losers
+  (vs. the compact strip's top 3). Lazily fetched on first visit, refreshed
+  alongside subsequent scans once visited.
+- `Api.topByMarketCap(n)` — new lightweight CoinGecko `/coins/markets` call
+  (10-min cache) powering the Dashboard's Top 5 tile.
+- Refresh-interval setting is now minutes-based (1-10 min, default 5,
+  aligned to the 5M candle boundary) instead of raw seconds.
+
+### Changed
+- Default coin universe size raised from 30 to 120 (confirmed level per
+  backlog); settings clamp raised from 10-80 to 10-120 to match.
+
+### Investigated, not changed (flagged for owner review)
+- **Priority-0 gating audit (the WIF case)**: confirmed the actual
+  mechanism. `alignmentCeiling()` in `js/scoring.js` only checks
+  `.alignment` (coarse -1/0/1 direction), never `.confidence` (the 5-tier
+  state that drives the "weakening" arrow in the UI). A `weak_bull`/
+  `weak_bear` 5M still satisfies the ceiling's alignment check, so
+  EXCELLENT can still be reached with a visually "weakening" 5M —
+  confidence only reduces point value inside `buildContinuation` (30→24
+  pts), never the band cap itself. This may be working as designed (the
+  score penalty already reflects weakness) or may be the actual bug the
+  WIF case pointed at — genuine product-intent call, left for the owner
+  rather than changed unilaterally since it affects live signal output.
+- **wicktor-bot-cc scoring-drift audit**: confirmed real, non-trivial
+  drift. The bot's `src/engine/scoring.js` is a manual snapshot from
+  2026-08-09 (commit `48bf029`) with its own Phase-4 bug fixes layered on
+  top (Buy/Sell RSI-threshold asymmetry fixes). The scanner's real
+  `js/scoring.js` has since added combined AO+AC confirmation scoring (16
+  vs 6 pts) and other changes the bot's copy doesn't have. `indicators.js`
+  drift is much smaller (~15 diff lines). Check/flag only, per standing
+  instruction not to touch `wicktor-bot-cc` without an explicit separate
+  ask.
+- **CMC proxy CORS cleanup**: removed the leftover `http://localhost:8000`
+  origin from `supabase/functions/cmc-proxy/index.ts` in this branch's
+  source, but did **not** run `supabase functions deploy` — that flips
+  live production CORS behavior immediately regardless of git branch, so
+  it's held for the owner to deploy after reviewing the diff.
+
 ## [1.3.0] - 2026-08-23
 
 ### Added

@@ -35,6 +35,7 @@ Open DevTools console for additional output if a suite crashes.</p>
 <!-- Load the real source files (same order as index.html) -->
 <script src="../js/indicators.js"></script>
 <script src="../js/scoring.js"></script>
+<script src="../js/api.js"></script>
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,14 +343,19 @@ test('ceiling: mirror bearish case, full confirm → excellent', () => {
   assertEqual(Scoring.alignmentCeiling(tf, -1), 'excellent');
 });
 
-test('evaluate(): flat 15M (sleeping) caps a strong uptrend to AVOID despite a decent score', () => {
+test('evaluate(): C4 removed the alignment veto — the chain is reported, not enforced', () => {
   const cs = uptrend(80);
   const flat = [];
   for (let i = 0; i < 80; i++) flat.push(flatCandle(i, 100));
   const result = Scoring.evaluate({ h1: cs, m15: flat, m5: cs });
-  assertEqual(result.ceiling, 'avoid');
-  const band = Scoring.bandLabel(result.score, null, result.ceiling);
-  assertEqual(band.text, 'AVOID');
+  // The classic 1H->15M->5M chain still says "avoid" and is still surfaced...
+  assertEqual(result.alignmentChain, 'avoid');
+  // ...but it no longer caps the band. Capping here is precisely what made
+  // 38% of the universe unscoreable regardless of the setup on offer.
+  assertEqual(result.ceiling, null);
+  // Higher-timeframe disagreement is now a scored component instead, so it
+  // costs points rather than vetoing.
+  assert(result.score >= 0 && result.score <= 100);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,8 +365,10 @@ suite('E — Scoring.bandLabel()');
 
 test('score >= 80 → EXCELLENT', () => assertEqual(Scoring.bandLabel(80).text, 'EXCELLENT'));
 test('score 79 → WATCH',        () => assertEqual(Scoring.bandLabel(79).text, 'WATCH'));
-test('score 50 → WATCH',        () => assertEqual(Scoring.bandLabel(50).text, 'WATCH'));
-test('score 49 → AVOID',        () => assertEqual(Scoring.bandLabel(49).text, 'AVOID'));
+test('score 60 → WATCH',        () => assertEqual(Scoring.bandLabel(60).text, 'WATCH'));
+// Raised from 50 on measurement: 50-59 returned -0.055 NET of taker fees
+// across 2,639 signals, while every bucket from 60 up is net positive.
+test('score 59 → AVOID',        () => assertEqual(Scoring.bandLabel(59).text, 'AVOID'));
 test('score 100 → EXCELLENT',   () => assertEqual(Scoring.bandLabel(100).text, 'EXCELLENT'));
 test('unlock.severity=red overrides score', () => {
   const lbl = Scoring.bandLabel(90, { severity: 'red' });
@@ -586,6 +594,427 @@ test('returns null when h1 candles are too short', () => {
   const short = uptrend(10);
   const result = Scoring.evaluate({ h1: short, m15: uptrend(80), m5: uptrend(80) });
   assert(result === null, 'expected null for short h1');
+});
+
+suite('I — breakoutProximityPct() and 15M breakout-proximity scoring');
+
+test('at the level itself = 100%', () => {
+  assert(Indicators.breakoutProximityPct(0, 10) === 100);
+});
+
+test('1 ATR away = ~66.7%', () => {
+  const pct = Indicators.breakoutProximityPct(10, 10);
+  assert(Math.abs(pct - (100 * 2 / 3)) < 1e-9, `Expected ~66.67, got ${pct}`);
+});
+
+test('3+ ATRs away floors at 0%, never negative', () => {
+  assert(Indicators.breakoutProximityPct(30, 10) === 0);
+  assert(Indicators.breakoutProximityPct(100, 10) === 0);
+});
+
+test('null/zero ATR returns null, not a divide-by-zero result', () => {
+  assert(Indicators.breakoutProximityPct(10, 0) === null);
+  assert(Indicators.breakoutProximityPct(10, null) === null);
+});
+
+test('buildContinuation: 15M closing above resistance scores the confirmed-breakout item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, { ...snap, resistance: cs[cs.length - 1].c - 0.01 }, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1);
+  assert(items.some(([label]) => label.includes('Confirmed breakout above key level')),
+    `Expected confirmed-breakout item, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: 15M far from any level scores neither breakout item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const farResistance = cs[cs.length - 1].c + snap.atr * 10;
+  const tfSnapshots = [snap, { ...snap, resistance: farResistance }, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1);
+  assert(!items.some(([label, pct]) => label.includes('key level') && pct > 0),
+    `Expected a zero-value (but still present, applicable) breakout-proximity item, got ${JSON.stringify(items)}`);
+});
+
+suite('J — OI 15m% scoring input');
+
+test('buildContinuation: |OI change| >= 5% scores the OI confirmation item', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 7.2);
+  assert(items.some(([label]) => label.includes('Perp OI') && label.includes('+7.2%')),
+    `Expected OI confirmation item, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: OI magnitude is continuous now (Audit F3) — a small swing still scores proportionally, not gated by a flat 5% threshold', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 2.0);
+  const item = items.find(([label]) => label.includes('Perp OI'));
+  assert(item, `Expected a (smaller) OI item even below the old 5% threshold, got ${JSON.stringify(items)}`);
+  assert(item[1] < 20, `Expected a small magnitude-scaled percentage, got ${item[1]}`);
+});
+
+test('buildContinuation: near-zero OI change scores essentially nothing', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, 0.05);
+  assert(!items.some(([label, pct]) => label.includes('Perp OI') && pct > 0),
+    `Expected a zero-value (but still present, applicable) OI item for a near-zero swing, got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: null OI (spot market) scores nothing, no crash', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, null);
+  assert(!items.some(([label]) => label.includes('Perp OI')),
+    `Expected no OI item for null (spot), got ${JSON.stringify(items)}`);
+});
+
+test('buildContinuation: negative OI swing beyond threshold also confirms (magnitude, not sign)', () => {
+  const cs = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(cs);
+  const tfSnapshots = [snap, snap, snap];
+  const { items } = Scoring.buildContinuation(tfSnapshots, 1, -8.5);
+  assert(items.some(([label]) => label.includes('Perp OI') && label.includes('-8.5%')),
+    `Expected OI confirmation item for negative swing, got ${JSON.stringify(items)}`);
+});
+
+test('evaluate() threads extras.oiChange15m through to continuation.items', () => {
+  const cs = uptrend(80);
+  const withOi = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9.0 });
+  assert(withOi.continuation.items.some(([label]) => label.includes('Perp OI')),
+    `Expected OI item in evaluate() output, got ${JSON.stringify(withOi.continuation.items)}`);
+  const withoutOi = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(!withoutOi.continuation.items.some(([label]) => label.includes('Perp OI')),
+    `Expected no OI item when extras omitted, got ${JSON.stringify(withoutOi.continuation.items)}`);
+});
+
+suite('K — linearRegression() and regressionChannelLevels() (sloped key levels v2)');
+
+test('perfect line gives exact slope/intercept and r2=1', () => {
+  const fit = Indicators.linearRegression([{ x: 0, y: 10 }, { x: 1, y: 12 }, { x: 2, y: 14 }, { x: 3, y: 16 }]);
+  assert(Math.abs(fit.slope - 2) < 1e-9);
+  assert(Math.abs(fit.intercept - 10) < 1e-9);
+  assert(Math.abs(fit.r2 - 1) < 1e-9);
+});
+
+test('scattered points give r2 < 1', () => {
+  const fit = Indicators.linearRegression([{ x: 0, y: 10 }, { x: 1, y: 9 }, { x: 2, y: 15 }, { x: 3, y: 8 }]);
+  assert(fit.r2 < 1);
+});
+
+test('fewer than 2 points, or all identical x, returns null', () => {
+  assert(Indicators.linearRegression([]) === null);
+  assert(Indicators.linearRegression([{ x: 0, y: 1 }]) === null);
+  assert(Indicators.linearRegression([{ x: 5, y: 1 }, { x: 5, y: 2 }, { x: 5, y: 3 }]) === null);
+});
+
+test('fewer than minPivots fractal highs returns null resistance', () => {
+  const candles = uptrend(80);
+  const result = Indicators.regressionChannelLevels(candles, { up: [10], down: [] }, 79);
+  assert(result.resistance === null && result.support === null);
+});
+
+test('enough clean rising pivots yields a confident projected value', () => {
+  const candles = uptrend(80);
+  candles.forEach((c, i) => { c.h = 100 + i * 2; });
+  const result = Indicators.regressionChannelLevels(candles, { up: [10, 20, 30, 40], down: [] }, 79, { minPivots: 3 });
+  assert(result.resistance !== null);
+  assert(result.resistance.r2 > 0.99, `Expected near-perfect r2, got ${result.resistance.r2}`);
+  const expected = 100 + 79 * 2;
+  assert(Math.abs(result.resistance.value - expected) < 1e-6);
+});
+
+test('noisy pivots below r2 threshold returns null', () => {
+  const candles = uptrend(80);
+  const noisyHighs = [50, 900, 60, 850];
+  [10, 20, 30, 40].forEach((idx, i) => { candles[idx].h = noisyHighs[i]; });
+  const result = Indicators.regressionChannelLevels(candles, { up: [10, 20, 30, 40], down: [] }, 79, { minPivots: 3, minR2: 0.6 });
+  assert(result.resistance === null, `Expected null for a poor fit, got ${JSON.stringify(result.resistance)}`);
+});
+
+test('analyzeTimeframe exposes resistanceSloped/supportSloped without throwing', () => {
+  const candles = uptrend(80);
+  const snap = Indicators.analyzeTimeframe(candles);
+  assert('resistanceSloped' in snap && 'supportSloped' in snap);
+});
+
+suite('L — Strategy-enrichment Stage 0: new indicator math (pure, not wired yet)');
+
+test('ema(): seeds with SMA, then recurses with the standard smoothing factor', () => {
+  const e = Indicators.ema([1, 2, 3, 4, 5, 6, 7, 8], 3);
+  assert(Math.abs(e[2] - 2) < 1e-9);
+  const k = 2 / 4;
+  assert(Math.abs(e[3] - (4 * k + e[2] * (1 - k))) < 1e-9);
+});
+
+test('macd(): uptrend positive, downtrend negative, histogram = macdLine - signalLine', () => {
+  const up = Indicators.macd(uptrend(80));
+  assert(up.macdLine[79] > 0);
+  const down = Indicators.macd(downtrend(80));
+  assert(down.macdLine[79] < 0);
+  for (let i = 0; i < 80; i++) {
+    if (up.macdLine[i] != null && up.signalLine[i] != null) {
+      assert(Math.abs(up.histogram[i] - (up.macdLine[i] - up.signalLine[i])) < 1e-9);
+    }
+  }
+});
+
+test('bollingerBands(): constant price gives zero band width; %B stays sane in a smooth uptrend', () => {
+  const flat = [];
+  for (let i = 0; i < 30; i++) flat.push({ t: i, o: 100, h: 100, l: 100, c: 100, v: 1000 });
+  const bbFlat = Indicators.bollingerBands(flat, 20);
+  assert(Math.abs(bbFlat.upper[29] - bbFlat.lower[29]) < 1e-9);
+  const bb = Indicators.bollingerBands(uptrend(80), 20);
+  assert(bb.percentB[79] >= 0 && bb.percentB[79] <= 1.2);
+});
+
+test('adx(): +DI > -DI in an uptrend, -DI > +DI in a downtrend, ADX in [0,100]', () => {
+  const up = Indicators.adx(uptrend(80));
+  assert(up.plusDI[79] > up.minusDI[79]);
+  const down = Indicators.adx(downtrend(80));
+  assert(down.minusDI[79] > down.plusDI[79]);
+  assert(up.adx[79] >= 0 && up.adx[79] <= 100);
+});
+
+test('stochastic(): %K near 100 on a fresh high, near 0 on a fresh low', () => {
+  const up = Indicators.stochastic(uptrend(40));
+  assert(up.k[39] > 80);
+  const down = Indicators.stochastic(downtrend(40));
+  assert(down.k[39] < 20);
+});
+
+test('ichimoku(): tenkan matches its own window midpoint; currentSpanA/B are the -26-shifted read', () => {
+  const candles = uptrend(80);
+  const ich = Indicators.ichimoku(candles);
+  const lastIdx = candles.length - 1;
+  let hh = -Infinity, ll = Infinity;
+  for (let j = lastIdx - 8; j <= lastIdx; j++) { hh = Math.max(hh, candles[j].h); ll = Math.min(ll, candles[j].l); }
+  assert(Math.abs(ich.tenkan[lastIdx] - (hh + ll) / 2) < 1e-9);
+  assert(Math.abs(ich.currentSpanA - ich.spanA[lastIdx - 26]) < 1e-9);
+  assert(ich.currentSpanA < ich.spanA[lastIdx]);
+});
+
+test('liquiditySweep(): detects a bearish rejection wick above resistance; null ATR is safe', () => {
+  const candles = uptrend(60);
+  const frac = Indicators.fractals(candles);
+  const atrSeries = Indicators.atr(candles);
+  const i = candles.length - 1;
+  const lastUpFrac = Indicators.lastFractal(frac.up, i - 1);
+  if (lastUpFrac != null) {
+    const level = candles[lastUpFrac].h;
+    const atrV = atrSeries[i] || 1;
+    candles[i] = { t: i, o: level - 1, h: level + atrV * 2, l: level - 2, c: level - 1, v: 1000 };
+    const result = Indicators.liquiditySweep(candles, frac, i, atrV);
+    assert(result.down === true);
+  }
+  const safe = Indicators.liquiditySweep(candles, frac, i, null);
+  assert(safe.up === false && safe.down === false);
+});
+
+suite('M — Strategy-enrichment Stage 1: snapshot wiring, verified inert');
+
+test('analyzeTimeframe: new Stage 1 fields match calling the Stage 0 functions directly', () => {
+  const candles = uptrend(80);
+  const lastIdx = candles.length - 1;
+  const snap = Indicators.analyzeTimeframe(candles);
+  const closes = candles.map(c => c.c);
+  assert(snap.ema9 === Indicators.ema(closes, 9)[lastIdx]);
+  const a = Indicators.adx(candles);
+  assert(snap.adx === a.adx[lastIdx]);
+});
+
+test('Stage 1 snapshot fields are readable via Scoring.evaluate() without throwing', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs });
+  assert(result.score >= 0 && result.score <= 100);
+});
+
+suite('N — Phase 5 Stage 2: scalping-tier strategies 1-5');
+
+function baseSnap(overrides) { return { ...Indicators.analyzeTimeframe(uptrend(80)), ...overrides }; }
+
+test('Strategy 1: EMA stack + MACD-cross-on-pullback score; far-from-EMA21 does not', () => {
+  const primary = baseSnap({ emaStackBullish: true });
+  assert(Scoring.buildContinuation([primary, null, null], 1).items.some(([l]) => l === '1H EMA 9/21 bullish trend'));
+  const m15ok = baseSnap({ macdBullishCross: true, ema21: 100, close: 100.2, atr: 1 });
+  assert(Scoring.buildContinuation([baseSnap({}), m15ok, null], 1).items.some(([l]) => l.includes('MACD bullish cross on EMA21 pullback')));
+  const m15far = baseSnap({ macdBullishCross: true, ema21: 100, close: 110, atr: 1 });
+  assert(!Scoring.buildContinuation([baseSnap({}), m15far, null], 1).items.some(([l, p]) => l.includes('MACD bullish cross') && p > 0));
+});
+
+test('Strategy 2: expansion+breakout scores; ADX contributes its own standalone item (Audit F3); no breakout scores nothing', () => {
+  const m15 = baseSnap({ bbExpanding: true, bbUpper: 100, close: 101, adx: 30 });
+  const items = Scoring.buildContinuation([baseSnap({}), m15, null], 1).items;
+  assert(items.some(([l]) => l === '15M BB squeeze breakout'));
+  assert(items.some(([l]) => l.startsWith('15M ADX trend strength')));
+  const noBreak = baseSnap({ bbExpanding: true, bbUpper: 100, close: 99, adx: 30 });
+  assert(!Scoring.buildContinuation([baseSnap({}), noBreak, null], 1).items.some(([l, p]) => l.includes('BB squeeze breakout') && p > 0));
+});
+
+test('Strategy 3: near-retest scores Continuation + Reversal trap item when RSI>=70; far does not', () => {
+  const near = baseSnap({ aboveUpFractal: true, lastUpFractal: 100, close: 100.3, atr: 1, rsi: 72, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false });
+  assert(Scoring.buildContinuation([near, null, null], 1).items.some(([l]) => l === '1H Breakout retest held'));
+  assert(Scoring.buildReversal([near, null, null], 1).items.some(([l]) => l === '1H Retest into overbought (trap risk)'));
+  const far = baseSnap({ aboveUpFractal: true, lastUpFractal: 100, close: 110, atr: 1 });
+  assert(!Scoring.buildContinuation([far, null, null], 1).items.some(([l, p]) => l.includes('Breakout retest') && p > 0));
+});
+
+test('Strategy 4: expanding + bias-matching rising histogram scores; opposite-bias histogram does not', () => {
+  const m15 = baseSnap({ bbExpanding: true, macdHistogram: 2, macdHistogramRising: true });
+  assert(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Squeeze momentum expansion (MACD confirm)'));
+  const opp = baseSnap({ bbExpanding: true, macdHistogram: -2, macdHistogramRising: true });
+  assert(!Scoring.buildContinuation([baseSnap({}), opp, null], 1).items.some(([l, p]) => l.includes('Squeeze momentum') && p > 0));
+});
+
+test('Strategy 5: BB extreme + stochastic exhaustion cross both score independently; mid-band scores neither', () => {
+  const m5 = baseSnap({ bbPercentB: 1.05, stochBearishCrossFromOverbought: true });
+  const items = Scoring.buildExhaustion([baseSnap({}), baseSnap({}), m5]).items;
+  assert(items.some(([l]) => l === '5M Price at BB extreme'));
+  assert(items.some(([l]) => l === '5M Stochastic exhaustion crossover'));
+  const mid = baseSnap({ bbPercentB: 0.5, stochBearishCrossFromOverbought: false, stochBullishCrossFromOversold: false });
+  assert(!Scoring.buildExhaustion([baseSnap({}), baseSnap({}), mid]).items.some(([l]) => l.includes('BB extreme') || l.includes('Stochastic exhaustion')));
+});
+
+suite('O — Phase 5 Stage 3: swing-tier strategies 6, 7, 8, 9, 11');
+
+test('Strategy 6/7: Ichimoku cloud + stoch entry score; plain MACD cross scores but EMA stack is not re-scored', () => {
+  const primary = baseSnap({ ichimokuAboveCloud: true, macdBullishCross: true, emaStackBullish: true });
+  const items = Scoring.buildContinuation([primary, null, null], 1).items;
+  assert(items.some(([l]) => l === '1H Price above Ichimoku cloud'));
+  assert(items.some(([l]) => l === '1H MACD trend-following cross'));
+  assert(!items.some(([l]) => l.includes('EMA stack')));
+  const m15 = baseSnap({ stochBullishCrossFromOversold: true });
+  assert(Scoring.buildContinuation([baseSnap({}), m15, null], 1).items.some(([l]) => l === '15M Stochastic bullish entry (oversold cross)'));
+});
+
+test('Strategy 8/9: MACD reversal-at-level and MACD/Stochastic divergence score independently; far-from-level does not', () => {
+  const near = baseSnap({ macdBearishCross: true, resistance: 100, close: 100.5, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([near, null, null], 1).items.some(([l]) => l === '1H MACD reversal cross at key level'));
+  const far = baseSnap({ macdBearishCross: true, resistance: 100, close: 150, atr: 1, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdDivergence: 'none' });
+  assert(!Scoring.buildReversal([far, null, null], 1).items.some(([l]) => l.includes('MACD reversal cross')));
+  const macdDiv = baseSnap({ macdDivergence: 'bear', divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false });
+  assert(Scoring.buildReversal([macdDiv, null, null], 1).items.some(([l]) => l === '1H Bearish MACD divergence'));
+  const stochDiv = baseSnap({ stochDivergence: 'bear' });
+  assert(Scoring.buildReversal([baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' }), stochDiv, null], 1).items.some(([l]) => l === '15M Stochastic divergence'));
+});
+
+test('Strategy 11: Range Bound fires only when bias===0, mirrors oversold/overbought correctly', () => {
+  const oversold = baseSnap({ bbPercentB: 0.02, rsi: 30 });
+  assert(Scoring.buildReversal([null, null, oversold], 0).items.some(([l]) => l === '5M Range-bound bounce (support + RSI oversold)'));
+  const overbought = baseSnap({ bbPercentB: 0.98, rsi: 70 });
+  assert(Scoring.buildReversal([null, null, overbought], 0).items.some(([l]) => l === '5M Range-bound fade (resistance + RSI overbought)'));
+  const nonZeroBias = baseSnap({ divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert(!Scoring.buildReversal([nonZeroBias, null, oversold], 1).items.some(([l]) => l.includes('Range-bound')));
+});
+
+suite('P — Phase 5 Stage 4: advanced-tier strategies 12, 13 (last stage)');
+
+test('Strategy 12: EMA match + tight pullback + healthy RSI scores; RSI extreme or wide pullback does not', () => {
+  const good = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 50 });
+  assert(Scoring.buildContinuation([baseSnap({}), good, null], 1).items.some(([l]) => l === '15M Pullback to EMA21 (RSI healthy)'));
+  const badRsi = baseSnap({ emaStackBullish: true, ema21: 100, close: 100.1, atr: 1, rsi: 75 });
+  assert(!Scoring.buildContinuation([baseSnap({}), badRsi, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
+  const wideDist = baseSnap({ emaStackBullish: true, ema21: 100, close: 101, atr: 1, rsi: 50 });
+  assert(!Scoring.buildContinuation([baseSnap({}), wideDist, null], 1).items.some(([l, p]) => l.includes('Pullback to EMA21') && p > 0));
+});
+
+test('Strategy 13: liquidity sweep only warns against bias, never confirms it', () => {
+  const bearSweep = baseSnap({ liquiditySweepDown: true, divergence: 'none', mfiSignal: null, divergentBarDown: false, wisemanBearish: false, macdBearishCross: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([bearSweep, null, null], 1).items.some(([l]) => l === '1H Liquidity sweep above resistance, rejected (bearish)'));
+  const bullSweep = baseSnap({ liquiditySweepUp: true, divergence: 'none', mfiSignal: null, divergentBarUp: false, wisemanBullish: false, macdBullishCross: false, macdDivergence: 'none' });
+  assert(Scoring.buildReversal([bullSweep, null, null], -1).items.some(([l]) => l === '1H Liquidity sweep below support, reclaimed (bullish)'));
+  assert(!Scoring.buildReversal([bearSweep, null, null], -1).items.some(([l]) => l.includes('Liquidity sweep')));
+});
+
+test('Phase 5 complete: every arm stays within its cap even with every new-batch signal firing', () => {
+  const cs = uptrend(80);
+  const result = Scoring.evaluate({ h1: cs, m15: cs, m5: cs }, { oiChange15m: 9 });
+  assert(result.score >= 0 && result.score <= 100);
+  // Continuation is a mean of 0-100 sub-scores now (Audit F3) — its range
+  // is 0-100, not the old fixed 65-point cap.
+  assert(result.continuation.score >= 0 && result.continuation.score <= 100);
+  assert(result.exhaustion.score <= 40 && result.reversal.score <= 50);
+});
+
+suite('Q — Provider split: CoinPaprika normalization + tag resolution');
+
+// Minimal fixtures shaped like real CoinPaprika payloads.
+const cpCoin = (id, sym, mcap, c24, c7) => ({
+  id, name: sym, symbol: sym,
+  quotes: { USD: { price: 1, volume_24h: 10, market_cap: mcap,
+                   percent_change_24h: c24, percent_change_7d: c7,
+                   percent_change_30d: 0, percent_change_1y: 0 } }
+});
+
+test('normalizePaprikaCoin: 30d/1y become null, never CoinPaprika raw 0', () => {
+  const n = Indicators && Api.normalizePaprikaCoin(cpCoin('btc-bitcoin','BTC',1e12,1.5,20));
+  assert(n.price_change_percentage_30d_in_currency === null, '30d must be null');
+  assert(n.price_change_percentage_1y_in_currency === null, '1y must be null');
+});
+
+test('normalizePaprikaCoin: emits BOTH 24h key variants (different consumers read each)', () => {
+  const n = Api.normalizePaprikaCoin(cpCoin('btc-bitcoin','BTC',1e12,1.5,20));
+  assert(n.price_change_percentage_24h === 1.5, 'plain key for topNarrativeCandidates');
+  assert(n.price_change_percentage_24h_in_currency === 1.5, '_in_currency key for render');
+});
+
+test('normalizePaprikaCoin: rejects implausible symbols that would become <junk>USDT', () => {
+  assert(Api.normalizePaprikaCoin(cpCoin('x','\u5e01\u5b89\u4eba\u751f',1e9,1,1)) === null, 'non-ASCII rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','USDC.e',1e9,1,1)) === null, 'dotted rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','ZBCN ',1e9,1,1)) === null, 'trailing space rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','M',1e9,1,1)) === null, 'single char rejected');
+  assert(Api.normalizePaprikaCoin(cpCoin('x','BTC',1e9,1,1)) !== null, 'normal symbol kept');
+});
+
+test('normalizePaprikaCoin: null market cap is rejected', () => {
+  const bad = cpCoin('x','ABC',null,1,1);
+  assert(Api.normalizePaprikaCoin(bad) === null);
+});
+
+test('resolveNarrativeTags: picks the tag with the most coins, not array order', () => {
+  const tags = [
+    { id: 'computing-cloud-infrastructure', name: 'Computing & Cloud Infrastructure', coins: ['a','b'] },
+    { id: 'infrastructure',                 name: 'Infrastructure',                   coins: ['a','b','c','d'] }
+  ];
+  const r = Api.resolveNarrativeTags(tags).find(x => x.keyword === 'Infrastructure');
+  assert(r && r.tag.id === 'infrastructure',
+    'longest coin list must win; array order would pick the 2-coin tag');
+});
+
+test('resolveNarrativeTags: unmatched keywords are skipped, not fabricated', () => {
+  const r = Api.resolveNarrativeTags([{ id: 'defi', name: 'DeFi', coins: ['a'] }]);
+  assert(r.length === 1 && r[0].keyword === 'DeFi');
+  assert(!r.some(x => x.keyword === 'Modular Blockchain'), 'no CoinPaprika tag exists for it');
+});
+
+test('resolveNarrativeTags: Privacy is excluded from the fast path by design', () => {
+  const tags = [{ id: 'privacy-security', name: 'Privacy & Security', coins: ['a','b','c'] }];
+  const r = Api.resolveNarrativeTags(tags);
+  assert(!r.some(x => x.keyword === 'Privacy'),
+    'CoinPaprika conflates privacy with security (LTC/WLD/FIL/VET rank in it)');
+});
+
+test('weightedChangeFor: all-null input returns 0 rather than NaN', () => {
+  const coins = [{ market_cap: 100, price_change_percentage_7d_in_currency: null }];
+  assert(Api.weightedChangeFor(coins, 'price_change_percentage_7d_in_currency') === 0);
+});
+
+test('topNarrativeCandidates works against a CoinPaprika-shaped sector (cross-provider contract)', () => {
+  const coins = [
+    Api.normalizePaprikaCoin(cpCoin('eth-ethereum','ETH', 4e11, 2, 30)),
+    Api.normalizePaprikaCoin(cpCoin('tiny-tiny','TINY', 1e6, 9, 99))  // below the 350M floor
+  ];
+  const out = Api.topNarrativeCandidates([
+    { categoryId: 'l1', name: 'Layer 1', mcap: 4e11, weightedChange7d: 30, coins }
+  ]);
+  assert(out.some(c => c.symbol === 'ETHUSDT'), 'large cap promoted');
+  assert(!out.some(c => c.symbol === 'TINYUSDT'), 'sub-350M filtered out');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

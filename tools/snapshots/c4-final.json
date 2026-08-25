@@ -1,0 +1,2467 @@
+{
+ "label": "c4-final",
+ "scoredAt": "2026-08-25T02:27:55.892Z",
+ "fixturesCapturedAt": "2026-08-24T20:52:48.113Z",
+ "rows": [
+  {
+   "symbol": "BTCUSDT",
+   "evaluated": true,
+   "score": 40,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 33,
+   "regime": "Leaning bullish",
+   "cont": 23,
+   "exh": 12,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    58,
+    51,
+    51
+   ],
+   "adx1h": 20.4,
+   "regimeByTf": [
+    "trending",
+    "ranging",
+    "trending"
+   ],
+   "spreadByTf": [
+    1.67,
+    0.2,
+    0.72
+   ]
+  },
+  {
+   "symbol": "ETHUSDT",
+   "evaluated": true,
+   "score": 41,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 12,
+   "regime": "Leaning bullish",
+   "cont": 25,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    52,
+    47,
+    50
+   ],
+   "adx1h": 20.38,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    1.22,
+    0.84,
+    0.37
+   ]
+  },
+  {
+   "symbol": "XRPUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -20,
+   "regime": "Leaning bearish",
+   "cont": 3,
+   "exh": 0,
+   "rev": 10,
+   "contItems": 13,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    48,
+    45,
+    48
+   ],
+   "adx1h": 10.99,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    0.41,
+    0.93,
+    0.64
+   ]
+  },
+  {
+   "symbol": "SOLUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 35,
+   "regime": "Leaning bullish",
+   "cont": 30,
+   "exh": 12,
+   "rev": 30,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    59,
+    56,
+    56
+   ],
+   "adx1h": 16.6,
+   "regimeByTf": [
+    "transition",
+    "transition",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.79,
+    0.2,
+    0.23
+   ]
+  },
+  {
+   "symbol": "HYPEUSDT",
+   "evaluated": true,
+   "score": 31,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -51,
+   "regime": "Trend down",
+   "cont": 15,
+   "exh": 0,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "weak_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    41,
+    46,
+    54
+   ],
+   "adx1h": 16.71,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.27,
+    1.36,
+    0.06
+   ]
+  },
+  {
+   "symbol": "ZECUSDT",
+   "evaluated": true,
+   "score": 66,
+   "band": "WATCH",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -20,
+   "regime": "Leaning bearish",
+   "cont": 42,
+   "exh": 0,
+   "rev": 50,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "weak_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    42,
+    48,
+    59
+   ],
+   "adx1h": 22.41,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.38,
+    2.08,
+    0.48
+   ]
+  },
+  {
+   "symbol": "DOGEUSDT",
+   "evaluated": true,
+   "score": 30,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -52,
+   "regime": "Trend down",
+   "cont": 15,
+   "exh": 0,
+   "rev": 15,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    39,
+    42,
+    51
+   ],
+   "adx1h": 11.82,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.08,
+    1.84,
+    0.8
+   ]
+  },
+  {
+   "symbol": "TRUMPUSDT",
+   "evaluated": true,
+   "score": 44,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -64,
+   "regime": "Strong trend down",
+   "cont": 22,
+   "exh": 0,
+   "rev": 15,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    42,
+    43,
+    45
+   ],
+   "adx1h": 13.76,
+   "regimeByTf": [
+    "squeeze",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.24,
+    0.99,
+    1.01
+   ]
+  },
+  {
+   "symbol": "ENAUSDT",
+   "evaluated": true,
+   "score": 33,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -53,
+   "regime": "Trend down",
+   "cont": 22,
+   "exh": 8,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    35,
+    44,
+    56
+   ],
+   "adx1h": 21.81,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.24,
+    2.23,
+    0.73
+   ]
+  },
+  {
+   "symbol": "SOXLUSDT",
+   "evaluated": true,
+   "score": 55,
+   "band": "WATCH",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -46,
+   "regime": "Trend down",
+   "cont": 13,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    0,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "neutral",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    40,
+    46,
+    44
+   ],
+   "adx1h": 36.45,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "trending"
+   ],
+   "spreadByTf": [
+    1.96,
+    0.22,
+    1.32
+   ]
+  },
+  {
+   "symbol": "SNDKUSDT",
+   "evaluated": true,
+   "score": 54,
+   "band": "WATCH",
+   "bias": -1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": -34,
+   "regime": "Leaning bearish",
+   "cont": 21,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    40,
+    49,
+    45
+   ],
+   "adx1h": 50.39,
+   "regimeByTf": [
+    "trending",
+    "ranging",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    2.64,
+    0.11,
+    0.18
+   ]
+  },
+  {
+   "symbol": "XAUUSDT",
+   "evaluated": true,
+   "score": 75,
+   "band": "WATCH",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 15,
+   "regime": "Leaning bullish",
+   "cont": 28,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "weak_bull"
+   ],
+   "rsiByTf": [
+    57,
+    49,
+    55
+   ],
+   "adx1h": 42.17,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    1.32,
+    0.76,
+    1.54
+   ]
+  },
+  {
+   "symbol": "1000PEPEUSDT",
+   "evaluated": true,
+   "score": 33,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -19,
+   "regime": "Leaning bearish",
+   "cont": 8,
+   "exh": 12,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    45,
+    48,
+    54
+   ],
+   "adx1h": 14.06,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.51,
+    1.05,
+    0.51
+   ]
+  },
+  {
+   "symbol": "NEARUSDT",
+   "evaluated": true,
+   "score": 26,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -21,
+   "regime": "Leaning bearish",
+   "cont": 13,
+   "exh": 0,
+   "rev": 45,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    43,
+    45,
+    48
+   ],
+   "adx1h": 14.13,
+   "regimeByTf": [
+    "transition",
+    "transition",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.36,
+    1.18,
+    0.96
+   ]
+  },
+  {
+   "symbol": "SUIUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -22,
+   "regime": "Leaning bearish",
+   "cont": 4,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 13,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    41,
+    43,
+    47
+   ],
+   "adx1h": 11.43,
+   "regimeByTf": [
+    "squeeze",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.1,
+    1.51,
+    1.07
+   ]
+  },
+  {
+   "symbol": "AAVEUSDT",
+   "evaluated": true,
+   "score": 75,
+   "band": "WATCH",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -19,
+   "regime": "Leaning bearish",
+   "cont": 28,
+   "exh": 12,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "weak_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    46,
+    48,
+    54
+   ],
+   "adx1h": 25.5,
+   "regimeByTf": [
+    "ranging",
+    "trending",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.35,
+    0.89,
+    0.21
+   ]
+  },
+  {
+   "symbol": "ADAUSDT",
+   "evaluated": true,
+   "score": 44,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -20,
+   "regime": "Leaning bearish",
+   "cont": 15,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    44,
+    47,
+    52
+   ],
+   "adx1h": 12.93,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.12,
+    0.86,
+    0.87
+   ]
+  },
+  {
+   "symbol": "PUMPFUNUSDT",
+   "evaluated": true,
+   "score": 79,
+   "band": "WATCH",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -54,
+   "regime": "Trend down",
+   "cont": 26,
+   "exh": 0,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "weak_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    37,
+    39,
+    49
+   ],
+   "adx1h": 27.16,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    0.51,
+    1.71,
+    0.3
+   ]
+  },
+  {
+   "symbol": "LITUSDT",
+   "evaluated": true,
+   "score": 32,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 18,
+   "regime": "Leaning bullish",
+   "cont": 29,
+   "exh": 35,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    50,
+    65,
+    75
+   ],
+   "adx1h": 25.79,
+   "regimeByTf": [
+    "ranging",
+    "ranging",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.37,
+    0.39,
+    1.76
+   ]
+  },
+  {
+   "symbol": "SKHYNIXUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -65,
+   "regime": "Strong trend down",
+   "cont": 32,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    36,
+    47,
+    47
+   ],
+   "adx1h": 38.4,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    2.56,
+    0.48,
+    0.51
+   ]
+  },
+  {
+   "symbol": "LINKUSDT",
+   "evaluated": true,
+   "score": 32,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 0,
+   "regime": "Neutral",
+   "cont": 16,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    50,
+    49,
+    52
+   ],
+   "adx1h": 11.44,
+   "regimeByTf": [
+    "transition",
+    "squeeze",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.54,
+    0.32,
+    0.59
+   ]
+  },
+  {
+   "symbol": "TAOUSDT",
+   "evaluated": true,
+   "score": 46,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 33,
+   "regime": "Leaning bullish",
+   "cont": 19,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    57,
+    54,
+    53
+   ],
+   "adx1h": 16.78,
+   "regimeByTf": [
+    "transition",
+    "ranging",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.99,
+    0.05,
+    0.23
+   ]
+  },
+  {
+   "symbol": "ONDOUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": 64,
+   "regime": "Strong trend up",
+   "cont": 35,
+   "exh": 12,
+   "rev": 20,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    1,
+    1
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "strong_bull",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    55,
+    59,
+    58
+   ],
+   "adx1h": 14.62,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.49,
+    0.33,
+    0.51
+   ]
+  },
+  {
+   "symbol": "PENGUUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 2,
+   "regime": "Neutral",
+   "cont": 10,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    50,
+    54,
+    58
+   ],
+   "adx1h": 18.67,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.75,
+    0.64,
+    0.14
+   ]
+  },
+  {
+   "symbol": "LTCUSDT",
+   "evaluated": true,
+   "score": 69,
+   "band": "WATCH",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -34,
+   "regime": "Leaning bearish",
+   "cont": 15,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    44,
+    40,
+    46
+   ],
+   "adx1h": 13.46,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.43,
+    1.32,
+    1.37
+   ]
+  },
+  {
+   "symbol": "XAGUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 14,
+   "regime": "Leaning bullish",
+   "cont": 3,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 13,
+   "tfAlignment": [
+    0,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    49,
+    53,
+    62
+   ],
+   "adx1h": 20.57,
+   "regimeByTf": [
+    "ranging",
+    "transition",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.19,
+    0.82,
+    2.06
+   ]
+  },
+  {
+   "symbol": "VELVETUSDT",
+   "evaluated": true,
+   "score": 65,
+   "band": "WATCH",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -72,
+   "regime": "Strong trend down",
+   "cont": 20,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "weak_bear",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    26,
+    33,
+    36
+   ],
+   "adx1h": 25.17,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    3.87,
+    3.05,
+    0.66
+   ]
+  },
+  {
+   "symbol": "SPCXUSDT",
+   "evaluated": true,
+   "score": 38,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -14,
+   "regime": "Leaning bearish",
+   "cont": 21,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    -1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    49,
+    45,
+    41
+   ],
+   "adx1h": 27,
+   "regimeByTf": [
+    "ranging",
+    "ranging",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.51,
+    0.42,
+    2.1
+   ]
+  },
+  {
+   "symbol": "WLDUSDT",
+   "evaluated": true,
+   "score": 29,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 32,
+   "regime": "Leaning bullish",
+   "cont": 16,
+   "exh": 20,
+   "rev": 37,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    50,
+    54,
+    59
+   ],
+   "adx1h": 11.13,
+   "regimeByTf": [
+    "squeeze",
+    "transition",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.52,
+    0.35,
+    0.63
+   ]
+  },
+  {
+   "symbol": "TUTUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -55,
+   "regime": "Trend down",
+   "cont": 35,
+   "exh": 12,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "weak_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    36,
+    39,
+    46
+   ],
+   "adx1h": 29.11,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    1.1,
+    1.9,
+    0.41
+   ]
+  },
+  {
+   "symbol": "SNXXUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": -16,
+   "regime": "Leaning bearish",
+   "cont": 21,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "weak_bull",
+    "neutral"
+   ],
+   "rsiByTf": [
+    40,
+    49,
+    45
+   ],
+   "adx1h": 49.63,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    2.67,
+    0.15,
+    0.17
+   ]
+  },
+  {
+   "symbol": "FARTCOINUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -21,
+   "regime": "Leaning bearish",
+   "cont": 16,
+   "exh": 12,
+   "rev": 47,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    44,
+    44,
+    52
+   ],
+   "adx1h": 13.44,
+   "regimeByTf": [
+    "ranging",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.4,
+    1.04,
+    1.45
+   ]
+  },
+  {
+   "symbol": "CASHCATUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": 56,
+   "regime": "Trend up",
+   "cont": 38,
+   "exh": 12,
+   "rev": 40,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "weak_bull",
+    "neutral"
+   ],
+   "rsiByTf": [
+    73,
+    54,
+    50
+   ],
+   "adx1h": 47.43,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "ranging"
+   ],
+   "spreadByTf": [
+    2.14,
+    1.3,
+    0.35
+   ]
+  },
+  {
+   "symbol": "UNIUSDT",
+   "evaluated": true,
+   "score": 32,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -50,
+   "regime": "Trend down",
+   "cont": 19,
+   "exh": 0,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    43,
+    48,
+    57
+   ],
+   "adx1h": 17.78,
+   "regimeByTf": [
+    "squeeze",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.37,
+    1.3,
+    0.59
+   ]
+  },
+  {
+   "symbol": "KORUUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -66,
+   "regime": "Strong trend down",
+   "cont": 28,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    36,
+    45,
+    44
+   ],
+   "adx1h": 36.82,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "trending"
+   ],
+   "spreadByTf": [
+    2,
+    0.39,
+    1.18
+   ]
+  },
+  {
+   "symbol": "BNBUSDT",
+   "evaluated": true,
+   "score": 39,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 12,
+   "regime": "Leaning bullish",
+   "cont": 23,
+   "exh": 12,
+   "rev": 27,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    52,
+    48,
+    51
+   ],
+   "adx1h": 11.55,
+   "regimeByTf": [
+    "transition",
+    "transition",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.94,
+    0.46,
+    0.64
+   ]
+  },
+  {
+   "symbol": "MUUSDT",
+   "evaluated": true,
+   "score": 48,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -68,
+   "regime": "Strong trend down",
+   "cont": 13,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    33,
+    43,
+    38
+   ],
+   "adx1h": 42.76,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "trending"
+   ],
+   "spreadByTf": [
+    2.69,
+    0.52,
+    1.84
+   ]
+  },
+  {
+   "symbol": "XAUTUSDT",
+   "evaluated": true,
+   "score": 71,
+   "band": "WATCH",
+   "bias": 1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": 45,
+   "regime": "Trend up",
+   "cont": 24,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "neutral",
+    "weak_bull"
+   ],
+   "rsiByTf": [
+    58,
+    50,
+    56
+   ],
+   "adx1h": 36.06,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    1.62,
+    0.76,
+    1.67
+   ]
+  },
+  {
+   "symbol": "XPLUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -35,
+   "regime": "Leaning bearish",
+   "cont": 28,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    40,
+    40,
+    45
+   ],
+   "adx1h": 17.6,
+   "regimeByTf": [
+    "ranging",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.14,
+    1.38,
+    1.13
+   ]
+  },
+  {
+   "symbol": "NVDAUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -73,
+   "regime": "Strong trend down",
+   "cont": 22,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    19,
+    35,
+    41
+   ],
+   "adx1h": 57.05,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    2.74,
+    2.52,
+    2.94
+   ]
+  },
+  {
+   "symbol": "BCHUSDT",
+   "evaluated": true,
+   "score": 40,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -20,
+   "regime": "Leaning bearish",
+   "cont": 10,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    47,
+    46,
+    49
+   ],
+   "adx1h": 20.14,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.55,
+    1.17,
+    0.51
+   ]
+  },
+  {
+   "symbol": "VIRTUALUSDT",
+   "evaluated": true,
+   "score": 39,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 34,
+   "regime": "Leaning bullish",
+   "cont": 31,
+   "exh": 20,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    59,
+    51,
+    59
+   ],
+   "adx1h": 29.59,
+   "regimeByTf": [
+    "trending",
+    "ranging",
+    "trending"
+   ],
+   "spreadByTf": [
+    2.2,
+    0.36,
+    0.94
+   ]
+  },
+  {
+   "symbol": "UAIUSDT",
+   "evaluated": true,
+   "score": 25,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 36,
+   "regime": "Leaning bullish",
+   "cont": 20,
+   "exh": 12,
+   "rev": 40,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    65,
+    55,
+    55
+   ],
+   "adx1h": 40.78,
+   "regimeByTf": [
+    "trending",
+    "squeeze",
+    "ranging"
+   ],
+   "spreadByTf": [
+    2.8,
+    0.2,
+    0.37
+   ]
+  },
+  {
+   "symbol": "SKHYUSDT",
+   "evaluated": true,
+   "score": 37,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": -65,
+   "regime": "Strong trend down",
+   "cont": 15,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    36,
+    48,
+    48
+   ],
+   "adx1h": 45.5,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    2.69,
+    0.42,
+    0.37
+   ]
+  },
+  {
+   "symbol": "CLUSDT",
+   "evaluated": true,
+   "score": 32,
+   "band": "AVOID",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -46,
+   "regime": "Trend down",
+   "cont": 19,
+   "exh": 12,
+   "rev": 10,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    0,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "neutral",
+    "strong_bear"
+   ],
+   "rsiByTf": [
+    42,
+    44,
+    45
+   ],
+   "adx1h": 38.8,
+   "regimeByTf": [
+    "trending",
+    "squeeze",
+    "trending"
+   ],
+   "spreadByTf": [
+    1.06,
+    0.11,
+    0.75
+   ]
+  },
+  {
+   "symbol": "MONUSDT",
+   "evaluated": true,
+   "score": 85,
+   "band": "EXCELLENT",
+   "bias": 1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": 52,
+   "regime": "Trend up",
+   "cont": 51,
+   "exh": 0,
+   "rev": 12,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "weak_bull",
+    "neutral"
+   ],
+   "rsiByTf": [
+    65,
+    50,
+    41
+   ],
+   "adx1h": 24.64,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "ranging"
+   ],
+   "spreadByTf": [
+    0.21,
+    2.14,
+    0.85
+   ]
+  },
+  {
+   "symbol": "GRASSUSDT",
+   "evaluated": true,
+   "score": 45,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 18,
+   "regime": "Leaning bullish",
+   "cont": 38,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    52,
+    46,
+    50
+   ],
+   "adx1h": 26.06,
+   "regimeByTf": [
+    "trending",
+    "ranging",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.96,
+    0.39,
+    1.98
+   ]
+  },
+  {
+   "symbol": "SPKUSDT",
+   "evaluated": true,
+   "score": 68,
+   "band": "WATCH",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -11,
+   "regime": "Leaning bearish",
+   "cont": 33,
+   "exh": 12,
+   "rev": 42,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    -1,
+    1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "weak_bear",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    37,
+    40,
+    57
+   ],
+   "adx1h": 26.84,
+   "regimeByTf": [
+    "ranging",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.57,
+    2.92,
+    0.64
+   ]
+  },
+  {
+   "symbol": "XLMUSDT",
+   "evaluated": true,
+   "score": 0,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": -22,
+   "regime": "Leaning bearish",
+   "cont": 4,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 13,
+   "tfAlignment": [
+    0,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    42,
+    42,
+    47
+   ],
+   "adx1h": 11.92,
+   "regimeByTf": [
+    "squeeze",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.14,
+    1.53,
+    1.05
+   ]
+  },
+  {
+   "symbol": "AVAXUSDT",
+   "evaluated": true,
+   "score": 15,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 31,
+   "regime": "Leaning bullish",
+   "cont": 15,
+   "exh": 12,
+   "rev": 42,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    50,
+    52,
+    56
+   ],
+   "adx1h": 13.12,
+   "regimeByTf": [
+    "squeeze",
+    "squeeze",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.34,
+    0.28,
+    0.23
+   ]
+  },
+  {
+   "symbol": "INJUSDT",
+   "evaluated": true,
+   "score": 43,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 20,
+   "regime": "Leaning bullish",
+   "cont": 23,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    -1
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    57,
+    50,
+    49
+   ],
+   "adx1h": 43.85,
+   "regimeByTf": [
+    "trending",
+    "ranging",
+    "transition"
+   ],
+   "spreadByTf": [
+    1.81,
+    0.77,
+    1.19
+   ]
+  },
+  {
+   "symbol": "XMRUSDT",
+   "evaluated": true,
+   "score": 80,
+   "band": "EXCELLENT",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 23,
+   "regime": "Leaning bullish",
+   "cont": 36,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    1,
+    0
+   ],
+   "tfConfidence": [
+    "neutral",
+    "strong_bull",
+    "neutral"
+   ],
+   "rsiByTf": [
+    62,
+    60,
+    51
+   ],
+   "adx1h": 17.28,
+   "regimeByTf": [
+    "ranging",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    0.06,
+    2.53,
+    0.75
+   ]
+  },
+  {
+   "symbol": "BEATUSDT",
+   "evaluated": true,
+   "score": 80,
+   "band": "EXCELLENT",
+   "bias": -1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": -20,
+   "regime": "Leaning bearish",
+   "cont": 33,
+   "exh": 12,
+   "rev": 15,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "neutral",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    40,
+    52,
+    57
+   ],
+   "adx1h": 15.57,
+   "regimeByTf": [
+    "transition",
+    "trending",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    0.68,
+    0.68,
+    0.44
+   ]
+  },
+  {
+   "symbol": "STORJUSDT",
+   "evaluated": true,
+   "score": 80,
+   "band": "EXCELLENT",
+   "bias": 1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": 49,
+   "regime": "Trend up",
+   "cont": 39,
+   "exh": 12,
+   "rev": 20,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "weak_bull",
+    "neutral"
+   ],
+   "rsiByTf": [
+    57,
+    51,
+    40
+   ],
+   "adx1h": 55.07,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    0.71,
+    0.76,
+    0.23
+   ]
+  },
+  {
+   "symbol": "PORTALUSDT",
+   "evaluated": true,
+   "score": 37,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 32,
+   "regime": "Leaning bullish",
+   "cont": 23,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    0,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "neutral",
+    "neutral"
+   ],
+   "rsiByTf": [
+    56,
+    49,
+    56
+   ],
+   "adx1h": 44.29,
+   "regimeByTf": [
+    "trending",
+    "squeeze",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    1.84,
+    0.13,
+    0.09
+   ]
+  },
+  {
+   "symbol": "ASTERUSDT",
+   "evaluated": true,
+   "score": 36,
+   "band": "AVOID",
+   "bias": 0,
+   "alignCount": 0,
+   "ceiling": null,
+   "direction": 16,
+   "regime": "Leaning bullish",
+   "cont": 9,
+   "exh": 12,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    0,
+    0,
+    1
+   ],
+   "tfConfidence": [
+    "neutral",
+    "neutral",
+    "weak_bull"
+   ],
+   "rsiByTf": [
+    53,
+    57,
+    65
+   ],
+   "adx1h": 16.62,
+   "regimeByTf": [
+    "squeeze",
+    "squeeze",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.65,
+    0.27,
+    0.51
+   ]
+  },
+  {
+   "symbol": "MNTUSDT",
+   "evaluated": true,
+   "score": 36,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": -5,
+   "regime": "Neutral",
+   "cont": 13,
+   "exh": 12,
+   "rev": 20,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    47,
+    35,
+    41
+   ],
+   "adx1h": 39.19,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    2.12,
+    2.4,
+    2
+   ]
+  },
+  {
+   "symbol": "AEROUSDT",
+   "evaluated": true,
+   "score": 41,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 3,
+   "ceiling": null,
+   "direction": 67,
+   "regime": "Strong trend up",
+   "cont": 35,
+   "exh": 12,
+   "rev": 50,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    1,
+    1
+   ],
+   "tfConfidence": [
+    "strong_bull",
+    "strong_bull",
+    "strong_bull"
+   ],
+   "rsiByTf": [
+    63,
+    60,
+    64
+   ],
+   "adx1h": 37.02,
+   "regimeByTf": [
+    "trending",
+    "trending",
+    "trending"
+   ],
+   "spreadByTf": [
+    2.12,
+    0.67,
+    0.59
+   ]
+  },
+  {
+   "symbol": "POLUSDT",
+   "evaluated": true,
+   "score": 32,
+   "band": "AVOID",
+   "bias": 1,
+   "alignCount": 1,
+   "ceiling": null,
+   "direction": 0,
+   "regime": "Neutral",
+   "cont": 24,
+   "exh": 12,
+   "rev": 32,
+   "contItems": 15,
+   "tfAlignment": [
+    1,
+    -1,
+    -1
+   ],
+   "tfConfidence": [
+    "weak_bull",
+    "strong_bear",
+    "weak_bear"
+   ],
+   "rsiByTf": [
+    56,
+    46,
+    44
+   ],
+   "adx1h": 21.57,
+   "regimeByTf": [
+    "trending",
+    "transition",
+    "squeeze"
+   ],
+   "spreadByTf": [
+    2,
+    0.53,
+    0.74
+   ]
+  },
+  {
+   "symbol": "WLFIUSDT",
+   "evaluated": true,
+   "score": 69,
+   "band": "WATCH",
+   "bias": -1,
+   "alignCount": 2,
+   "ceiling": null,
+   "direction": -51,
+   "regime": "Trend down",
+   "cont": 41,
+   "exh": 0,
+   "rev": 0,
+   "contItems": 15,
+   "tfAlignment": [
+    -1,
+    -1,
+    0
+   ],
+   "tfConfidence": [
+    "strong_bear",
+    "strong_bear",
+    "neutral"
+   ],
+   "rsiByTf": [
+    41,
+    45,
+    57
+   ],
+   "adx1h": 13.49,
+   "regimeByTf": [
+    "squeeze",
+    "trending",
+    "transition"
+   ],
+   "spreadByTf": [
+    0.37,
+    1.33,
+    0.26
+   ]
+  }
+ ]
+}

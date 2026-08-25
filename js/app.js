@@ -20,7 +20,7 @@
   };
 
   // Pulse Spot/Perp and Top Gainers/Losers come from raw Bybit ticker
-  // fetches with no caching of their own (unlike sectorPerformance7d/
+  // fetches with no caching of their own (unlike fastSectorPerformance/
   // fearGreedIndex, which already cache more conservatively than this) —
   // they don't meaningfully change minute-to-minute, so gate them to a
   // 30-min cadence instead of refetching on every scan. Persisted so a
@@ -49,17 +49,21 @@
 
   // Hard gate shown to literally every visitor, checked before the access
   // gate and before anything else in init() — even someone who already has
-  // the current valid code sees this, not the app. Flip to false (and
-  // redeploy) to reopen the scanner once maintenance work is done.
-  const MAINTENANCE_MODE = true;
+  // the current valid code sees this, not the app.
+  //
+  // Committed as false ONLY on this branch, ONLY so the Vercel preview
+  // deploy (terminal-build/phase-0-1) is testable without the access code.
+  // This branch never deploys to beta.wicktor.top (that's main, still
+  // locked at true) — but flip this back to true before this branch is
+  // ever merged into main, or the live site reopens unintentionally.
+  const MAINTENANCE_MODE = false;
 
   const DEFAULT_SETTINGS = {
-    universeSize: 30,
-    refreshIntervalSec: 60,
+    universeSize: 120,
+    refreshIntervalSec: 300,
     includeCryptoSpot: true,
     includeStocks: false,
     includePerps: true,
-    maxAgeMinutes: 20,
     spotCardsPerSide: 5,
     perpCardsPerSide: 5,
     includeNarrativeSectors: true
@@ -84,6 +88,8 @@
     },
     searchQuery: '',
     topStripData: {},
+    flowsData: [],   // CoinGecko-backed, Flows tab only (lazy)
+    fastSectors: [], // CoinPaprika-backed, shared by scan + strip + Heatmap
     rawMovers: [],
     refreshTimer: null,
     modalCoin: null,
@@ -105,6 +111,41 @@
     cardGrid: document.getElementById('card-grid'),
     topStrip: document.getElementById('top-strip'),
     filterBar: document.getElementById('filter-bar'),
+    navScanner: document.getElementById('nav-scanner'),
+    navDashboard: document.getElementById('nav-dashboard'),
+    navFlows: document.getElementById('nav-flows'),
+    navHeatmap: document.getElementById('nav-heatmap'),
+    navNews: document.getElementById('nav-news'),
+    navWatchlist: document.getElementById('nav-watchlist'),
+    viewScanner: document.getElementById('view-scanner'),
+    viewDashboard: document.getElementById('view-dashboard'),
+    viewFlows: document.getElementById('view-flows'),
+    viewHeatmap: document.getElementById('view-heatmap'),
+    viewNews: document.getElementById('view-news'),
+    viewWatchlist: document.getElementById('view-watchlist'),
+    dashboardGrid: document.getElementById('dashboard-grid'),
+    flowsGrid: document.getElementById('flows-grid'),
+    heatmapGridContainer: document.getElementById('heatmap-grid-container'),
+    newsFeedContainer: document.getElementById('news-feed-container'),
+    watchlistContainer: document.getElementById('watchlist-container'),
+    accountBtn: document.getElementById('account-btn'),
+    accountBackdrop: document.getElementById('account-backdrop'),
+    accountPanel: document.getElementById('account-panel'),
+    accountClose: document.getElementById('account-close'),
+    accountSignedOut: document.getElementById('account-signed-out'),
+    accountSignedIn: document.getElementById('account-signed-in'),
+    accountEmail: document.getElementById('account-email'),
+    accountPassword: document.getElementById('account-password'),
+    accountError: document.getElementById('account-error'),
+    accountSigninBtn: document.getElementById('account-signin-btn'),
+    accountSignupBtn: document.getElementById('account-signup-btn'),
+    accountSignoutBtn: document.getElementById('account-signout-btn'),
+    accountEmailDisplay: document.getElementById('account-email-display'),
+    signalJournalBtn: document.getElementById('signal-journal-btn'),
+    signalJournalBackdrop: document.getElementById('signal-journal-backdrop'),
+    signalJournalPanel: document.getElementById('signal-journal-panel'),
+    signalJournalClose: document.getElementById('signal-journal-close'),
+    signalJournalBody: document.getElementById('signal-journal-body'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -120,7 +161,6 @@
     stocksToggle: document.getElementById('setting-stocks'),
     perpToggle: document.getElementById('setting-perps'),
     narrativeToggle: document.getElementById('setting-narratives'),
-    maxAgeInput: document.getElementById('setting-maxage'),
     spotCapInput: document.getElementById('setting-spot-cap'),
     perpCapInput: document.getElementById('setting-perp-cap'),
     scanProgress: document.getElementById('scan-progress'),
@@ -181,9 +221,16 @@
 
   // -------------------------------------------------------- Core pipeline
   async function computeCoin(base, category, mcapMap, newsData) {
-    const candles = await Api.fetchCandleSet(category, base.symbol);
+    // OI has no spot-market concept — perpetuals only, fetched alongside
+    // candles (not sequentially) so it doesn't add latency to the scan.
+    const [candles, oiChange15m] = await Promise.all([
+      Api.fetchCandleSet(category, base.symbol),
+      category === 'linear'
+        ? Api.openInterestChange15m(base.symbol).catch(() => null)
+        : Promise.resolve(null)
+    ]);
     if (!candles.h1) return null;
-    const result = Scoring.evaluate(candles);
+    const result = Scoring.evaluate(candles, { oiChange15m });
     if (!result) return null;
 
     const market = category === 'linear' ? 'PERP' : 'SPOT';
@@ -193,6 +240,12 @@
     const closes1h = candles.h1.map(c => c.c);
     const priceNum = base.price;
     const volatility = classifyVolatility(candles.h1);
+    const tfChips = [
+      tfChipData('4H', candles.h4),
+      tfChipData('1H', candles.h1),
+      tfChipData('15M', candles.m15),
+      tfChipData('5M', candles.m5)
+    ];
 
     // display symbol without USDT suffix, and without trailing x for stocks (kept as-is with x for clarity)
     const displaySymbol = base.symbol.replace(/USDT$/, '');
@@ -217,6 +270,7 @@
       rawSymbol: base.symbol,
       sector: base.narrativeSector || (base.isStock ? 'Tokenized Stock' : 'Crypto'),
       price: formatPrice(priceNum),
+      priceRaw: priceNum,
       market,
       side: result.bias === 1 ? (market === 'PERP' ? 'Long' : 'Buy') : (market === 'PERP' ? 'Short' : 'Sell'),
       discoveredAgo: discoveredAgoLabel(key),
@@ -226,10 +280,34 @@
       unlock,
       newsMeta,
       watchlisted: state.watchlist.has(key),
+      tfChips,
       resistance: formatPrice(result.tfSnapshots[0].resistance),
       support: formatPrice(result.tfSnapshots[0].support),
+      // v2 sloped-channel levels — null unless the regression fit was
+      // good enough (r2 >= 0.6); modal shows them as a secondary line
+      // under the flat fractal-point level, never in place of it.
+      // Carried out of the scan so the signal journal can resolve open
+      // signals against the path that actually happened, without refetching.
+      // Stripped before this object is stored in state.coins.
+      _candles5m: candles.m5,
+      resistanceSloped: result.tfSnapshots[0].resistanceSloped,
+      supportSloped: result.tfSnapshots[0].supportSloped,
       ...result
     };
+  }
+
+  // Card's Active TF row (4H/1H/15M/5M): last-candle close vs the one
+  // before it — a simple, display-only trend reading, deliberately not
+  // the Alligator-confidence tiering used for scoring (that's a 1H/15M/5M-
+  // only concept and doesn't have a 4H analog without a much bigger
+  // computation this row doesn't need).
+  function tfChipData(label, candles) {
+    if (!candles || candles.length < 2) return { label, trend: 'flat', pct: null };
+    const last = candles[candles.length - 1];
+    const prev = candles[candles.length - 2];
+    const pct = prev.c ? ((last.c - prev.c) / prev.c) * 100 : 0;
+    const trend = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+    return { label, trend, pct };
   }
 
   function classifyVolatility(h1candles) {
@@ -256,45 +334,39 @@
     try {
       let globalData = null, fngData = null;
 
-      // Sector/narrative data is a top-strip enhancement (Top Sectors,
-      // Narratives tiles + optional coin-sourcing), not part of the core
-      // scan — it used to sit inside the blocking fetch below, so every
-      // scan paid up to sectorPerformance7d()'s own ~20s internal time
-      // budget before universe-building/coin-analysis (the actual
-      // card-grid work) even started, even though that budget's circuit
-      // breaker/deadline were firing exactly as designed on a bad
-      // CoinGecko day. Kick it off independently instead; it updates the
-      // top strip whenever it resolves (near-instant once cache-warm for
-      // 4h, up to ~20s cold) without blocking anything below. Narrative
-      // coin-sourcing (step 4) becomes best-effort: it only fires if this
-      // already resolved by the time universe-building finishes.
-      let sectorPerf = [];
-      const sectorPerfPromise = Api.sectorPerformance7d()
-        .catch(e => { console.warn('[App] sector performance fetch failed', e); return []; })
-        .then(result => {
-          sectorPerf = result;
-          state.narrativePerf = result && result.length
-            ? [...result].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
-            : null;
-          refreshTopStrip(globalData, fngData);
-          el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
-          return result;
-        });
-
+      // Sector/narrative data used to be a fire-and-forget promise: it sat
+      // in the blocking fetch below, paying sectorPerformance7d()'s ~20s
+      // CoinGecko time budget before the card grid even started, so it was
+      // decoupled and narrative coin-sourcing became best-effort — in
+      // practice it almost never resolved in time on a cold cache, and a
+      // rate-limited run returned as little as 1 of 16 sectors, silently
+      // shrinking the scan universe.
+      //
+      // fastSectorPerformance() is 2 CoinPaprika requests (~1.1s cold, 0ms
+      // warm) instead of 17 CoinGecko ones, so it can simply be awaited
+      // inline below. Narrative injection now fires deterministically
+      // rather than by luck.
       // 1. Fetch market data, news, global stats, FNG in parallel — sector
       // performance is intentionally excluded, see above.
       // refreshXStockSet() populates Api.isXStock()'s live symbol set (no-ops
       // within its 24h TTL) — must complete before any isXStock() call below.
       console.time('[Scan] parallel-fetches');
-      const [mcapMap, newsData, globalRes, fngRes] = await Promise.all([
-        Api.coingeckoMarketCaps().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
+      const [mcapMap, newsData, globalRes, fngRes, sectorRes] = await Promise.all([
+        Api.marketCapMap().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
         Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
         Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
         Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
-        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); })
+        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); }),
+        Api.fastSectorPerformance().catch(e => { console.warn('[App] fast sector fetch failed', e); return []; })
       ]);
       globalData = globalRes;
       fngData = fngRes;
+      const sectorPerf = sectorRes || [];
+      // Shared with the Heatmap tab so it never triggers its own fetch.
+      state.fastSectors = sectorPerf;
+      state.narrativePerf = sectorPerf.length
+        ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
+        : null;
       console.timeEnd('[Scan] parallel-fetches');
 
       // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
@@ -341,22 +413,38 @@
       console.time('[Scan] top-strip-rendering');
       refreshTopStrip(globalData, fngData);
       el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
+      if (dashboardLoaded) refreshDashboard();
       console.timeEnd('[Scan] top-strip-rendering');
 
       // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
       // meaningful when the crypto spot pool it injects into is itself enabled).
-      // Best-effort: `sectorPerf` is only populated if sectorPerfPromise (kicked
-      // off independently above) has already resolved by this point — on a
-      // cold sector cache it usually hasn't yet, so this scan just skips
-      // injection rather than waiting; the next scan picks it up once cached.
+      // No longer best-effort: sectorPerf is awaited above, so this fires on
+      // every scan rather than only when a cached CoinGecko result happened
+      // to be warm.
       console.time('[Scan] narrative-sourcing');
       const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
       if (narrativeEnabled && state.settings.includeCryptoSpot && sectorPerf && sectorPerf.length) {
         const volumeSymbols = new Set(
           universes.flatMap(u => u.universe.map(b => b.symbol))
         );
+        // Only inject symbols Bybit actually lists as spot pairs. A sector
+        // tag is a claim about a token, not about where it trades: liquid-
+        // staking entries (METH, RSETH, CBETH, STETH, MSOL, SOLVBTC) and
+        // other untraded tokens otherwise pass isTradeableUsdtPair() purely
+        // because "<SYMBOL>USDT" ends in USDT, then burn three Bybit kline
+        // round-trips each before failing soft. spotTickerSymbols is built
+        // from the ticker fetch already performed above, so this costs
+        // nothing extra.
+        const spotTickerSymbols = Api.spotSymbolSet();
         const narrativeCandidates = Api.topNarrativeCandidates(sectorPerf);
-        const newCandidates = narrativeCandidates.filter(c => !volumeSymbols.has(c.symbol));
+        const newCandidates = narrativeCandidates.filter(c =>
+          !volumeSymbols.has(c.symbol) &&
+          (spotTickerSymbols.size === 0 || spotTickerSymbols.has(c.symbol))
+        );
+        const rejected = narrativeCandidates.length - newCandidates.length;
+        if (rejected > 0) {
+          console.log(`[Scan] narrative: ${rejected} candidate(s) skipped (already in universe or not a Bybit spot pair)`);
+        }
         if (newCandidates.length > 0) {
           const cryptoSpotEntry = universes.find(u => u.category === 'spot' && u.assetFilter === 'crypto');
           if (cryptoSpotEntry) cryptoSpotEntry.universe.push(...newCandidates);
@@ -374,8 +462,23 @@
       let batchesDone = 0;
       let coinsDone = 0;
 
-      const maxAgeMs = state.settings.maxAgeMinutes * 60 * 1000;
-      const now = Date.now();
+      // The maxAgeMinutes freshness filter used to live here and has been
+      // removed. It was broken and conceptually wrong, in that order:
+      //
+      // Broken — dropping a coin took an early return that skipped
+      // activeKeys.add(), so clearDiscoveredIfMissing() then deleted its
+      // discovery timestamp, and the next scan re-discovered it with a fresh
+      // one. A persistently trending coin therefore flickered on a ~20-minute
+      // cycle and its "discovered X ago" label reset each time, rather than
+      // being filtered once. Removing the filter also repairs that label,
+      // since the deletion path was the thing corrupting it.
+      //
+      // Wrong — freshness is not quality. The filter hid the highest-scoring
+      // persistent setups precisely because they had persisted. Measured, an
+      // ordinary trigger-age window predicts nothing extra on 5M (flat from
+      // 0 to 7 bars), so the concept it was reaching for is better served by
+      // trigger age, which is a market event rather than a bookkeeping
+      // artefact of when this browser first happened to see the symbol.
       const allCoins = [];
       const activeKeys = new Set();
 
@@ -385,12 +488,8 @@
           const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap, newsData)));
           results.forEach(r => {
             if (r) {
-              const key = `${r.rawSymbol}:${r.market}`;
-              const ts = state.discovered[key];
-              // Exclude coins whose first-seen timestamp is older than maxAgeMinutes.
-              if (ts && (now - ts) > maxAgeMs) return;
               allCoins.push(r);
-              activeKeys.add(key);
+              activeKeys.add(`${r.rawSymbol}:${r.market}`);
             }
           });
           batchesDone++;
@@ -400,7 +499,27 @@
       }
 
       clearDiscoveredIfMissing(activeKeys);
+      // Harvest the raw 5M paths, then strip them: state.coins is retained
+      // and rendered, and 240 coins x 100 bars of candles has no business
+      // living there.
+      const candlesBySymbol = {};
+      allCoins.forEach(c => {
+        if (c._candles5m) candlesBySymbol[`${c.rawSymbol}:${c.market}`] = c._candles5m;
+        delete c._candles5m;
+      });
+
       state.coins = allCoins.sort((a, b) => b.score - a.score);
+
+      // Fire-and-forget: the journal is a record, never a dependency of the
+      // scan. A Supabase outage must not stop the scanner working.
+      if (typeof SignalJournal !== 'undefined') {
+        SignalJournal.resolveOpen(candlesBySymbol)
+          .then(n => { if (n) console.log(`[Journal] resolved ${n} signal(s)`); })
+          .catch(e => console.warn('[Journal] resolve failed', e));
+        SignalJournal.logFromScan(state.coins)
+          .then(n => { if (n) console.log(`[Journal] logged ${n} signal(s)`); })
+          .catch(e => console.warn('[Journal] log failed', e));
+      }
       console.timeEnd('[Scan] coin-analysis');
 
       // 6. Render the card grid with the finished scan results — top strip
@@ -630,6 +749,7 @@
     const coin = state.renderedCoins[idx];
     if (!coin) return;
     const key = `${coin.rawSymbol}:${coin.market}`;
+    const nowStarred = !state.watchlist.has(key);
     if (state.watchlist.has(key)) state.watchlist.delete(key);
     else state.watchlist.add(key);
     // coin.watchlisted is baked in once per scan (computeCoin) and this
@@ -640,6 +760,19 @@
     coin.watchlisted = state.watchlist.has(key);
     saveJson(STORAGE_KEYS.watchlist, [...state.watchlist]);
     renderAll();
+
+    // Logged-in users additionally sync to the account-scoped Supabase
+    // watchlist (the Watchlist tab's data source) — localStorage stays
+    // the source of truth for the star's own visual state either way,
+    // per the owner's explicit "keep it local for now" call. Fire-and-
+    // forget: a sync failure shouldn't block the star from working.
+    const user = Auth.getUser();
+    if (user) {
+      const action = nowStarred
+        ? Auth.watchlist.add(coin.rawSymbol, coin.market)
+        : Auth.watchlist.remove(coin.rawSymbol, coin.market);
+      action.catch(e => console.warn('[App] watchlist sync failed', e));
+    }
   }
 
   function openTradingView(idx) {
@@ -658,7 +791,14 @@
     el.modalContent.innerHTML = Render.detailModalHtml(coin, state.newsCache[coin.rawSymbol]);
     el.modalBackdrop.classList.add('open');
     bindModalCloseEvents();
+
+    const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling).text;
+    Outcomes.logIfNew({
+      key: `${coin.rawSymbol}:${coin.market}`,
+      band, score: coin.score, side: coin.side, entryPrice: coin.priceRaw
+    });
   }
+
   function bindModalCloseEvents() {
     const closeBtn = el.modalContent.querySelector('[data-action="close-modal"]');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
@@ -687,25 +827,23 @@
   // -------------------------------------------------------------- Settings
   function openSettings() {
     el.universeInput.value = state.settings.universeSize;
-    el.refreshInput.value = state.settings.refreshIntervalSec;
+    el.refreshInput.value = Math.round(state.settings.refreshIntervalSec / 60);
     el.cryptoSpotToggle.checked = state.settings.includeCryptoSpot;
     el.stocksToggle.checked = state.settings.includeStocks;
     el.perpToggle.checked = state.settings.includePerps;
     el.narrativeToggle.checked = state.settings.includeNarrativeSectors !== false;
-    el.maxAgeInput.value = state.settings.maxAgeMinutes;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
     el.perpCapInput.value = state.settings.perpCardsPerSide;
     el.settingsBackdrop.classList.add('open');
     el.settingsPanel.classList.add('open');
   }
   function closeSettings() {
-    state.settings.universeSize = Math.max(10, Math.min(80, parseInt(el.universeInput.value) || 30));
-    state.settings.refreshIntervalSec = Math.max(20, parseInt(el.refreshInput.value) || 60);
+    state.settings.universeSize = Math.max(10, Math.min(120, parseInt(el.universeInput.value) || 120));
+    state.settings.refreshIntervalSec = Math.max(1, Math.min(10, parseInt(el.refreshInput.value) || 5)) * 60;
     state.settings.includeCryptoSpot = el.cryptoSpotToggle.checked;
     state.settings.includeStocks = el.stocksToggle.checked;
     state.settings.includePerps = el.perpToggle.checked;
     state.settings.includeNarrativeSectors = el.narrativeToggle.checked;
-    state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
     state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));
     saveJson(STORAGE_KEYS.settings, state.settings);
@@ -713,6 +851,97 @@
     el.settingsPanel.classList.remove('open');
     scheduleRefresh();
     runScan();
+  }
+
+  // ------------------------------------------------------------- Account
+  function openAccountPanel() {
+    el.accountError.textContent = '';
+    el.accountBackdrop.classList.add('open');
+    el.accountPanel.classList.add('open');
+  }
+  function closeAccountPanel() {
+    el.accountBackdrop.classList.remove('open');
+    el.accountPanel.classList.remove('open');
+  }
+
+  async function submitAccountForm(mode) {
+    const email = el.accountEmail.value.trim();
+    const password = el.accountPassword.value;
+    el.accountError.textContent = '';
+    if (!email || !password) {
+      el.accountError.textContent = 'Enter both email and password.';
+      return;
+    }
+    try {
+      if (mode === 'signUp') await Auth.signUp(email, password);
+      else await Auth.signIn(email, password);
+      el.accountPassword.value = '';
+      closeAccountPanel();
+    } catch (e) {
+      el.accountError.textContent = e.message || 'Something went wrong.';
+    }
+  }
+
+  // Reflects the current auth state into the account panel + the topbar
+  // avatar button. Called once at startup and on every Auth.onChange fire
+  // (sign-in/sign-up/sign-out all route through the same listener).
+  function renderAccountState(user) {
+    el.accountSignedOut.hidden = !!user;
+    el.accountSignedIn.hidden = !user;
+    el.accountBtn.classList.toggle('logged-in', !!user);
+    if (user) el.accountEmailDisplay.textContent = user.email;
+  }
+
+  // ------------------------------------------------------- Signal journal
+  function fmtR(v) {
+    return v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(3) + 'R';
+  }
+  function rColor(v) {
+    return v == null ? null : (v >= 0 ? 'var(--green-text)' : 'var(--red-text)');
+  }
+
+  function renderPlanTiles(label, hint, stat) {
+    const tile = (l, v, color) => `
+      <div class="strip-tile">
+        <div class="strip-label">${l}</div>
+        <div class="strip-value"${color ? ` style="color:${color}"` : ''}>${v}</div>
+      </div>`;
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${label}</div>
+        <div class="settings-hint" style="margin-bottom:8px;">${hint}</div>
+        <div class="top-strip" style="margin-bottom:0;">
+          ${tile('Resolved', stat.n)}
+          ${tile('Win Rate', stat.winPct != null ? stat.winPct.toFixed(0) + '%' : '--', stat.winPct != null ? (stat.winPct >= 50 ? 'var(--green-text)' : 'var(--red-text)') : null)}
+          ${tile('Mean R', fmtR(stat.mean), rColor(stat.mean))}
+          ${tile('Balanced R', fmtR(stat.balanced), rColor(stat.balanced))}
+        </div>
+      </div>`;
+  }
+
+  async function openSignalJournalPanel() {
+    el.signalJournalBackdrop.classList.add('open');
+    el.signalJournalPanel.classList.add('open');
+    el.signalJournalBody.innerHTML = '<div class="loading-state">Loading...</div>';
+    if (typeof SignalJournal === 'undefined') {
+      el.signalJournalBody.innerHTML = '<div class="loading-state">Signal journal is unavailable right now.</div>';
+      return;
+    }
+    const summary = await SignalJournal.summary();
+    if (!summary || !summary.planA || !summary.planA.n) {
+      el.signalJournalBody.innerHTML = '<div class="loading-state">No resolved signals yet. Signals are logged when a signed-in scan finds an EXCELLENT (score ≥ 80) setup, and take up to ~4h to resolve — check back once a few scans have run.</div>';
+      return;
+    }
+    el.signalJournalBody.innerHTML =
+      renderPlanTiles('Plan A — partial TP + breakeven', '1/3 off at 1R, stop to breakeven, rest to 2R/3R', summary.planA) +
+      renderPlanTiles('Plan B — straight 3R', 'Full size held to a single 3R target', summary.planB) +
+      (summary.medianRiskPct != null
+        ? `<div class="settings-hint">Median 1R = ${(summary.medianRiskPct * 100).toFixed(2)}% of entry price.</div>`
+        : '');
+  }
+  function closeSignalJournalPanel() {
+    el.signalJournalBackdrop.classList.remove('open');
+    el.signalJournalPanel.classList.remove('open');
   }
 
   // ------------------------------------------------------------ Scheduling
@@ -754,8 +983,203 @@
       });
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { closeModal(); closeSettings(); }
+      if (e.key === 'Escape') { closeModal(); closeSettings(); closeSignalJournalPanel(); }
     });
+    el.navScanner.addEventListener('click', () => switchTab('scanner'));
+    el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
+    el.navFlows.addEventListener('click', () => switchTab('flows'));
+    el.navHeatmap.addEventListener('click', () => switchTab('heatmap'));
+    el.navNews.addEventListener('click', () => switchTab('news'));
+    el.navWatchlist.addEventListener('click', () => switchTab('watchlist'));
+    el.accountBtn.addEventListener('click', openAccountPanel);
+    el.accountClose.addEventListener('click', closeAccountPanel);
+    el.accountBackdrop.addEventListener('click', closeAccountPanel);
+    el.signalJournalBtn.addEventListener('click', () => { closeSettings(); openSignalJournalPanel(); });
+    el.signalJournalClose.addEventListener('click', closeSignalJournalPanel);
+    el.signalJournalBackdrop.addEventListener('click', closeSignalJournalPanel);
+    el.accountSigninBtn.addEventListener('click', () => submitAccountForm('signIn'));
+    el.accountSignupBtn.addEventListener('click', () => submitAccountForm('signUp'));
+    el.accountSignoutBtn.addEventListener('click', async () => {
+      await Auth.signOut();
+      closeAccountPanel();
+    });
+    el.flowsGrid.addEventListener('click', (e) => {
+      const row = e.target.closest('.flows-row');
+      if (row) toggleFlowsRow(row.dataset.categoryId);
+    });
+    el.flowsGrid.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('.flows-row');
+      if (row) { e.preventDefault(); toggleFlowsRow(row.dataset.categoryId); }
+    });
+  }
+
+  // --------------------------------------------------------------- Tab nav
+  // Dashboard/Flows data is fetched lazily on first visit, not on every
+  // scan — it's supporting market context, not part of the scan cycle.
+  // Cached at the Api layer so revisiting a tab within the cache window
+  // doesn't refetch.
+  const TABS = ['scanner', 'dashboard', 'flows', 'heatmap', 'news', 'watchlist'];
+  let dashboardLoaded = false;
+  let flowsLoaded = false;
+  let newsLoaded = false;
+  const flowsExpanded = new Set();
+
+  function switchTab(tab) {
+    TABS.forEach(t => {
+      const active = t === tab;
+      el[`nav${capitalize(t)}`].classList.toggle('active', active);
+      el[`nav${capitalize(t)}`].setAttribute('aria-selected', String(active));
+      el[`view${capitalize(t)}`].hidden = !active;
+    });
+    if (tab === 'dashboard' && !dashboardLoaded) {
+      dashboardLoaded = true;
+      refreshDashboard();
+    }
+    if (tab === 'flows' && !flowsLoaded) {
+      flowsLoaded = true;
+      refreshFlows();
+    }
+    if (tab === 'heatmap') {
+      // Reads the CoinPaprika-backed fast sectors the scan already
+      // populated. Previously this piggybacked on the Flows tab, so
+      // simply opening Heatmap fired CoinGecko's whole 17-request
+      // category sequence.
+      if (state.fastSectors && state.fastSectors.length) {
+        refreshHeatmap();
+      } else {
+        Api.fastSectorPerformance()
+          .catch(e => { console.warn('[App] fast sector fetch failed (Heatmap)', e); return []; })
+          .then(s => { state.fastSectors = s; refreshHeatmap(); });
+      }
+    }
+    if (tab === 'news' && !newsLoaded) {
+      newsLoaded = true;
+      refreshNews();
+    }
+    if (tab === 'watchlist') {
+      refreshWatchlistTab();
+    }
+  }
+
+  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  async function refreshDashboard() {
+    const top5 = await Api.topByMarketCap(5).catch(e => {
+      console.warn('[App] top5 market cap fetch failed', e);
+      return [];
+    });
+    const dashboardData = {
+      ...state.topStripData,
+      top5MarketCap: top5,
+      gainers10: (state.rawMovers || [])
+        .filter(x => x.change > 0).sort((a, b) => b.change - a.change).slice(0, 10),
+      losers10: (state.rawMovers || [])
+        .filter(x => x.change < 0).sort((a, b) => a.change - b.change).slice(0, 10)
+    };
+    el.dashboardGrid.innerHTML = Render.dashboardHtml(dashboardData);
+  }
+
+  /**
+   * Two-phase, so a CoinGecko rate-limit can never leave this tab nearly
+   * empty the way it used to:
+   *   1. render the CoinPaprika sectors immediately (always available,
+   *      already fetched by the scan) with 30D/1Y showing "--";
+   *   2. merge in CoinGecko's extended windows when they arrive.
+   *
+   * The merge is per-sector keyed on `name`, which is the shared
+   * NARRATIVE_KEYWORDS string and therefore a real join key across both
+   * providers. A CoinGecko row wins where present (it carries all four
+   * windows); CoinPaprika fills every gap. So Flows always shows a full
+   * sector list, and a "--" means "the extended-window source didn't
+   * return this one", never "broken".
+   *
+   * narrativePerf (the Top Sectors strip tile) is deliberately NOT set
+   * here — the scan's fast path owns it, or the strip would flip between
+   * two providers' numbers depending on whether this tab was opened.
+   */
+  async function refreshFlows() {
+    let fast = state.fastSectors;
+    if (!fast || !fast.length) {
+      fast = await Api.fastSectorPerformance().catch(e => {
+        console.warn('[App] fast sector fetch failed (Flows tab)', e);
+        return [];
+      });
+      state.fastSectors = fast;
+    }
+    if (fast.length) {
+      state.flowsData = fast;
+      el.flowsGrid.innerHTML = Render.marketFlowsHtml(fast, flowsExpanded);
+    }
+
+    const cg = await Api.sectorPerformance7d().catch(e => {
+      console.warn('[App] sectorPerformance7d fetch failed (Flows tab)', e);
+      return [];
+    });
+    if (!cg.length) return; // keep the fast render; nothing to merge
+
+    const byName = new Map(fast.map(s => [s.name, s]));
+    cg.forEach(s => byName.set(s.name, s)); // CoinGecko wins where present
+    const merged = [...byName.values()];
+    state.flowsData = merged;
+    el.flowsGrid.innerHTML = Render.marketFlowsHtml(merged, flowsExpanded);
+  }
+
+  function refreshHeatmap() {
+    el.heatmapGridContainer.innerHTML = Render.heatmapHtml(state.fastSectors);
+  }
+
+  // News tab reuses the same fetchAllNews() cache already populated by
+  // the per-card news badges/detail-modal (5-min TTL) — no new fetch
+  // path, just a different render of the same feed.
+  async function refreshNews() {
+    const data = await Api.fetchAllNews().catch(e => {
+      console.warn('[App] fetchAllNews failed (News tab)', e);
+      return null;
+    });
+    const articles = data ? Api.allNews(data.articles) : [];
+    el.newsFeedContainer.innerHTML = Render.newsFeedHtml(articles);
+  }
+
+  // Account-scoped Watchlist tab (Phase 3). v1 scope: price + 24h% only,
+  // no sparkline yet — kept out for now rather than half-built, same as
+  // other "not urgent" scope calls this session; a real sparkline needs
+  // per-symbol historical candles this tab doesn't otherwise fetch.
+  async function refreshWatchlistTab() {
+    const user = Auth.getUser();
+    if (!user) {
+      el.watchlistContainer.innerHTML = Render.watchlistHtml(null, []);
+      return;
+    }
+    const entries = await Auth.watchlist.list();
+    if (!entries.length) {
+      el.watchlistContainer.innerHTML = Render.watchlistHtml(user, []);
+      return;
+    }
+    const [spotTickers, linearTickers] = await Promise.all([
+      Api.bybitTickers('spot').catch(() => []),
+      Api.bybitTickers('linear').catch(() => [])
+    ]);
+    const bySymbol = new Map();
+    spotTickers.forEach(t => bySymbol.set(`${t.symbol}:SPOT`, t));
+    linearTickers.forEach(t => bySymbol.set(`${t.symbol}:PERP`, t));
+    const rows = entries.map(e => {
+      const t = bySymbol.get(`${e.symbol}:${e.market}`);
+      return {
+        symbol: e.symbol,
+        market: e.market,
+        price: t ? parseFloat(t.lastPrice) : null,
+        change24h: t ? parseFloat(t.price24hPcnt) * 100 : null
+      };
+    });
+    el.watchlistContainer.innerHTML = Render.watchlistHtml(user, rows);
+  }
+
+  function toggleFlowsRow(categoryId) {
+    if (!categoryId) return;
+    if (flowsExpanded.has(categoryId)) flowsExpanded.delete(categoryId);
+    else flowsExpanded.add(categoryId);
+    el.flowsGrid.innerHTML = Render.marketFlowsHtml(state.flowsData, flowsExpanded);
   }
 
   // ------------------------------------------------------------- Access gate
@@ -808,6 +1232,11 @@
   // steps are dropped if no card exists yet (e.g. re-triggered from
   // Settings before any scan has completed), so the tour never breaks on
   // a missing element.
+  //
+  // Temporarily disabled — TOUR_STEPS is stale against this build's new
+  // tabs/features (Dashboard, Flows, Heatmap, News, Watchlist, etc.).
+  // Flip back to true once the steps are updated to match.
+  const TOUR_ENABLED = false;
   const TOUR_STEPS = [
     { element: '.brand', popover: {
       title: 'Welcome to Wicktor', description: 'A multi-timeframe crypto & tokenized-stock screener, built around one taught trading method. Quick tour of the main screen.' } },
@@ -836,6 +1265,7 @@
   }
 
   function startTour() {
+    if (!TOUR_ENABLED) return;
     if (typeof window.driver === 'undefined' || !window.driver.js) return; // CDN unavailable — fail soft
     const hasCards = !!document.querySelector('.coin-card');
     const steps = hasCards ? TOUR_STEPS : TOUR_STEPS.filter(s => !s.element || !s.element.startsWith('.coin-card'));
@@ -847,6 +1277,7 @@
   // the card-detail steps have something to point at — called after every
   // renderAll(), but hasSeenTour() makes every call after the first a no-op.
   function maybeAutoStartTour() {
+    if (!TOUR_ENABLED) return; // don't mark tourSeen while disabled, so re-enabling still auto-triggers for these visitors
     if (hasSeenTour()) return;
     if (!document.querySelector('.coin-card')) return;
     localStorage.setItem(STORAGE_KEYS.tourSeen, '1');
@@ -870,6 +1301,11 @@
       bindStaticEvents();
       scheduleRefresh();
       runScan();
+      // Additive to the access gate above, not gated behind it in either
+      // direction — Auth has its own independent session, unrelated to
+      // the beta access-code check.
+      Auth.onChange(renderAccountState);
+      Auth.init().then(renderAccountState);
     });
   }
 
