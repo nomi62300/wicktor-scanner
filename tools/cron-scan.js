@@ -189,7 +189,8 @@ function rowFor(coin, barTime) {
     entry: rr.entry,
     stop: rr.stop,
     target: rr.target,
-    risk_pct: rr.riskPct != null ? +rr.riskPct.toFixed(4) : null
+    risk_pct: rr.riskPct != null ? +rr.riskPct.toFixed(4) : null,
+    model_version: global.Indicators.MODEL_VERSION || 'unknown-client'
   };
 }
 

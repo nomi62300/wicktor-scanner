@@ -117,7 +117,11 @@ const SignalJournal = (() => {
         component_context: s.components ? s.components.context : null,
         component_method: s.components ? s.components.method : null,
         entry: rr.entry, stop: rr.stop, target: rr.target,
-        risk_pct: rr.riskPct != null ? +rr.riskPct.toFixed(4) : null
+        risk_pct: rr.riskPct != null ? +rr.riskPct.toFixed(4) : null,
+        // Sent explicitly, never left to the column default: a stale cached
+        // build would otherwise have its old-geometry rows stamped with
+        // whatever version the database currently believes is current.
+        model_version: (typeof Indicators !== 'undefined' && Indicators.MODEL_VERSION) || 'unknown-client'
       });
     }
     if (!rows.length) return 0;
