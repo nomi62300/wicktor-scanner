@@ -263,8 +263,9 @@ async function resolveOpen(scannedCandles) {
 
     const window = after.slice(0, Journal.HOLD_BARS);
     const complete = after.length >= Journal.HOLD_BARS;
-    const a = Journal.realisedR(window, sig.direction, +sig.entry, risk, Journal.PLAN_A);
-    const b = Journal.realisedR(window, sig.direction, +sig.entry, risk, Journal.PLAN_B);
+    const targetR = Math.abs(+sig.target - +sig.entry) / risk;
+    const a = Journal.realisedR(window, sig.direction, +sig.entry, risk, Journal.PLAN_A, targetR);
+    const b = Journal.realisedR(window, sig.direction, +sig.entry, risk, Journal.PLAN_B, targetR);
 
     // Half-walked paths are left open: banking a mark-to-market number as
     // though it were a finished result is how a journal starts flattering
