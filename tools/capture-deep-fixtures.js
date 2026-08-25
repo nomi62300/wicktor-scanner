@@ -42,7 +42,10 @@ const DAY = 24 * 3600 * 1000;
 // Deliberately spread so the set spans different market behaviour rather
 // than three samples of the same conditions. Reported drift per window makes
 // the diversity visible instead of assumed.
-const WINDOW_ENDS_DAYS_AGO = [0, 30, 60];
+// Overridable so an OUT-OF-SAMPLE set can be captured from periods the
+// model was never tuned on: WINDOWS=120,150,180 node tools/capture-deep-fixtures.js
+const WINDOW_ENDS_DAYS_AGO = (process.env.WINDOWS || '0,30,60')
+  .split(',').map(x => parseInt(x, 10)).filter(Number.isFinite);
 
 const TFS = { m5: { iv: '5', ms: 5 * 60e3 }, m15: { iv: '15', ms: 15 * 60e3 },
               h1: { iv: '60', ms: 3600e3 }, h4: { iv: '240', ms: 4 * 3600e3 } };
@@ -86,7 +89,7 @@ async function klines(symbol, interval, endMs, barsWanted) {
 async function main() {
   const coinCount = parseInt(process.argv[2], 10) || 60;
   const days = parseInt(process.argv[3], 10) || 7;
-  const outfile = path.join(__dirname, 'fixtures', 'market-deep.json');
+  const outfile = path.join(__dirname, 'fixtures', process.env.OUTFILE || 'market-deep.json');
 
   console.log(`Deep capture: ${coinCount} coins x ${WINDOW_ENDS_DAYS_AGO.length} windows x ${days}d`);
   const tick = await get(`${BYBIT}/v5/market/tickers?category=linear`);

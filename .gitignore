@@ -1,3 +1,4 @@
 .DS_Store
 supabase/.temp/
 tools/fixtures/market-deep.json
+tools/fixtures/market-oos.json
