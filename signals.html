@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wicktor — Signal Journal</title>
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/logo.svg" alt="Wicktor" class="brand-icon-img">
+    </div>
+    <div style="font-family:var(--font-display);font-weight:500;font-size:16px;flex:1;">Signal Journal</div>
+    <a href="index.html" class="btn btn-primary" style="text-decoration:none;">&larr; Back to Scanner</a>
+    <button id="theme-btn" class="icon-btn" aria-label="Toggle theme"></button>
+  </header>
+
+  <p class="settings-hint" style="margin:0 0 14px;max-width:760px;">
+    Every EXCELLENT-band signal the scanner has logged, resolved automatically against the
+    candle path that actually followed it. Two exit plans are scored from the same signals:
+    <strong>A</strong> takes a third off at 1R and moves the stop to breakeven;
+    <strong>B</strong> holds full size to a single 3R target. Nothing here is hand-marked —
+    entry, stop and target are fixed at signal time and never edited.
+  </p>
+
+  <section id="summary" class="top-strip" aria-label="Journal summary">
+    <div class="loading-state">Loading...</div>
+  </section>
+
+  <main id="list" aria-label="Logged signals">
+    <div class="loading-state">Loading...</div>
+  </main>
+
+</div>
+
+<script src="js/signals-page.js"></script>
+</body>
+</html>
