@@ -1,0 +1,54 @@
+name: Signal journal scan
+
+# Runs the scanner headlessly so the journal records the market rather than
+# the owner's browsing hours. Before this existed, signals were only logged
+# while a signed-in tab happened to be open, which silently deleted whole
+# sessions (overnight, weekends) from the evidence.
+#
+# GitHub's scheduler is best-effort: 5 minutes is the floor, and runs are
+# routinely delayed or skipped when the platform is busy. That is acceptable
+# here — a missed run loses one sampling opportunity, and the unique key on
+# (symbol, market, direction, bar_time) means a late or duplicated run
+# cannot double-count. It is NOT a guarantee of even 5-minute spacing, so
+# nothing downstream should assume a fixed cadence.
+#
+# Note: GitHub disables scheduled workflows in repos with no commit activity
+# for 60 days. If the journal goes quiet, check that before debugging code.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      universe_size:
+        description: 'Coins per category to scan'
+        required: false
+        default: '120'
+      dry_run:
+        description: 'Score without writing (1 = dry run)'
+        required: false
+        default: '0'
+
+# A slow run must never stack on top of the next scheduled one — two
+# concurrent scans would just contend for the same rows.
+concurrency:
+  group: signal-journal-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run scan and journal signals
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '120' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: node tools/cron-scan.js
