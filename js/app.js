@@ -64,7 +64,6 @@
     includeCryptoSpot: true,
     includeStocks: false,
     includePerps: true,
-    maxAgeMinutes: 20,
     spotCardsPerSide: 5,
     perpCardsPerSide: 5,
     includeNarrativeSectors: true
@@ -157,7 +156,6 @@
     stocksToggle: document.getElementById('setting-stocks'),
     perpToggle: document.getElementById('setting-perps'),
     narrativeToggle: document.getElementById('setting-narratives'),
-    maxAgeInput: document.getElementById('setting-maxage'),
     spotCapInput: document.getElementById('setting-spot-cap'),
     perpCapInput: document.getElementById('setting-perp-cap'),
     scanProgress: document.getElementById('scan-progress'),
@@ -455,8 +453,23 @@
       let batchesDone = 0;
       let coinsDone = 0;
 
-      const maxAgeMs = state.settings.maxAgeMinutes * 60 * 1000;
-      const now = Date.now();
+      // The maxAgeMinutes freshness filter used to live here and has been
+      // removed. It was broken and conceptually wrong, in that order:
+      //
+      // Broken — dropping a coin took an early return that skipped
+      // activeKeys.add(), so clearDiscoveredIfMissing() then deleted its
+      // discovery timestamp, and the next scan re-discovered it with a fresh
+      // one. A persistently trending coin therefore flickered on a ~20-minute
+      // cycle and its "discovered X ago" label reset each time, rather than
+      // being filtered once. Removing the filter also repairs that label,
+      // since the deletion path was the thing corrupting it.
+      //
+      // Wrong — freshness is not quality. The filter hid the highest-scoring
+      // persistent setups precisely because they had persisted. Measured, an
+      // ordinary trigger-age window predicts nothing extra on 5M (flat from
+      // 0 to 7 bars), so the concept it was reaching for is better served by
+      // trigger age, which is a market event rather than a bookkeeping
+      // artefact of when this browser first happened to see the symbol.
       const allCoins = [];
       const activeKeys = new Set();
 
@@ -466,12 +479,8 @@
           const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap, newsData)));
           results.forEach(r => {
             if (r) {
-              const key = `${r.rawSymbol}:${r.market}`;
-              const ts = state.discovered[key];
-              // Exclude coins whose first-seen timestamp is older than maxAgeMinutes.
-              if (ts && (now - ts) > maxAgeMs) return;
               allCoins.push(r);
-              activeKeys.add(key);
+              activeKeys.add(`${r.rawSymbol}:${r.market}`);
             }
           });
           batchesDone++;
@@ -794,7 +803,6 @@
     el.stocksToggle.checked = state.settings.includeStocks;
     el.perpToggle.checked = state.settings.includePerps;
     el.narrativeToggle.checked = state.settings.includeNarrativeSectors !== false;
-    el.maxAgeInput.value = state.settings.maxAgeMinutes;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
     el.perpCapInput.value = state.settings.perpCardsPerSide;
     el.settingsBackdrop.classList.add('open');
@@ -807,7 +815,6 @@
     state.settings.includeStocks = el.stocksToggle.checked;
     state.settings.includePerps = el.perpToggle.checked;
     state.settings.includeNarrativeSectors = el.narrativeToggle.checked;
-    state.settings.maxAgeMinutes = Math.max(1, parseInt(el.maxAgeInput.value) || 20);
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
     state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));
     saveJson(STORAGE_KEYS.settings, state.settings);

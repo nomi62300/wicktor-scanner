@@ -17,6 +17,27 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Removed (the `maxAgeMinutes` freshness filter)
+Removed from the scan pipeline and from Settings, at the owner's call. It was
+broken and conceptually wrong, in that order.
+
+**Broken:** dropping a coin took an early `return` that skipped
+`activeKeys.add()`, so `clearDiscoveredIfMissing()` then deleted that coin's
+discovery timestamp, and the next scan re-discovered it with a fresh one. A
+persistently trending coin therefore **flickered on a ~20-minute cycle** and
+its "discovered X ago" label reset each time, instead of being filtered once.
+Removing the filter also repairs that label, since the deletion path was the
+thing corrupting it.
+
+**Wrong:** freshness is not quality. The filter hid the highest-scoring
+persistent setups precisely *because* they had persisted. And measured, a
+trigger-age window predicts nothing extra on 5M (flat from 0 to 7 bars), so
+even the concept it reached for is better served by trigger age — a market
+event, rather than a bookkeeping artefact of when this browser first happened
+to see the symbol.
+
+Zero score change; scoring never read it.
+
 ### Added (Phase C3 — entry triggers and trigger age)
 `Indicators.detectTriggers()` reports discrete entry EVENTS and how many
 bars ago each last fired: `[{name, direction, barsAgo}]`, freshest first,
