@@ -727,6 +727,12 @@ const Indicators = (() => {
     maxRiskPct: 25.0      // above this the structure is pathological
   };
 
+  // Stamped onto every journalled signal BY THE CLIENT, so a browser running
+  // cached JavaScript labels its rows honestly instead of inheriting a
+  // database default that describes code it is not running. Bump this
+  // whenever the trade geometry above changes.
+  const MODEL_VERSION = 'v2.1-pricemove-target';
+
   /**
    * `stopFrom` is the snapshot whose structure the stop rides, and it
    * DEFAULTS TO A HIGHER TIMEFRAME than the entry. That is the fee fix, and
@@ -1499,7 +1505,7 @@ const Indicators = (() => {
     fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
     percentileRank, classifyRegime, REGIME_THRESHOLDS: REGIME,
-    riskReward, RR_PARAMS: RR,
+    riskReward, RR_PARAMS: RR, MODEL_VERSION,
     detectTriggers, TRIGGER_LOOKBACK,
     linearRegression, regressionChannelLevels,
     breakoutProximityPct,
