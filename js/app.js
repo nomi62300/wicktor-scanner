@@ -936,7 +936,9 @@
       renderPlanTiles('Plan A — partial TP + breakeven', '1/3 off at 1R, stop to breakeven, rest to 2R/3R', summary.planA) +
       renderPlanTiles('Plan B — straight 3R', 'Full size held to a single 3R target', summary.planB) +
       (summary.medianRiskPct != null
-        ? `<div class="settings-hint">Median 1R = ${(summary.medianRiskPct * 100).toFixed(2)}% of entry price.</div>`
+        // riskPct arrives already in percent units (indicators.js multiplies
+        // by 100), so it must not be scaled again here.
+        ? `<div class="settings-hint">Median 1R = ${summary.medianRiskPct.toFixed(2)}% of entry price.</div>`
         : '');
   }
   function closeSignalJournalPanel() {
