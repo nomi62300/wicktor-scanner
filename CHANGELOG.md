@@ -17,6 +17,66 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Added (Phase C2 — risk:reward)
+`Indicators.riskReward(snapshot, direction)` returns entry / stop / target /
+ratio plus provenance flags, and `analyzeTimeframe()` now exposes the
+nearest-first structural level lists it needs. Additive: **zero score
+change** on all 60 fixture coins, since nothing reads it until C4.
+
+The arithmetic is trivial and the definitions are the whole problem, so
+they were chosen by forward simulation rather than plausibility
+(`tools/compare-rr-definitions.js` — enter at bar i's close, walk i+1..i+24,
+stop or target first, both-touched counted as a stop, timeouts marked to
+market, ~1,500 simulated trades per pairing per timeframe).
+
+- **Stop** = last opposing fractal + 0.25 ATR buffer, floored at 0.4 ATR.
+  The floor is load-bearing: a swing low 0.1 ATR under entry produces a
+  ~27:1 ratio that noise removes instantly. It fires on 13-21% of real
+  setups. Widening (rather than rejecting) is the conservative direction —
+  it lowers the reported ratio rather than flattering it.
+- **Target** = the **second** structural level, not the nearest. Measured
+  across both 15M and 5M and every stop variant, the nearest level yields a
+  median ratio of 0.23-0.83 — risking more than the target pays — while the
+  second yields 0.75-1.70. The nearest fractal is where price stalls, not an
+  objective. `firstObstacle` is returned separately so the UI can still show
+  that stall.
+- Levels report whether they were **observed or synthesised**
+  (`nearestLevels()` silently substituted a `price ± ATR×1.5` buffer when no
+  fractal existed, which would make R:R a fabricated ratio presented as a
+  measurement).
+
+**A methodology correction caught mid-analysis.** The first version of the
+comparison was long-only, and the fixture window carries **+11.6% mean drift
+on 1H with 80% of coins up**. That produced a fake +0.79R "expectancy" on
+random entries and ranked wide ATR targets best purely because they
+harvested the drift. The tool now runs both directions and averages, with
+long and short reported separately so bias stays visible instead of being
+averaged away. The best definition under the corrected measurement
+(`structure` stop / `structure-2` target on 5M) shows long +0.064 vs short
++0.059 — near-perfect symmetry, i.e. genuinely drift-neutral.
+
+**The finding that changes the plan: R:R is not a quality score.**
+Drift-neutral balanced expectancy is indistinguishable from zero for *every*
+stop/target pairing tested (best +0.08R, with its long and short halves
+disagreeing by more than that). There is no monotonic "higher R:R = better
+trade" relationship, because a wider target's win-rate penalty cancels its
+payoff gain — median-ratio-3.0 definitions won 20-34% of the time, ratio-1.0
+definitions won 50-59%. Scoring R:R as "more is better" would actively
+select worse trades. This revises the Phase C plan, which proposed R:R as a
+weighted 25% component.
+
+Its honest uses instead: a **viability gate** (below 1.0 you are risking
+more than the setup can pay — rejects ~40% of real setups), a position-
+sizing input for the bot, and the actionable entry/stop/target numbers a
+paying user needs. Edge has to come from signal selection; geometry alone
+has none.
+
+New tooling: `explore-rr.js` (geometry distributions),
+`compare-rr-definitions.js` (drift-neutral forward simulation). 10 tests
+cover the second-level target rule, the stop floor's suppression of
+manufactured ratios, long/short mirror symmetry, fallback flagging, and
+refusal to guess on unusable input.
+
 ### Added (Phase C1 — market regime classification)
 `Indicators.classifyRegime()` labels each timeframe **trending / squeeze /
 transition / ranging**, plus the raw inputs behind it (`lineOrder`,

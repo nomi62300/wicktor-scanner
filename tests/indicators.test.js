@@ -635,6 +635,100 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase C2 — risk:reward
+// ---------------------------------------------------------------------------
+
+// entry 100, ATR 1. Levels above at 101/103/106, below at 99/97/94.
+const rrBase = { close: 100, atr: 1, levelsAbove: [101, 103, 106], levelsBelow: [99, 97, 94] };
+const RRP = () => Indicators.RR_PARAMS;
+
+test('C2 rr: target is the SECOND structural level, not the nearest', () => {
+  const r = Indicators.riskReward(rrBase, 1);
+  assert.strictEqual(r.target, 103, 'must skip the nearest level at 101');
+  assert.strictEqual(r.firstObstacle, 101, 'but still report where price is likely to stall');
+});
+
+test('C2 rr: stop sits beyond the opposing level by the buffer', () => {
+  const r = Indicators.riskReward(rrBase, 1);
+  // 100 - 99 = 1.0, plus a 0.25 ATR buffer
+  assert.ok(Math.abs(r.riskAtr - 1.25) < 1e-9, `expected 1.25 ATR risk, got ${r.riskAtr}`);
+  assert.ok(Math.abs(r.stop - 98.75) < 1e-9);
+  assert.strictEqual(r.stopFromStructure, true);
+});
+
+test('C2 rr: long and short are exact mirrors of the same geometry', () => {
+  const long = Indicators.riskReward(rrBase, 1);
+  const short = Indicators.riskReward(
+    { close: 100, atr: 1, levelsAbove: [101, 103, 106], levelsBelow: [99, 97, 94] }, -1);
+  // mirrored inputs: short risks up to 101 (+buffer), targets down to 97
+  assert.ok(Math.abs(short.riskAtr - 1.25) < 1e-9);
+  assert.strictEqual(short.target, 97);
+  assert.strictEqual(short.stop, 101.25);
+  assert.ok(Math.abs(long.ratio - short.ratio) < 1e-9, 'symmetric geometry must give an equal ratio');
+});
+
+test('C2 rr: an absurdly tight stop is widened to the floor, never used to inflate the ratio', () => {
+  const tight = { close: 100, atr: 10, levelsAbove: [110, 130], levelsBelow: [99.9] };
+  const r = Indicators.riskReward(tight, 1);
+  assert.strictEqual(r.stopWidenedToFloor, true);
+  assert.ok(Math.abs(r.riskAtr - RRP().minStopAtr) < 1e-9, 'risk floors at minStopAtr');
+  // without the floor risk would be 0.11 ATR and the ratio ~27:1
+  assert.ok(r.ratio < 10, `floor must suppress the manufactured ratio, got ${r.ratio}`);
+});
+
+test('C2 rr: missing structure falls back and says so', () => {
+  const noStop = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101, 103], levelsBelow: [] }, 1);
+  assert.strictEqual(noStop.stopFromStructure, false);
+  assert.ok(Math.abs(noStop.riskAtr - RRP().fallbackStopAtr) < 1e-9);
+
+  const noTarget = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101], levelsBelow: [99] }, 1);
+  assert.strictEqual(noTarget.targetFromStructure, false, 'one level is not enough for a second-level target');
+  assert.ok(Math.abs(noTarget.rewardAtr - RRP().fallbackTargetAtr) < 1e-9);
+});
+
+test('C2 rr: viable is a gate at 1.0, not a graded score', () => {
+  // reward 3 (103), risk 1.25 -> 2.4
+  assert.strictEqual(Indicators.riskReward(rrBase, 1).viable, true);
+  // push the opposing level far away so risk swamps reward
+  const poor = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101, 102], levelsBelow: [90, 80] }, 1);
+  assert.ok(poor.ratio < 1);
+  assert.strictEqual(poor.viable, false);
+});
+
+test('C2 rr: refuses to guess on unusable input', () => {
+  assert.strictEqual(Indicators.riskReward(rrBase, 0), null, 'no direction, no trade');
+  assert.strictEqual(Indicators.riskReward({ close: 100, atr: 0, levelsAbove: [], levelsBelow: [] }, 1), null);
+  assert.strictEqual(Indicators.riskReward({ close: null, atr: 1, levelsAbove: [], levelsBelow: [] }, 1), null);
+});
+
+test('C2 rr: ratio is reward/risk in ATR-normalised terms', () => {
+  const r = Indicators.riskReward(rrBase, 1);
+  assert.ok(Math.abs(r.ratio - (r.rewardAtr / r.riskAtr)) < 1e-9);
+  assert.ok(Math.abs(r.ratio - (3 / 1.25)) < 1e-9);
+});
+
+test('C2: analyzeTimeframe exposes nearest-first level lists for riskReward', () => {
+  const snap = Indicators.analyzeTimeframe(buildCleanUptrend(90));
+  assert.ok(Array.isArray(snap.levelsAbove) && Array.isArray(snap.levelsBelow));
+  // nearest-first ordering, and every level on the correct side of price
+  snap.levelsAbove.forEach(v => assert.ok(v > snap.close));
+  snap.levelsBelow.forEach(v => assert.ok(v < snap.close));
+  for (let i = 1; i < snap.levelsAbove.length; i++) assert.ok(snap.levelsAbove[i] >= snap.levelsAbove[i - 1]);
+  for (let i = 1; i < snap.levelsBelow.length; i++) assert.ok(snap.levelsBelow[i] <= snap.levelsBelow[i - 1]);
+});
+
+test('C2: nearestLevels reports whether a level was observed or synthesised', () => {
+  // a clean uptrend has no fractal high above the final price -> synthetic
+  const cs = buildCleanUptrend(90);
+  const frac = Indicators.fractals(cs);
+  const atrV = Indicators.atr(cs)[cs.length - 1];
+  const lv = Indicators.nearestLevels(cs, frac, cs[cs.length - 1].c, atrV);
+  assert.strictEqual(typeof lv.resistanceFromFractal, 'boolean');
+  assert.strictEqual(typeof lv.supportFromFractal, 'boolean');
+  assert.strictEqual(lv.resistanceFromFractal, false, 'price at a new high has no real resistance above');
+});
+
+// ---------------------------------------------------------------------------
 // Phase C1 — regime classification
 // ---------------------------------------------------------------------------
 

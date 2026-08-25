@@ -457,12 +457,19 @@ const Indicators = (() => {
       if (l < price && (support == null || l > support)) support = l;
     });
 
+    // Provenance matters downstream: the fallback below is a synthetic
+    // buffer, not an observed level. Risk:reward built on two synthetic
+    // levels is a fabricated ratio dressed up as a measurement, so callers
+    // need to be able to tell the difference rather than trusting a number.
+    const resistanceFromFractal = resistance != null;
+    const supportFromFractal = support != null;
+
     const atrBucketed = bucketedAtr(atrValue, price) ?? price * 0.01;
     const atrBuffer = atrBucketed * 1.5;
     if (resistance == null) resistance = price + atrBuffer;
     if (support == null) support = price - atrBuffer;
 
-    return { resistance, support };
+    return { resistance, support, resistanceFromFractal, supportFromFractal };
   }
 
   /**
@@ -549,6 +556,103 @@ const Indicators = (() => {
     }
     if (wrongSideCount === 0) return alignment === 1 ? 'strong_bull' : 'strong_bear';
     return alignment === 1 ? 'weak_bull' : 'weak_bear';
+  }
+
+  /**
+   * Risk:reward for a candidate trade on one timeframe.
+   *
+   * The arithmetic is trivial; the definitions are the whole problem, so
+   * they were chosen by simulating candidates forward rather than by
+   * plausibility (tools/compare-rr-definitions.js: enter at bar i's close,
+   * walk i+1..i+24, stop or target first, both-touched counted as a stop,
+   * timeouts marked to market, run in BOTH directions and averaged).
+   *
+   *  STOP = last opposing fractal, plus a 0.25 ATR buffer so an exact-level
+   *  wick doesn't take you out, floored at 0.4 ATR. The floor matters: a
+   *  swing low sitting 0.1 ATR under entry produces a spectacular ratio that
+   *  noise removes instantly, i.e. manufactured R:R. Falls back to 1.0 ATR
+   *  when no opposing structure exists.
+   *
+   *  TARGET = the SECOND structural level in the trade's direction, not the
+   *  nearest. Measured, across both 15M and 5M and every stop variant, the
+   *  nearest level yields a median ratio of 0.23-0.83 — you are risking more
+   *  than the target pays — while the second yields 0.75-1.70. The nearest
+   *  fractal is where price stalls, not a realistic objective; a real move
+   *  trades through minor resistance. `firstObstacle` is returned separately
+   *  so the UI can still show where that stall is likely.
+   *
+   * ---------------------------------------------------------------------
+   * WHAT THIS NUMBER IS NOT: a quality score. Measured on ~1,500 simulated
+   * trades per definition per timeframe, drift-neutral balanced expectancy
+   * is indistinguishable from zero for EVERY stop/target pairing tested
+   * (best +0.08R, and its long and short halves disagree by more than that).
+   * There is no monotonic "higher R:R = better trade" relationship, because
+   * the win-rate penalty of a wider target cancels the payoff gain — median
+   * ratio 3.0 definitions won 20-34% of the time, ratio ~1.0 won ~50-59%.
+   *
+   * So R:R must not be weighted as "more is better" in scoring. Its honest
+   * uses are: a VIABILITY GATE (below 1.0 you are risking more than the
+   * setup can pay, regardless of how good it looks), a position-sizing input
+   * for the bot, and the actionable entry/stop/target numbers a paying user
+   * needs. Edge has to come from signal selection; geometry alone has none.
+   * ---------------------------------------------------------------------
+   *
+   * `direction` is +1 long / -1 short. Returns null for direction 0.
+   */
+  const RR = {
+    stopBufferAtr: 0.25,
+    minStopAtr: 0.4,
+    fallbackStopAtr: 1.0,
+    fallbackTargetAtr: 2.0,
+    minViableRatio: 1.0
+  };
+
+  function riskReward({ close, atr, levelsAbove, levelsBelow }, direction, t = RR) {
+    if (!direction || close == null || atr == null || atr <= 0) return null;
+
+    const against = direction === 1 ? (levelsBelow || []) : (levelsAbove || []);
+    const toward = direction === 1 ? (levelsAbove || []) : (levelsBelow || []);
+
+    // --- stop -------------------------------------------------------------
+    let riskDist, stopFromStructure;
+    if (against.length) {
+      riskDist = Math.abs(close - against[0]) + t.stopBufferAtr * atr;
+      stopFromStructure = true;
+    } else {
+      riskDist = t.fallbackStopAtr * atr;
+      stopFromStructure = false;
+    }
+    // Widen rather than reject: the setup is still real, its stop just can't
+    // sit inside the noise band. Widening is the conservative direction —
+    // it lowers the reported ratio rather than flattering it.
+    const flooredStop = riskDist < t.minStopAtr * atr;
+    if (flooredStop) riskDist = t.minStopAtr * atr;
+
+    // --- target -----------------------------------------------------------
+    let rewardDist, targetFromStructure;
+    if (toward.length >= 2) {
+      rewardDist = Math.abs(toward[1] - close);
+      targetFromStructure = true;
+    } else {
+      rewardDist = t.fallbackTargetAtr * atr;
+      targetFromStructure = false;
+    }
+
+    const ratio = rewardDist / riskDist;
+    return {
+      entry: close,
+      stop: close - direction * riskDist,
+      target: close + direction * rewardDist,
+      firstObstacle: toward.length ? toward[0] : null,
+      riskAtr: riskDist / atr,
+      rewardAtr: rewardDist / atr,
+      ratio,
+      stopFromStructure,
+      targetFromStructure,
+      stopWidenedToFloor: flooredStop,
+      // A gate, deliberately not a graded score — see the note above.
+      viable: ratio >= t.minViableRatio
+    };
   }
 
   /**
@@ -730,7 +834,21 @@ const Indicators = (() => {
       alligatorSpreadAtr = (Math.max(jawV, teethV, lipsV) - Math.min(jawV, teethV, lipsV)) / atrV;
     }
 
-    const { resistance, support } = nearestLevels(candles, frac, price, atrV);
+    const { resistance, support, resistanceFromFractal, supportFromFractal } =
+      nearestLevels(candles, frac, price, atrV);
+
+    // Structural levels either side of price, nearest first. riskReward()
+    // needs the SECOND level, not just the nearest, so lastUpFractal /
+    // lastDownFractal aren't enough. Capped at 5 a side: nothing reads past
+    // the second today, and unbounded arrays in the snapshot are what the F5
+    // cleanup removed for payload reasons.
+    const LEVEL_CAP = 5;
+    const levelsAbove = frac.up
+      .map(i => candles[i].h).filter(h => h > price)
+      .sort((a, b) => a - b).slice(0, LEVEL_CAP);
+    const levelsBelow = frac.down
+      .map(i => candles[i].l).filter(l => l < price)
+      .sort((a, b) => b - a).slice(0, LEVEL_CAP);
     // v2 sloped-channel levels — additive, see regressionChannelLevels()'s
     // own doc comment for why this doesn't replace resistance/support above.
     const sloped = regressionChannelLevels(candles, frac, lastIdx);
@@ -841,6 +959,8 @@ const Indicators = (() => {
       atr: atrV,
       resistance,
       support,
+      resistanceFromFractal, supportFromFractal, // false = synthetic ATR buffer, not an observed level
+      levelsAbove, levelsBelow, // nearest-first structural levels, for riskReward()
       resistanceSloped: sloped.resistance, // null unless a good-fit (r2 >= 0.6) regression exists
       supportSloped: sloped.support,
       close: price,
@@ -1186,6 +1306,7 @@ const Indicators = (() => {
     fractals, rsi, divergence, tfConfidenceTier,
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
     percentileRank, classifyRegime, REGIME_THRESHOLDS: REGIME,
+    riskReward, RR_PARAMS: RR,
     linearRegression, regressionChannelLevels,
     breakoutProximityPct,
     ema, macd, bollingerBands, adx, stochastic, ichimoku, liquiditySweep
