@@ -35,7 +35,7 @@ function main() {
 
   const bySym = new Map(B.rows.map(r => [r.symbol, r]));
   const changed = [];
-  let flips = 0, sumAbs = 0, scored = 0;
+  let flips = 0, sumAbs = 0, scored = 0, scoreChanges = 0;
   const bandsA = {}, bandsB = {};
 
   for (const a of A.rows) {
@@ -49,6 +49,7 @@ function main() {
     sumAbs += Math.abs(d);
     const flip = a.band !== b.band;
     if (flip) flips++;
+    if (d !== 0) scoreChanges++;
     if (d !== 0 || flip) changed.push({ sym: a.symbol, d, from: a.band, to: b.band, sa: a.score, sb: b.score, flip });
   }
 
@@ -58,8 +59,12 @@ function main() {
   console.log(`fixtures captured ${A.fixturesCapturedAt}`);
   console.log(`${'-'.repeat(62)}`);
   console.log(`coins compared      : ${scored}`);
-  console.log(`scores changed      : ${changed.length}`);
+  // Counted separately: a band threshold change flips bands without moving
+  // a single score, and conflating the two made a score-neutral change look
+  // like it had altered 13 scores.
+  console.log(`scores changed      : ${scoreChanges}`);
   console.log(`band flips          : ${flips}`);
+  console.log(`rows affected       : ${changed.length}`);
   console.log(`mean |score delta|  : ${(sumAbs / scored).toFixed(2)}`);
   console.log(`band mix before     :`, bandsA);
   console.log(`band mix after      :`, bandsB);
