@@ -33,7 +33,27 @@ const Journal = require('../js/signals.js');
 
 const SUPABASE_URL = 'https://fpyfetynfobfrpunnnhv.supabase.co';
 const TABLE = 'signal_journal';
-const BYBIT = 'https://api.bybit.com';
+
+// api.bybit.com 403s from US cloud IPs, which is exactly where GitHub's
+// hosted runners live — the first scheduled run failed on the very first
+// request. api.bytick.com is Bybit's own alternate domain serving the
+// identical v5 API for this reason. Probed once per process and cached, so
+// a browser-equivalent host is still preferred when it is reachable.
+const HOSTS = ['https://api.bybit.com', 'https://api.bytick.com'];
+let BYBIT = null;
+
+async function pickHost() {
+  for (const host of HOSTS) {
+    try {
+      const res = await fetch(`${host}/v5/market/time`);
+      if (res.ok) { console.log(`bybit host: ${host}`); return host; }
+      console.warn(`  host ${host} -> HTTP ${res.status}`);
+    } catch (e) {
+      console.warn(`  host ${host} -> ${e.message}`);
+    }
+  }
+  throw new Error('no reachable Bybit host');
+}
 const BAR_MS = 5 * 60 * 1000;
 const BATCH = 5;                       // matches the app's own scan batching
 const RESOLVE_LIMIT = 100;             // open signals examined per run
@@ -274,6 +294,7 @@ async function resolveOpen(scannedCandles) {
   const started = Date.now();
   const coins = [];
 
+  BYBIT = await pickHost();
   await scanCategory('spot', UNIVERSE_SIZE, coins);
   await scanCategory('linear', UNIVERSE_SIZE, coins);
   console.log(`scored ${coins.length} coins in ${((Date.now() - started) / 1000).toFixed(1)}s`);

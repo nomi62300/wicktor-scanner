@@ -14,10 +14,25 @@ name: Signal journal scan
 #
 # Note: GitHub disables scheduled workflows in repos with no commit activity
 # for 60 days. If the journal goes quiet, check that before debugging code.
+#
+# ---------------------------------------------------------------------------
+# THE SCHEDULE IS DELIBERATELY OFF. Bybit 403s every request from GitHub's
+# hosted runners — measured, both api.bybit.com and api.bytick.com, so it is
+# the runner's US cloud IP being blocked rather than one bad hostname. The
+# scan itself is correct and runs fine anywhere Bybit answers (verified
+# locally and against production Supabase); it simply cannot run HERE.
+#
+# Supabase's own region (ap-northeast-1) reaches Bybit fine — measured with a
+# throwaway probe function — so an Edge Function is the natural home. That
+# move is blocked on a real port, not a config change: js/indicators.js and
+# friends are sloppy-mode browser IIFEs and Deno evaluates ESM in strict
+# mode, so they fail at boot before any scan starts.
+#
+# Left dispatchable so it can be run by hand from a machine-independent
+# place the moment a reachable runner exists.
+# ---------------------------------------------------------------------------
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       universe_size:
