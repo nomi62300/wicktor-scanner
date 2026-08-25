@@ -559,6 +559,106 @@ const Indicators = (() => {
   }
 
   /**
+   * Entry triggers and how many bars ago each last fired.
+   *
+   * Everything else in the snapshot answers "what is true right now"; this
+   * answers "what just happened". The distinction is the difference between
+   * a STATE (EMA stacked, price above cloud, ADX high — an ongoing
+   * condition) and an EVENT (a cross, a breakout, a sweep — something that
+   * occurred on a specific bar). Continuation scoring is built almost
+   * entirely from states, which is why it can say a setup looks good without
+   * being able to say there is an entry here now.
+   *
+   * Age is the point. Every existing cross field (macdBullishCross,
+   * stochBullishCrossFromOversold, ...) is evaluated only at the final bar,
+   * so a cross that fired one bar earlier is invisible — the signal exists
+   * for exactly one scan and then vanishes. On a 5M chart scanned every few
+   * minutes that is far too brittle to build entries on, and it is part of
+   * why freshness had to be faked with discovery timestamps. Reporting
+   * barsAgo lets a caller decide what still counts as actionable instead of
+   * silently losing anything older than the current bar.
+   *
+   * Returns triggers within `lookback` bars, freshest first:
+   *   [{ name, direction, barsAgo }]   barsAgo 0 = the last CLOSED bar.
+   *
+   * Detection only — no grading. Which triggers matter, and how much a
+   * 3-bar-old one is worth versus a fresh one, is a scoring decision.
+   */
+  const TRIGGER_LOOKBACK = 8;
+
+  function detectTriggers(ctx, lookback = TRIGGER_LOOKBACK) {
+    const { candles, macdRes, stochRes, bb, frac, atrSeries, lastIdx } = ctx;
+    const out = [];
+    const from = Math.max(1, lastIdx - lookback + 1);
+
+    const crossedUp = (a, b, k) =>
+      a[k] != null && b[k] != null && a[k - 1] != null && b[k - 1] != null &&
+      a[k - 1] <= b[k - 1] && a[k] > b[k];
+    const crossedDown = (a, b, k) =>
+      a[k] != null && b[k] != null && a[k - 1] != null && b[k - 1] != null &&
+      a[k - 1] >= b[k - 1] && a[k] < b[k];
+
+    // Walk newest-first and keep only the most recent firing of each name,
+    // so a trigger that repeated is reported at its freshest occurrence.
+    const seen = new Set();
+    const push = (name, direction, k) => {
+      const key = `${name}:${direction}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ name, direction, barsAgo: lastIdx - k });
+    };
+
+    for (let k = lastIdx; k >= from; k--) {
+      // MACD signal-line cross
+      if (crossedUp(macdRes.macdLine, macdRes.signalLine, k)) push('macdCross', 1, k);
+      if (crossedDown(macdRes.macdLine, macdRes.signalLine, k)) push('macdCross', -1, k);
+
+      // Stochastic cross out of an extreme — the extreme is required, since
+      // a %K/%D cross mid-range is noise rather than an entry.
+      if (crossedUp(stochRes.k, stochRes.d, k) && stochRes.k[k - 1] != null && stochRes.k[k - 1] < 20) {
+        push('stochCrossFromExtreme', 1, k);
+      }
+      if (crossedDown(stochRes.k, stochRes.d, k) && stochRes.k[k - 1] != null && stochRes.k[k - 1] > 80) {
+        push('stochCrossFromExtreme', -1, k);
+      }
+
+      // Band breakout: the close moving from inside the band to outside it.
+      // Requires the transition, not merely being outside, which would make
+      // a multi-bar excursion re-fire every bar.
+      if (bb.upper[k] != null && bb.upper[k - 1] != null &&
+          candles[k].c > bb.upper[k] && candles[k - 1].c <= bb.upper[k - 1]) {
+        push('bandBreakout', 1, k);
+      }
+      if (bb.lower[k] != null && bb.lower[k - 1] != null &&
+          candles[k].c < bb.lower[k] && candles[k - 1].c >= bb.lower[k - 1]) {
+        push('bandBreakout', -1, k);
+      }
+
+      // Liquidity sweep — wick through a level, close back inside. Direction
+      // follows liquiditySweep()'s own convention: `up` is a downside sweep
+      // that got reclaimed (bullish), `down` is an upside rejection.
+      const sweep = liquiditySweep(candles, frac, k, atrSeries[k]);
+      if (sweep.up) push('liquiditySweep', 1, k);
+      if (sweep.down) push('liquiditySweep', -1, k);
+
+      // Structural break: close crossing the most recent confirmed fractal.
+      // lastFractal(..., k - 2) keeps the same confirmation lag used
+      // everywhere else, so this never reads a fractal that wasn't yet
+      // confirmed at bar k.
+      const upFrac = lastFractal(frac.up, k - 2);
+      if (upFrac != null && candles[k].c > candles[upFrac].h && candles[k - 1].c <= candles[upFrac].h) {
+        push('levelBreak', 1, k);
+      }
+      const downFrac = lastFractal(frac.down, k - 2);
+      if (downFrac != null && candles[k].c < candles[downFrac].l && candles[k - 1].c >= candles[downFrac].l) {
+        push('levelBreak', -1, k);
+      }
+    }
+
+    return out.sort((a, b) => a.barsAgo - b.barsAgo);
+  }
+
+  /**
    * Risk:reward for a candidate trade on one timeframe.
    *
    * The arithmetic is trivial; the definitions are the whole problem, so
@@ -816,7 +916,10 @@ const Indicators = (() => {
     const aboveUpFractal = lastUpFrac != null && price > candles[lastUpFrac].h;
     const belowDownFractal = lastDownFrac != null && price < candles[lastDownFrac].l;
 
-    const atrV = atr(candles)[lastIdx];
+    // Series kept, not just the last value — detectTriggers() evaluates
+    // liquiditySweep() across a window of bars and needs each bar's own ATR.
+    const atrSeries = atr(candles);
+    const atrV = atrSeries[lastIdx];
 
     // How far apart the three Alligator lines sit, in ATR units. This is the
     // measurable form of Williams' own sleeping/eating language: converged
@@ -924,6 +1027,10 @@ const Indicators = (() => {
       lineOrder, alligatorSpreadAtr, adx: adxV, bbBandwidthPct
     });
 
+    const triggers = detectTriggers({
+      candles, macdRes: macdResult, stochRes: stochResult, bb, frac, atrSeries, lastIdx
+    });
+
     // MACD/Stochastic divergence (strategy-enrichment #9) — divergence()
     // is already fully generic (never RSI-specific internally), so this
     // reuses it directly against macdLine/stochK instead of a new
@@ -936,6 +1043,7 @@ const Indicators = (() => {
       lineOrder,              // raw line ordering, BEFORE the invalidation override
       alligatorSpreadAtr,     // line fan-out in ATR units (sleeping vs eating)
       regime,                 // trending / squeeze / transition / ranging / unknown
+      triggers,               // [{name, direction, barsAgo}] freshest first, 0 = last closed bar
       confidence,             // 5-tier: strong_bull/weak_bull/neutral/weak_bear/strong_bear
       alligatorInvalidated,   // true if jaw-touch rule is currently active
       ao: aoV,
@@ -1307,6 +1415,7 @@ const Indicators = (() => {
     lastFractal, trueRange, atr, bucketedAtr, nearestLevels, analyzeTimeframe,
     percentileRank, classifyRegime, REGIME_THRESHOLDS: REGIME,
     riskReward, RR_PARAMS: RR,
+    detectTriggers, TRIGGER_LOOKBACK,
     linearRegression, regressionChannelLevels,
     breakoutProximityPct,
     ema, macd, bollingerBands, adx, stochastic, ichimoku, liquiditySweep

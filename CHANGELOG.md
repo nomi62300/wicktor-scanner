@@ -17,6 +17,59 @@ unmerged on a branch pending review, per standing branch discipline
 (`main` auto-deploys live). Not version-bumped or tagged; that happens
 at merge time.
 
+### Added (Phase C3 — entry triggers and trigger age)
+`Indicators.detectTriggers()` reports discrete entry EVENTS and how many
+bars ago each last fired: `[{name, direction, barsAgo}]`, freshest first,
+`barsAgo: 0` = the last closed bar. Five types — `macdCross`,
+`stochCrossFromExtreme`, `bandBreakout`, `levelBreak`, `liquiditySweep`.
+Additive: **zero score change** on all 60 fixture coins. Cost is negligible
+— `analyzeTimeframe()` now runs at 0.305 ms/call, still below the 0.380 ms
+measured in the original audit because F5's cleanup freed more than this
+adds.
+
+Everything else in the snapshot answers "what is true right now"; this
+answers "what just happened". Continuation scoring is built almost entirely
+from STATES (EMA stacked, above cloud, ADX high), which is why it can say a
+setup looks good without being able to say there is an entry *here, now*.
+
+**Age is the point.** Every existing cross field was evaluated only at the
+final bar, so a cross that fired one bar earlier was invisible — the signal
+existed for exactly one scan and then vanished. Measured on 5M: **90% of
+coins have a trigger within 8 bars, but only 12% fired on the current bar**,
+so last-bar-only evaluation was discarding roughly 78 points of real signal
+every scan. This is also what freshness should have been keyed on all along,
+rather than the discovery-timestamp hack that produced the 20-minute flicker.
+
+Detection only — no grading. Which triggers matter and how fast a stale one
+decays is a C4 scoring decision.
+
+**Findings, direction-balanced to remove the drift that contaminated the
+first C2 run.** On 5M:
+
+| trigger | balanced | bull / bear |
+|---|---|---|
+| `stochCrossFromExtreme` | **+0.568** | +0.545 / +0.592 |
+| `levelBreak` | **−0.217** | −0.211 / −0.222 |
+| `bandBreakout` | −0.183 | −0.061 / −0.305 |
+
+Near-perfect long/short symmetry on the first two means these are genuinely
+drift-neutral: **at 5M, mean-reversion entries work and breakout entries
+fade.** `levelBreak` is negative on all three timeframes. This independently
+cross-validates the C1 result that 5M momentum is contrarian — two separate
+analyses, same conclusion, which is much stronger evidence than either alone.
+
+Freshness itself is *directionally* supported but not firmly established:
+5M and 1H both peak at delay 0-1 and decay to negative by delay 6-7, while
+15M is erratic (worst at delay 0, best at delay 3-4 — no plausible
+mechanism). Caveat that applies to all of the above: forward windows
+overlap heavily, so the effective sample is materially smaller than the
+raw n suggests, and this is one 100-bar window across 60 coins.
+
+New tooling: `validate-trigger-age.js`. 9 tests cover age reporting, the
+freshest-firing rule when a trigger repeats, lookback bounds, the
+extreme-required condition on stochastic crosses, and the transition
+requirement that stops a multi-bar band excursion re-firing every bar.
+
 ### Added (Phase C2 — risk:reward)
 `Indicators.riskReward(snapshot, direction)` returns entry / stop / target /
 ratio plus provenance flags, and `analyzeTimeframe()` now exposes the

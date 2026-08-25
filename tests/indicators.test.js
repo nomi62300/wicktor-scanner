@@ -635,6 +635,114 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase C3 — entry triggers and their age
+// ---------------------------------------------------------------------------
+
+// Hand-built series rather than engineered candles: the point is to control
+// exactly which bar each condition fires on, which real OHLC can't do
+// precisely.
+function triggerCtx(over) {
+  const n = 12;
+  const flat = v => new Array(n).fill(v);
+  const candles = Array.from({ length: n }, (_, i) => ({ t: i, o: 100, h: 100, l: 100, c: 100, v: 1 }));
+  return Object.assign({
+    candles,
+    macdRes: { macdLine: flat(0), signalLine: flat(1), histogram: flat(-1) },
+    stochRes: { k: flat(50), d: flat(50) },
+    bb: { upper: flat(110), lower: flat(90), percentB: flat(0.5), bandwidth: flat(0.2) },
+    frac: { up: [], down: [] },
+    atrSeries: flat(1),
+    lastIdx: n - 1
+  }, over);
+}
+
+test('C3 triggers: barsAgo 0 means the last closed bar', () => {
+  const ctx = triggerCtx({});
+  ctx.macdRes.macdLine = ctx.macdRes.macdLine.slice();
+  ctx.macdRes.macdLine[11] = 5;               // crosses above signal(1) at the final bar
+  const t = Indicators.detectTriggers(ctx).find(x => x.name === 'macdCross');
+  assert.ok(t, 'cross should be detected');
+  assert.strictEqual(t.barsAgo, 0);
+  assert.strictEqual(t.direction, 1);
+});
+
+test('C3 triggers: a cross several bars back is still reported, with its age', () => {
+  const ctx = triggerCtx({});
+  ctx.macdRes.macdLine = ctx.macdRes.macdLine.slice();
+  for (let i = 8; i < 12; i++) ctx.macdRes.macdLine[i] = 5;  // crossed at bar 8
+  const t = Indicators.detectTriggers(ctx).find(x => x.name === 'macdCross');
+  assert.strictEqual(t.barsAgo, 3, 'this is precisely what last-bar-only evaluation used to lose');
+});
+
+test('C3 triggers: a repeated trigger is reported at its freshest firing', () => {
+  const ctx = triggerCtx({});
+  const line = ctx.macdRes.macdLine.slice();
+  line[5] = 5; line[6] = 0;   // cross up at 5, back down at 6
+  line[10] = 5;               // cross up again at 10
+  ctx.macdRes.macdLine = line;
+  const ups = Indicators.detectTriggers(ctx).filter(x => x.name === 'macdCross' && x.direction === 1);
+  assert.strictEqual(ups.length, 1, 'one entry per name+direction');
+  assert.strictEqual(ups[0].barsAgo, 1, 'the newer firing wins');
+});
+
+test('C3 triggers: lookback is respected', () => {
+  const ctx = triggerCtx({});
+  ctx.macdRes.macdLine = ctx.macdRes.macdLine.slice();
+  for (let i = 2; i < 12; i++) ctx.macdRes.macdLine[i] = 5;  // crossed at bar 2 => 9 bars ago
+  assert.ok(!Indicators.detectTriggers(ctx, 4).some(x => x.name === 'macdCross'), 'outside a 4-bar window');
+  assert.ok(Indicators.detectTriggers(ctx, 12).some(x => x.name === 'macdCross'), 'inside a 12-bar window');
+});
+
+test('C3 triggers: stochastic cross only counts coming out of an extreme', () => {
+  const mk = (prevK) => {
+    const ctx = triggerCtx({});
+    ctx.stochRes = { k: new Array(12).fill(50), d: new Array(12).fill(50) };
+    ctx.stochRes.k[10] = prevK; ctx.stochRes.d[10] = prevK + 1;  // k below d
+    ctx.stochRes.k[11] = 60; ctx.stochRes.d[11] = 55;            // k crosses above d
+    return Indicators.detectTriggers(ctx).some(x => x.name === 'stochCrossFromExtreme');
+  };
+  assert.ok(mk(10), 'crossing up from oversold is an entry');
+  assert.ok(!mk(45), 'the same cross mid-range is noise, not an entry');
+});
+
+test('C3 triggers: a band breakout needs the transition, not merely being outside', () => {
+  const outsideThroughout = triggerCtx({});
+  outsideThroughout.candles = outsideThroughout.candles.map(c => ({ ...c, c: 120 })); // above upper all along
+  assert.ok(!Indicators.detectTriggers(outsideThroughout).some(x => x.name === 'bandBreakout'),
+    'a multi-bar excursion must not re-fire every bar');
+
+  const crossing = triggerCtx({});
+  crossing.candles = crossing.candles.map((c, i) => ({ ...c, c: i === 11 ? 120 : 100 }));
+  const t = Indicators.detectTriggers(crossing).find(x => x.name === 'bandBreakout');
+  assert.ok(t && t.direction === 1 && t.barsAgo === 0);
+});
+
+test('C3 triggers: output is sorted freshest-first', () => {
+  const ctx = triggerCtx({});
+  ctx.macdRes.macdLine = ctx.macdRes.macdLine.slice();
+  for (let i = 7; i < 12; i++) ctx.macdRes.macdLine[i] = 5;          // macd cross at 7
+  ctx.candles = ctx.candles.map((c, i) => ({ ...c, c: i === 11 ? 120 : 100 })); // band break at 11
+  const t = Indicators.detectTriggers(ctx);
+  assert.ok(t.length >= 2);
+  for (let i = 1; i < t.length; i++) assert.ok(t[i].barsAgo >= t[i - 1].barsAgo);
+  assert.strictEqual(t[0].name, 'bandBreakout');
+});
+
+test('C3 triggers: no events on a quiet series', () => {
+  assert.deepStrictEqual(Indicators.detectTriggers(triggerCtx({})), []);
+});
+
+test('C3: analyzeTimeframe exposes triggers with sane shape', () => {
+  const snap = Indicators.analyzeTimeframe(buildCleanUptrend(90));
+  assert.ok(Array.isArray(snap.triggers));
+  snap.triggers.forEach(t => {
+    assert.ok(typeof t.name === 'string');
+    assert.ok(t.direction === 1 || t.direction === -1);
+    assert.ok(Number.isInteger(t.barsAgo) && t.barsAgo >= 0 && t.barsAgo < Indicators.TRIGGER_LOOKBACK);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase C2 — risk:reward
 // ---------------------------------------------------------------------------
 
