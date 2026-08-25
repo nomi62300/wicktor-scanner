@@ -242,6 +242,7 @@
   <div class="settings-links">
     <button id="take-tour-btn" class="settings-link-btn" type="button">Take the tour</button>
     <a href="journal.html" class="settings-link-btn">Outcome Journal</a>
+    <button id="signal-journal-btn" class="settings-link-btn" type="button">Signal Journal</button>
     <a href="https://app.youform.com/forms/qhosm8ii" target="_blank" rel="noopener noreferrer" class="settings-link-btn">Feedback</a>
   </div>
   <div id="app-version" class="settings-version"></div>
@@ -283,6 +284,25 @@
     <div class="settings-links">
       <button id="account-signout-btn" class="settings-link-btn" type="button">Sign Out</button>
     </div>
+  </div>
+</aside>
+
+<!-- Signal Journal: aggregate view of the auto-resolving EXCELLENT-band
+     journal (js/signals.js). Read-only, public data — no auth required to
+     view, unlike the account panel. -->
+<div id="signal-journal-backdrop" class="settings-backdrop"></div>
+<aside id="signal-journal-panel" class="settings-panel" aria-label="Signal Journal">
+  <div class="modal-head">
+    <span style="font-family:var(--font-display);font-weight:500;font-size:16px;">Signal Journal</span>
+    <span id="signal-journal-close" class="modal-close" role="button" aria-label="Close signal journal panel">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </span>
+  </div>
+  <div class="settings-hint" style="margin-bottom:14px;">
+    Auto-resolved, direction-balanced results for every EXCELLENT-band signal this scanner has logged, walked against the real candle path. Two exit plans scored from the same signals — <strong>A</strong> takes 1/3 off at 1R and moves the stop to breakeven; <strong>B</strong> holds straight to 3R.
+  </div>
+  <div id="signal-journal-body">
+    <div class="loading-state">Loading...</div>
   </div>
 </aside>
 

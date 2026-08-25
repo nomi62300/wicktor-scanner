@@ -141,6 +141,11 @@
     accountSignupBtn: document.getElementById('account-signup-btn'),
     accountSignoutBtn: document.getElementById('account-signout-btn'),
     accountEmailDisplay: document.getElementById('account-email-display'),
+    signalJournalBtn: document.getElementById('signal-journal-btn'),
+    signalJournalBackdrop: document.getElementById('signal-journal-backdrop'),
+    signalJournalPanel: document.getElementById('signal-journal-panel'),
+    signalJournalClose: document.getElementById('signal-journal-close'),
+    signalJournalBody: document.getElementById('signal-journal-body'),
     search: document.getElementById('search-input'),
     scanBtn: document.getElementById('scan-btn'),
     themeBtn: document.getElementById('theme-btn'),
@@ -887,6 +892,58 @@
     if (user) el.accountEmailDisplay.textContent = user.email;
   }
 
+  // ------------------------------------------------------- Signal journal
+  function fmtR(v) {
+    return v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(3) + 'R';
+  }
+  function rColor(v) {
+    return v == null ? null : (v >= 0 ? 'var(--green-text)' : 'var(--red-text)');
+  }
+
+  function renderPlanTiles(label, hint, stat) {
+    const tile = (l, v, color) => `
+      <div class="strip-tile">
+        <div class="strip-label">${l}</div>
+        <div class="strip-value"${color ? ` style="color:${color}"` : ''}>${v}</div>
+      </div>`;
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:500;margin-bottom:2px;">${label}</div>
+        <div class="settings-hint" style="margin-bottom:8px;">${hint}</div>
+        <div class="top-strip" style="margin-bottom:0;">
+          ${tile('Resolved', stat.n)}
+          ${tile('Win Rate', stat.winPct != null ? stat.winPct.toFixed(0) + '%' : '--', stat.winPct != null ? (stat.winPct >= 50 ? 'var(--green-text)' : 'var(--red-text)') : null)}
+          ${tile('Mean R', fmtR(stat.mean), rColor(stat.mean))}
+          ${tile('Balanced R', fmtR(stat.balanced), rColor(stat.balanced))}
+        </div>
+      </div>`;
+  }
+
+  async function openSignalJournalPanel() {
+    el.signalJournalBackdrop.classList.add('open');
+    el.signalJournalPanel.classList.add('open');
+    el.signalJournalBody.innerHTML = '<div class="loading-state">Loading...</div>';
+    if (typeof SignalJournal === 'undefined') {
+      el.signalJournalBody.innerHTML = '<div class="loading-state">Signal journal is unavailable right now.</div>';
+      return;
+    }
+    const summary = await SignalJournal.summary();
+    if (!summary || !summary.planA || !summary.planA.n) {
+      el.signalJournalBody.innerHTML = '<div class="loading-state">No resolved signals yet. Signals are logged when a signed-in scan finds an EXCELLENT (score ≥ 80) setup, and take up to ~4h to resolve — check back once a few scans have run.</div>';
+      return;
+    }
+    el.signalJournalBody.innerHTML =
+      renderPlanTiles('Plan A — partial TP + breakeven', '1/3 off at 1R, stop to breakeven, rest to 2R/3R', summary.planA) +
+      renderPlanTiles('Plan B — straight 3R', 'Full size held to a single 3R target', summary.planB) +
+      (summary.medianRiskPct != null
+        ? `<div class="settings-hint">Median 1R = ${(summary.medianRiskPct * 100).toFixed(2)}% of entry price.</div>`
+        : '');
+  }
+  function closeSignalJournalPanel() {
+    el.signalJournalBackdrop.classList.remove('open');
+    el.signalJournalPanel.classList.remove('open');
+  }
+
   // ------------------------------------------------------------ Scheduling
   function scheduleRefresh() {
     if (state.refreshTimer) clearInterval(state.refreshTimer);
@@ -926,7 +983,7 @@
       });
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { closeModal(); closeSettings(); }
+      if (e.key === 'Escape') { closeModal(); closeSettings(); closeSignalJournalPanel(); }
     });
     el.navScanner.addEventListener('click', () => switchTab('scanner'));
     el.navDashboard.addEventListener('click', () => switchTab('dashboard'));
@@ -937,6 +994,9 @@
     el.accountBtn.addEventListener('click', openAccountPanel);
     el.accountClose.addEventListener('click', closeAccountPanel);
     el.accountBackdrop.addEventListener('click', closeAccountPanel);
+    el.signalJournalBtn.addEventListener('click', () => { closeSettings(); openSignalJournalPanel(); });
+    el.signalJournalClose.addEventListener('click', closeSignalJournalPanel);
+    el.signalJournalBackdrop.addEventListener('click', closeSignalJournalPanel);
     el.accountSigninBtn.addEventListener('click', () => submitAccountForm('signIn'));
     el.accountSignupBtn.addEventListener('click', () => submitAccountForm('signUp'));
     el.accountSignoutBtn.addEventListener('click', async () => {
