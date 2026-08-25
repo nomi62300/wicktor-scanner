@@ -101,14 +101,47 @@ const Scoring = (() => {
   // How much credit a trigger type earns given the CONFIRM timeframe's
   // regime, 0-100. Encodes direction-of-effect only — the ordering is
   // measured, the exact numbers are round and deliberately coarse.
+  // TRIGGER FITNESS DEPENDS ON THE TRADE STRUCTURE, and this table was
+  // twice built against the wrong one. Recording that, because the mistake
+  // is easy to repeat.
+  //
+  // C1/C3 and the indicator audit all measured raw directional prediction
+  // over ~12 bars with no stop or target, and all agreed that 5M is
+  // mean-reverting: "%B at an extreme" was the best 5M reading (+0.104),
+  // breakouts the worst (levelBreak -0.217). So the table favoured fades.
+  //
+  // Then the stop moved to 1H structure and the target to 3R, to survive
+  // fees. That change is not neutral to trigger choice: 1R is now ~1.38% of
+  // price, so a 3R target needs roughly a 4% move. That is a trend
+  // continuation, not a mean-reversion bounce. Fade signals correctly
+  // predict small reversions which this structure cannot harvest.
+  //
+  // Re-measured in the structure that actually ships, with TRIGGER_FIT
+  // NEUTRALISED first so the table could not bias which signals cleared the
+  // score threshold (it had: bandFade drew 1,636 signals purely because it
+  // was rated 90). Balanced forward outcome, net of taker fees:
+  //
+  //     levelBreak            +0.095   (+0.015 net)   n=1351
+  //     macdCross             +0.088   (+0.008 net)   n=2101
+  //     bandBreakout          +0.049   (-0.031 net)   n= 805
+  //     bandFade              +0.006   (-0.074 net)   n=1197
+  //     stochCrossFromExtreme +0.005   (-0.075 net)   n=3144
+  //
+  // Exactly inverted from the audit, for a coherent reason. The ordering is
+  // measured; the numbers are round because fitting them to three windows
+  // would be overfitting.
+  //
+  // The regime dimension is deliberately FLAT here apart from squeeze. At
+  // this sample size the per-regime cells are not distinguishable in this
+  // structure, and inventing variation would be dressing up a guess.
   const TRIGGER_FIT = {
-    trending:   { stochCrossFromExtreme: 100, macdCross: 55, liquiditySweep: 60, levelBreak: 25, bandBreakout: 25 },
-    transition: { stochCrossFromExtreme: 80,  macdCross: 45, liquiditySweep: 50, levelBreak: 30, bandBreakout: 30 },
-    ranging:    { stochCrossFromExtreme: 70,  macdCross: 35, liquiditySweep: 55, levelBreak: 10, bandBreakout: 20 },
-    // Every squeeze cell with a usable sample measured negative, worst of
-    // all being the breakout out of it. Nothing here is promoted.
-    squeeze:    { stochCrossFromExtreme: 45,  macdCross: 30, liquiditySweep: 35, levelBreak: 10, bandBreakout: 15 },
-    unknown:    { stochCrossFromExtreme: 40,  macdCross: 25, liquiditySweep: 30, levelBreak: 15, bandBreakout: 15 }
+    trending:   { levelBreak: 100, macdCross: 95, bandBreakout: 65, liquiditySweep: 50, bandFade: 35, stochCrossFromExtreme: 35 },
+    transition: { levelBreak: 95,  macdCross: 90, bandBreakout: 60, liquiditySweep: 50, bandFade: 35, stochCrossFromExtreme: 35 },
+    ranging:    { levelBreak: 85,  macdCross: 85, bandBreakout: 55, liquiditySweep: 50, bandFade: 40, stochCrossFromExtreme: 40 },
+    // Squeeze breakouts were the worst-measured cell of the earlier study
+    // and nothing since has rehabilitated them.
+    squeeze:    { levelBreak: 40,  macdCross: 50, bandBreakout: 30, liquiditySweep: 35, bandFade: 30, stochCrossFromExtreme: 30 },
+    unknown:    { levelBreak: 50,  macdCross: 50, bandBreakout: 40, liquiditySweep: 35, bandFade: 30, stochCrossFromExtreme: 30 }
   };
 
   /**
@@ -219,7 +252,14 @@ const Scoring = (() => {
     raw -= reversal.score * 0.25;
     raw -= Math.max(0, exhaustion.score - 25) * 0.2;
 
-    const rr = Indicators.riskReward(entrySnap, direction);
+    // Stop rides the CONTEXT timeframe's structure, not the entry's. On 5M
+    // entries a 5M stop is ~0.255% of price against a 0.110% taker round
+    // trip, so fees alone cost 0.43R and erase a +0.082R gross edge; a 1H
+    // stop puts 1R at 0.952%, cutting fees to 0.115R while raising gross to
+    // +0.127R. See riskReward()'s own note for the full measurement.
+    const rr = Indicators.riskReward(entrySnap, direction, {
+      stopFrom: tfSnapshots[mode.context] || entrySnap
+    });
     let gated = false;
     if (rr && !rr.viable) { raw = Math.min(raw, NO_RR_CAP); gated = true; }
 
@@ -235,7 +275,7 @@ const Scoring = (() => {
       },
       riskReward: rr,
       gated,
-      reason: gated ? 'risk:reward below 1.0' : null
+      reason: gated ? 'no structural level to stop against' : null
     };
   }
 
@@ -751,7 +791,14 @@ const Scoring = (() => {
   function bandLabel(score, unlock, ceiling) {
     if (unlock && unlock.severity === 'red') return { text: '\u26A0 UNLOCK RISK', tone: 'red' };
 
-    const scoreBand = score >= 80 ? 'excellent' : score >= 50 ? 'watch' : 'avoid';
+    // WATCH raised from 50 to 60 on measurement, not taste. With the C5
+    // structure the score finally ranks monotonically, and the bottom bucket
+    // is the one that does not pay: scores 50-59 returned +0.022 gross and
+    // -0.055 NET of taker fees across 2,639 signals in three market windows,
+    // while every bucket from 60 up is net positive (+0.015 / +0.024 /
+    // +0.030). Surfacing 50-59 as WATCH would be advertising setups measured
+    // to lose money after costs.
+    const scoreBand = score >= 80 ? 'excellent' : score >= 60 ? 'watch' : 'avoid';
     const cap = ceiling || 'excellent';
     const finalBand = BAND_RANK[scoreBand] <= BAND_RANK[cap] ? scoreBand : cap;
 

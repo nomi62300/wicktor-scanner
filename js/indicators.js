@@ -634,6 +634,25 @@ const Indicators = (() => {
         push('bandBreakout', -1, k);
       }
 
+      // Band FADE — the mirror of the above, and the one the audit says
+      // actually pays on a fast timeframe. Price was at or beyond a band
+      // edge and has closed back inside: the stretch failed. Direction is
+      // the reversion, so an upper-band rejection is bearish.
+      //
+      // Added because "%B at an extreme" scored +0.104 balanced on 5M, the
+      // single best directional reading of any indicator on that timeframe,
+      // while bandBreakout (price LEAVING the band, the trend-following
+      // half) measured -0.183. The fast timeframe rewards fading stretch and
+      // punishes chasing it, and only the chasing half was wired up.
+      if (bb.upper[k] != null && bb.upper[k - 1] != null &&
+          candles[k].c <= bb.upper[k] && candles[k - 1].c > bb.upper[k - 1]) {
+        push('bandFade', -1, k);
+      }
+      if (bb.lower[k] != null && bb.lower[k - 1] != null &&
+          candles[k].c >= bb.lower[k] && candles[k - 1].c < bb.lower[k - 1]) {
+        push('bandFade', 1, k);
+      }
+
       // Liquidity sweep — wick through a level, close back inside. Direction
       // follows liquiditySweep()'s own convention: `up` is a downside sweep
       // that got reclaimed (bullish), `down` is an upside rejection.
@@ -703,55 +722,90 @@ const Indicators = (() => {
     stopBufferAtr: 0.25,
     minStopAtr: 0.4,
     fallbackStopAtr: 1.0,
-    fallbackTargetAtr: 2.0,
-    minViableRatio: 1.0
+    targetR: 3.0          // target as a multiple of risk — see the note below
   };
 
-  function riskReward({ close, atr, levelsAbove, levelsBelow }, direction, t = RR) {
-    if (!direction || close == null || atr == null || atr <= 0) return null;
+  /**
+   * `stopFrom` is the snapshot whose structure the stop rides, and it
+   * DEFAULTS TO A HIGHER TIMEFRAME than the entry. That is the fee fix, and
+   * it is the single most consequential number in the model:
+   *
+   *   fees in R = (fee % of price) / (1R as % of price)
+   *
+   * Only the stop appears in that. Measured on 5M entries, a 5M structural
+   * stop puts 1R at 0.255% of price against a 0.110% taker round trip — fees
+   * eat 0.43R, against a gross edge of +0.082R. Riding the 1H structure
+   * instead puts 1R at 0.952%, fees at 0.115R, and the gross edge RISES to
+   * +0.127R because you stop being knocked out by noise. Net goes from
+   * -0.35R to +0.011R at taker, +0.085R at maker. 15M (0.415%) and 30M
+   * (0.581%) were both measured and both dominated: best gross, worst net.
+   *
+   * The buffer and floor are measured in the STOP source's own ATR, since
+   * that is the timeframe whose noise could wick you out of that level.
+   *
+   * Target is an R-multiple rather than the second structural level. C2
+   * chose structure when the stop was also structural on the same
+   * timeframe; with a 1H stop the risk unit is ~4x larger and a nearby 5M
+   * level is no longer a proportionate objective. Measured with a 1H stop:
+   * 3R +0.127 > 2R +0.112 > struct2 +0.109 > 1.5R +0.095 > 1R +0.066,
+   * monotonically increasing in target size. Note this REVERSES C2's
+   * finding, and the reason is instructive — C2 measured random entries,
+   * where letting winners run does not pay. With a real signal it does.
+   *
+   * A consequence worth stating plainly: with a fixed R-multiple the ratio
+   * is 3.0 by construction, so the old `viable` gate can never fire. It now
+   * reports something that can still be false — whether the stop is riding
+   * real structure rather than a synthetic fallback.
+   */
+  function riskReward(entrySnap, direction, opts = {}) {
+    const t = Object.assign({}, RR, opts.params);
+    if (!entrySnap || !direction) return null;
+    const { close } = entrySnap;
+    const entryAtr = entrySnap.atr;
+    if (close == null || entryAtr == null || entryAtr <= 0) return null;
 
-    const against = direction === 1 ? (levelsBelow || []) : (levelsAbove || []);
-    const toward = direction === 1 ? (levelsAbove || []) : (levelsBelow || []);
+    const stopSrc = opts.stopFrom || entrySnap;
+    const stopAtr = (stopSrc.atr != null && stopSrc.atr > 0) ? stopSrc.atr : entryAtr;
+    const against = direction === 1 ? (stopSrc.levelsBelow || []) : (stopSrc.levelsAbove || []);
+    const toward = direction === 1 ? (entrySnap.levelsAbove || []) : (entrySnap.levelsBelow || []);
 
     // --- stop -------------------------------------------------------------
+    // The level must actually sit on the losing side of THIS entry: a 1H
+    // swing low can be above a 5M close, which would put the stop in profit.
+    const usable = against.filter(l => direction === 1 ? l < close : l > close);
     let riskDist, stopFromStructure;
-    if (against.length) {
-      riskDist = Math.abs(close - against[0]) + t.stopBufferAtr * atr;
+    if (usable.length) {
+      riskDist = Math.abs(close - usable[0]) + t.stopBufferAtr * stopAtr;
       stopFromStructure = true;
     } else {
-      riskDist = t.fallbackStopAtr * atr;
+      riskDist = t.fallbackStopAtr * stopAtr;
       stopFromStructure = false;
     }
     // Widen rather than reject: the setup is still real, its stop just can't
     // sit inside the noise band. Widening is the conservative direction —
     // it lowers the reported ratio rather than flattering it.
-    const flooredStop = riskDist < t.minStopAtr * atr;
-    if (flooredStop) riskDist = t.minStopAtr * atr;
+    const flooredStop = riskDist < t.minStopAtr * stopAtr;
+    if (flooredStop) riskDist = t.minStopAtr * stopAtr;
 
     // --- target -----------------------------------------------------------
-    let rewardDist, targetFromStructure;
-    if (toward.length >= 2) {
-      rewardDist = Math.abs(toward[1] - close);
-      targetFromStructure = true;
-    } else {
-      rewardDist = t.fallbackTargetAtr * atr;
-      targetFromStructure = false;
-    }
+    const rewardDist = t.targetR * riskDist;
+    // The nearest real level in the trade's direction is still reported, so
+    // the UI can show where price is likely to stall on the way.
+    const structuralNext = toward.length ? toward[0] : null;
 
-    const ratio = rewardDist / riskDist;
     return {
       entry: close,
       stop: close - direction * riskDist,
       target: close + direction * rewardDist,
-      firstObstacle: toward.length ? toward[0] : null,
-      riskAtr: riskDist / atr,
-      rewardAtr: rewardDist / atr,
-      ratio,
+      firstObstacle: structuralNext,
+      structuralTargetR: structuralNext != null ? Math.abs(structuralNext - close) / riskDist : null,
+      riskAtr: riskDist / entryAtr,        // expressed in ENTRY-TF ATR, for display
+      riskPct: (riskDist / close) * 100,   // what actually determines fee burden
+      rewardAtr: rewardDist / entryAtr,
+      ratio: t.targetR,
       stopFromStructure,
-      targetFromStructure,
       stopWidenedToFloor: flooredStop,
-      // A gate, deliberately not a graded score — see the note above.
-      viable: ratio >= t.minViableRatio
+      viable: stopFromStructure
     };
   }
 

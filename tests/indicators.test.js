@@ -679,14 +679,21 @@ test('C4: bias===0 is scoreable — the 38%-blind case', () => {
   assert.ok(r.score > 15, `a ranging market with a clean entry must beat the old floor, got ${r.score}`);
 });
 
-test('C4: breakout triggers are not rewarded like mean-reversion ones', () => {
+test('C4: continuation triggers outrank fade triggers in this trade structure', () => {
   const mk = name => Scoring.scoreSetup(
     [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG(name, 1)] })],
     { score: 50, items: [] }, emptyArm, emptyArm).score;
-  // levelBreak measured negative in every regime tested; stoch-from-extreme
-  // was the strongest cell found.
-  assert.ok(mk('stochCrossFromExtreme') > mk('levelBreak'));
-  assert.ok(mk('stochCrossFromExtreme') > mk('bandBreakout'));
+  // Measured with TRIGGER_FIT neutralised so the table could not bias its
+  // own sample: levelBreak +0.095 and macdCross +0.088 balanced, versus
+  // bandFade +0.006 and stochCrossFromExtreme +0.005.
+  //
+  // This INVERTS the raw indicator audit, and the reason is the point: a 3R
+  // target on a ~1.38% stop needs roughly a 4% move, which is continuation.
+  // Fade signals predict small reversions this structure cannot harvest.
+  // If the stop or target ever changes materially, re-measure before
+  // trusting this ordering.
+  assert.ok(mk('levelBreak') > mk('stochCrossFromExtreme'));
+  assert.ok(mk('macdCross') > mk('bandFade'));
 });
 
 test('C4: a squeeze does not promote its own breakout', () => {
@@ -707,19 +714,33 @@ test('C4: higher-timeframe disagreement costs points but does not veto', () => {
   assert.ok(oppose.score > 0, 'but disagreement must remain tradeable, not vetoed');
 });
 
-test('C4: risk:reward gates rather than grades', () => {
-  // Target far, stop near -> viable. Target near, stop far -> not viable.
-  const viable = Scoring.scoreSetup(
-    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)],
-      levelsAbove: [101, 120], levelsBelow: [99, 98] })],
+test('C4: a setup with no structural level to stop against is capped', () => {
+  const withStructure = Scoring.scoreSetup(
+    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)] })],
     { score: 60, items: [] }, emptyArm, emptyArm);
-  const poor = Scoring.scoreSetup(
-    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)],
-      levelsAbove: [101, 101.2], levelsBelow: [90, 80] })],
+  // context TF (index 0) supplies the stop; strip its levels entirely
+  const noStructure = Scoring.scoreSetup(
+    [c4Snap({ levelsAbove: [], levelsBelow: [] }), c4Snap({}),
+     c4Snap({ triggers: [TRIG('stochCrossFromExtreme', 1)] })],
     { score: 60, items: [] }, emptyArm, emptyArm);
-  assert.strictEqual(poor.gated, true);
-  assert.ok(poor.score <= 45, 'a non-viable ratio caps the score');
-  assert.ok(viable.score > poor.score);
+  assert.strictEqual(noStructure.gated, true);
+  assert.ok(noStructure.score <= 45, 'falling back to an ATR stop caps the score');
+  assert.ok(withStructure.score > noStructure.score);
+});
+
+test('C4: the stop rides the CONTEXT timeframe, not the entry timeframe', () => {
+  // context (index 0) has distant structure; entry (index 2) has tight structure.
+  // The fee fix depends on the wider one being used.
+  const r = Scoring.scoreSetup(
+    [c4Snap({ close: 100, atr: 4, levelsBelow: [88], levelsAbove: [130] }),
+     c4Snap({}),
+     c4Snap({ close: 100, atr: 1, levelsBelow: [99.5], levelsAbove: [101],
+              triggers: [TRIG('stochCrossFromExtreme', 1)] })],
+    { score: 60, items: [] }, emptyArm, emptyArm);
+  assert.ok(r.riskReward, 'risk:reward computed');
+  // an entry-TF stop would be ~0.75% of price; the context stop is ~13%
+  assert.ok(r.riskReward.riskPct > 5,
+    `expected the wide context stop, got riskPct ${r.riskReward.riskPct}`);
 });
 
 test('C4: scalp mode does not decay trigger age, swing mode does', () => {
@@ -838,6 +859,38 @@ test('C3 triggers: a band breakout needs the transition, not merely being outsid
   assert.ok(t && t.direction === 1 && t.barsAgo === 0);
 });
 
+test('C3 triggers: bandFade fires on the reversion, opposite to bandBreakout', () => {
+  // was above the upper band, closes back inside -> the stretch failed, bearish
+  const ctx = triggerCtx({});
+  ctx.candles = ctx.candles.map((c, i) => ({ ...c, c: i === 10 ? 120 : 100 }));
+  const t = Indicators.detectTriggers(ctx);
+  const fade = t.find(x => x.name === 'bandFade');
+  assert.ok(fade, 'reversion back inside the band should fire');
+  assert.strictEqual(fade.direction, -1, 'an upper-band rejection is bearish');
+  assert.strictEqual(fade.barsAgo, 0, 'fires on the bar that closes back inside');
+  // and the excursion itself still registers as a breakout, one bar earlier
+  const brk = t.find(x => x.name === 'bandBreakout');
+  assert.ok(brk && brk.direction === 1 && brk.barsAgo === 1);
+});
+
+test('C3 triggers: bandFade mirrors correctly at the lower band', () => {
+  const ctx = triggerCtx({});
+  ctx.candles = ctx.candles.map((c, i) => ({ ...c, c: i === 10 ? 80 : 100 }));
+  const fade = Indicators.detectTriggers(ctx).find(x => x.name === 'bandFade');
+  assert.ok(fade && fade.direction === 1, 'a lower-band reclaim is bullish');
+});
+
+test('C4: bandFade exists and is scored, but is not promoted over continuation', () => {
+  const score = name => Scoring.scoreSetup(
+    [c4Snap({}), c4Snap({}), c4Snap({ triggers: [TRIG(name, 1)] })],
+    { score: 50, items: [] }, emptyArm, emptyArm).score;
+  // Kept because the fade IS the better raw 5M signal (+0.104 as a state)
+  // and would matter again under a tighter-stop structure — but it earns
+  // less here, where it measured +0.006 balanced against macdCross's +0.088.
+  assert.ok(score('bandFade') > 0, 'still a real, scoreable signal');
+  assert.ok(score('macdCross') > score('bandFade'));
+});
+
 test('C3 triggers: output is sorted freshest-first', () => {
   const ctx = triggerCtx({});
   ctx.macdRes.macdLine = ctx.macdRes.macdLine.slice();
@@ -871,57 +924,50 @@ test('C3: analyzeTimeframe exposes triggers with sane shape', () => {
 const rrBase = { close: 100, atr: 1, levelsAbove: [101, 103, 106], levelsBelow: [99, 97, 94] };
 const RRP = () => Indicators.RR_PARAMS;
 
-test('C2 rr: target is the SECOND structural level, not the nearest', () => {
+test('C2 rr: target is a fixed R-multiple of the stop', () => {
   const r = Indicators.riskReward(rrBase, 1);
-  assert.strictEqual(r.target, 103, 'must skip the nearest level at 101');
-  assert.strictEqual(r.firstObstacle, 101, 'but still report where price is likely to stall');
+  // stop 100 -> 99 plus a 0.25 ATR buffer = 1.25 risk; target = 3R
+  assert.ok(Math.abs(r.riskAtr - 1.25) < 1e-9, `expected 1.25 ATR risk, got ${r.riskAtr}`);
+  assert.ok(Math.abs(r.target - (100 + RRP().targetR * 1.25)) < 1e-9);
+  assert.strictEqual(r.ratio, RRP().targetR);
+  // the nearest real level is still surfaced, as the likely stall point
+  assert.strictEqual(r.firstObstacle, 101);
+  assert.ok(Math.abs(r.structuralTargetR - (1 / 1.25)) < 1e-9);
 });
 
 test('C2 rr: stop sits beyond the opposing level by the buffer', () => {
   const r = Indicators.riskReward(rrBase, 1);
-  // 100 - 99 = 1.0, plus a 0.25 ATR buffer
-  assert.ok(Math.abs(r.riskAtr - 1.25) < 1e-9, `expected 1.25 ATR risk, got ${r.riskAtr}`);
   assert.ok(Math.abs(r.stop - 98.75) < 1e-9);
   assert.strictEqual(r.stopFromStructure, true);
 });
 
 test('C2 rr: long and short are exact mirrors of the same geometry', () => {
   const long = Indicators.riskReward(rrBase, 1);
-  const short = Indicators.riskReward(
-    { close: 100, atr: 1, levelsAbove: [101, 103, 106], levelsBelow: [99, 97, 94] }, -1);
-  // mirrored inputs: short risks up to 101 (+buffer), targets down to 97
-  assert.ok(Math.abs(short.riskAtr - 1.25) < 1e-9);
-  assert.strictEqual(short.target, 97);
-  assert.strictEqual(short.stop, 101.25);
-  assert.ok(Math.abs(long.ratio - short.ratio) < 1e-9, 'symmetric geometry must give an equal ratio');
+  const short = Indicators.riskReward(rrBase, -1);
+  assert.ok(Math.abs(short.riskAtr - 1.25) < 1e-9, 'short risks up to 101 plus buffer');
+  assert.ok(Math.abs(short.stop - 101.25) < 1e-9);
+  assert.ok(Math.abs(long.riskPct - short.riskPct) < 1e-9, 'mirrored geometry, identical risk');
+  assert.strictEqual(long.ratio, short.ratio);
 });
 
-test('C2 rr: an absurdly tight stop is widened to the floor, never used to inflate the ratio', () => {
+test('C2 rr: an absurdly tight stop is widened to the floor', () => {
   const tight = { close: 100, atr: 10, levelsAbove: [110, 130], levelsBelow: [99.9] };
   const r = Indicators.riskReward(tight, 1);
   assert.strictEqual(r.stopWidenedToFloor, true);
   assert.ok(Math.abs(r.riskAtr - RRP().minStopAtr) < 1e-9, 'risk floors at minStopAtr');
-  // without the floor risk would be 0.11 ATR and the ratio ~27:1
-  assert.ok(r.ratio < 10, `floor must suppress the manufactured ratio, got ${r.ratio}`);
 });
 
-test('C2 rr: missing structure falls back and says so', () => {
+test('C2 rr: missing structure falls back to an ATR stop and says so', () => {
   const noStop = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101, 103], levelsBelow: [] }, 1);
   assert.strictEqual(noStop.stopFromStructure, false);
   assert.ok(Math.abs(noStop.riskAtr - RRP().fallbackStopAtr) < 1e-9);
-
-  const noTarget = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101], levelsBelow: [99] }, 1);
-  assert.strictEqual(noTarget.targetFromStructure, false, 'one level is not enough for a second-level target');
-  assert.ok(Math.abs(noTarget.rewardAtr - RRP().fallbackTargetAtr) < 1e-9);
+  assert.strictEqual(noStop.viable, false, 'viability now means "riding real structure"');
 });
 
-test('C2 rr: viable is a gate at 1.0, not a graded score', () => {
-  // reward 3 (103), risk 1.25 -> 2.4
+test('C2 rr: viable reports structural backing, since a fixed R-multiple cannot fail a ratio gate', () => {
   assert.strictEqual(Indicators.riskReward(rrBase, 1).viable, true);
-  // push the opposing level far away so risk swamps reward
-  const poor = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101, 102], levelsBelow: [90, 80] }, 1);
-  assert.ok(poor.ratio < 1);
-  assert.strictEqual(poor.viable, false);
+  const noStructure = Indicators.riskReward({ close: 100, atr: 1, levelsAbove: [101, 102], levelsBelow: [] }, 1);
+  assert.strictEqual(noStructure.viable, false);
 });
 
 test('C2 rr: refuses to guess on unusable input', () => {
@@ -930,10 +976,25 @@ test('C2 rr: refuses to guess on unusable input', () => {
   assert.strictEqual(Indicators.riskReward({ close: null, atr: 1, levelsAbove: [], levelsBelow: [] }, 1), null);
 });
 
-test('C2 rr: ratio is reward/risk in ATR-normalised terms', () => {
-  const r = Indicators.riskReward(rrBase, 1);
-  assert.ok(Math.abs(r.ratio - (r.rewardAtr / r.riskAtr)) < 1e-9);
-  assert.ok(Math.abs(r.ratio - (3 / 1.25)) < 1e-9);
+test('C2 rr: riskPct is what determines fee burden, and tracks the stop source', () => {
+  const near = Indicators.riskReward(rrBase, 1);
+  // a higher-timeframe stop source produces a materially wider 1R
+  const wide = Indicators.riskReward(rrBase, 1, {
+    stopFrom: { close: 100, atr: 4, levelsAbove: [130], levelsBelow: [92] }
+  });
+  assert.ok(wide.riskPct > near.riskPct * 3,
+    `1H-style stop must widen 1R substantially: ${near.riskPct} -> ${wide.riskPct}`);
+  assert.ok(Math.abs(near.riskPct - (Math.abs(near.entry - near.stop) / near.entry * 100)) < 1e-9);
+});
+
+test('C2 rr: a stop level on the wrong side of entry is rejected, not used', () => {
+  // a 1H swing low can sit ABOVE a 5M close; using it would put the stop in profit
+  const r = Indicators.riskReward(rrBase, 1, {
+    stopFrom: { close: 100, atr: 1, levelsAbove: [105], levelsBelow: [101, 99.5] }
+  });
+  assert.ok(r.stop < r.entry, 'stop must be below entry for a long');
+  // 101 is unusable, so 99.5 is taken: 0.5 + 0.25 buffer
+  assert.ok(Math.abs(r.riskAtr - 0.75) < 1e-9, `expected 0.75, got ${r.riskAtr}`);
 });
 
 test('C2: analyzeTimeframe exposes nearest-first level lists for riskReward', () => {

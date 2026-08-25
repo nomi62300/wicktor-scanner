@@ -365,8 +365,10 @@ suite('E — Scoring.bandLabel()');
 
 test('score >= 80 → EXCELLENT', () => assertEqual(Scoring.bandLabel(80).text, 'EXCELLENT'));
 test('score 79 → WATCH',        () => assertEqual(Scoring.bandLabel(79).text, 'WATCH'));
-test('score 50 → WATCH',        () => assertEqual(Scoring.bandLabel(50).text, 'WATCH'));
-test('score 49 → AVOID',        () => assertEqual(Scoring.bandLabel(49).text, 'AVOID'));
+test('score 60 → WATCH',        () => assertEqual(Scoring.bandLabel(60).text, 'WATCH'));
+// Raised from 50 on measurement: 50-59 returned -0.055 NET of taker fees
+// across 2,639 signals, while every bucket from 60 up is net positive.
+test('score 59 → AVOID',        () => assertEqual(Scoring.bandLabel(59).text, 'AVOID'));
 test('score 100 → EXCELLENT',   () => assertEqual(Scoring.bandLabel(100).text, 'EXCELLENT'));
 test('unlock.severity=red overrides score', () => {
   const lbl = Scoring.bandLabel(90, { severity: 'red' });
