@@ -12,6 +12,7 @@ const Indicators = require('../js/indicators');
 // that touches Scoring.
 global.Indicators = Indicators;
 const Scoring = require('../js/scoring');
+const SignalJournal = require('../js/signals');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -632,6 +633,67 @@ test('Strategy 5: mid-band, no crossover scores neither item', () => {
   const m5 = baseSnap({ bbPercentB: 0.5, stochBearishCrossFromOverbought: false, stochBullishCrossFromOversold: false });
   const { items } = Scoring.buildExhaustion([baseSnap({}), baseSnap({}), m5]);
   assert.ok(!items.some(([l]) => l.includes('BB extreme') || l.includes('Stochastic exhaustion')));
+});
+
+// ---------------------------------------------------------------------------
+// Signal journal — exit-plan arithmetic. Every live conclusion about which
+// plan is better rests on this, so it is pinned to hand-checkable cases.
+// ---------------------------------------------------------------------------
+
+// long, entry 100, risk 10 -> stop 90, 1R=110, 2R=120, 3R=130
+const jbar = (h, l) => ({ t: 0, o: 100, h, l, c: (h + l) / 2, v: 1 });
+const runPlan = (bars, plan, dir = 1, entry = 100, risk = 10) =>
+  SignalJournal.realisedR(bars, dir, entry, risk, plan);
+
+test('journal: plan B pays the full 3R on a clean runner', () => {
+  const r = runPlan([jbar(112, 99), jbar(125, 111), jbar(131, 124)], SignalJournal.PLAN_B);
+  assert.ok(Math.abs(r.r - 3) < 1e-9);
+  assert.strictEqual(r.reason, 'target');
+});
+
+test('journal: plan A gives up upside on a runner — 2R, not 3R', () => {
+  const r = runPlan([jbar(112, 99), jbar(125, 111), jbar(131, 124)], SignalJournal.PLAN_A);
+  // 1/3 at 1R + 1/3 at 2R + 1/3 at 3R = 2.0
+  assert.ok(Math.abs(r.r - 2) < 1e-9, `expected 2.0, got ${r.r}`);
+});
+
+test('journal: plan A converts a reversal from -1R into a scratch', () => {
+  // touches 1R, then rolls over and stops out
+  const bars = [jbar(112, 99), jbar(111, 99), jbar(105, 89)];
+  const a = runPlan(bars, SignalJournal.PLAN_A);
+  const b = runPlan(bars, SignalJournal.PLAN_B);
+  assert.ok(Math.abs(b.r + 1) < 1e-9, 'plan B takes the full loss');
+  assert.ok(Math.abs(a.r - 1 / 3) < 1e-9, 'plan A banked 1/3 and stopped the rest at breakeven');
+  assert.strictEqual(a.reason, 'breakeven');
+  // this asymmetry is the entire reason plan A measured better
+  assert.ok(a.r > b.r);
+});
+
+test('journal: a bar touching both stop and target counts as the stop', () => {
+  // intrabar order is unknowable from OHLC, so the pessimistic read is the
+  // only honest one — and it matches how the backtest measured
+  const both = [jbar(135, 85)];
+  assert.ok(Math.abs(runPlan(both, SignalJournal.PLAN_A).r + 1) < 1e-9);
+  assert.ok(Math.abs(runPlan(both, SignalJournal.PLAN_B).r + 1) < 1e-9);
+});
+
+test('journal: an unfinished trade is marked to market, not treated as flat', () => {
+  const r = runPlan([jbar(104, 99), jbar(106, 103)], SignalJournal.PLAN_B);
+  assert.strictEqual(r.reason, 'timeout');
+  assert.ok(Math.abs(r.r - ((104.5 - 100) / 10)) < 1e-9);
+});
+
+test('journal: shorts mirror longs exactly', () => {
+  // short entry 100, risk 10 -> stop 110, 1R=90, 2R=80, 3R=70
+  const long = runPlan([jbar(112, 99), jbar(125, 111), jbar(131, 124)], SignalJournal.PLAN_A, 1);
+  const short = runPlan([jbar(101, 88), jbar(89, 75), jbar(76, 69)], SignalJournal.PLAN_A, -1);
+  assert.ok(Math.abs(long.r - short.r) < 1e-9, `long ${long.r} vs short ${short.r}`);
+});
+
+test('journal: only EXCELLENT is journalled', () => {
+  // 60-79 ranks correctly out of sample but does not clear taker fees, so
+  // logging it would pad the record with trades nobody should take
+  assert.strictEqual(SignalJournal.MIN_SCORE, 80);
 });
 
 // ---------------------------------------------------------------------------

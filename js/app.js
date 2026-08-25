@@ -281,6 +281,10 @@
       // v2 sloped-channel levels — null unless the regression fit was
       // good enough (r2 >= 0.6); modal shows them as a secondary line
       // under the flat fractal-point level, never in place of it.
+      // Carried out of the scan so the signal journal can resolve open
+      // signals against the path that actually happened, without refetching.
+      // Stripped before this object is stored in state.coins.
+      _candles5m: candles.m5,
       resistanceSloped: result.tfSnapshots[0].resistanceSloped,
       supportSloped: result.tfSnapshots[0].supportSloped,
       ...result
@@ -490,7 +494,27 @@
       }
 
       clearDiscoveredIfMissing(activeKeys);
+      // Harvest the raw 5M paths, then strip them: state.coins is retained
+      // and rendered, and 240 coins x 100 bars of candles has no business
+      // living there.
+      const candlesBySymbol = {};
+      allCoins.forEach(c => {
+        if (c._candles5m) candlesBySymbol[`${c.rawSymbol}:${c.market}`] = c._candles5m;
+        delete c._candles5m;
+      });
+
       state.coins = allCoins.sort((a, b) => b.score - a.score);
+
+      // Fire-and-forget: the journal is a record, never a dependency of the
+      // scan. A Supabase outage must not stop the scanner working.
+      if (typeof SignalJournal !== 'undefined') {
+        SignalJournal.resolveOpen(candlesBySymbol)
+          .then(n => { if (n) console.log(`[Journal] resolved ${n} signal(s)`); })
+          .catch(e => console.warn('[Journal] resolve failed', e));
+        SignalJournal.logFromScan(state.coins)
+          .then(n => { if (n) console.log(`[Journal] logged ${n} signal(s)`); })
+          .catch(e => console.warn('[Journal] log failed', e));
+      }
       console.timeEnd('[Scan] coin-analysis');
 
       // 6. Render the card grid with the finished scan results — top strip
