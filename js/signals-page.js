@@ -15,6 +15,13 @@
   const REST = 'https://fpyfetynfobfrpunnnhv.supabase.co/rest/v1/signal_journal';
   const KEY = 'sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC';
   const LIMIT = 500;
+  const BYBIT = 'https://api.bybit.com';
+  // tp1_hit/tp2_hit/tp3_hit were added by the 20260826090000 migration —
+  // rows resolved before that default to false regardless of what actually
+  // happened, so the TP-hit-rate stat must exclude them or it understates
+  // every rate. Rows are still shown in the table either way; this cutoff
+  // only affects which ones count toward the aggregate.
+  const TP_TRACKING_SINCE = Date.parse('2026-08-26T09:00:00Z');
 
   const summaryEl = document.getElementById('summary');
   const listEl = document.getElementById('list');
@@ -41,24 +48,38 @@
     applyTheme(next);
   });
 
-  const BYBIT = 'https://api.bybit.com';
-
   const fmtR = v => v == null ? '--' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + 'R';
+  const fmtPct = v => v == null ? '--' : (v >= 0 ? '+' : '') + Number(v).toFixed(0) + '%';
   const rColor = v => v == null ? 'var(--text3)' : (v >= 0 ? 'var(--green-text)' : 'var(--red-text)');
   const mean = xs => xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null;
+
+  // Cached from the last successful load(), so switching the Long/Short tab
+  // re-renders instantly from what's already in memory rather than
+  // re-fetching — the tab is a client-side filter, not a new query.
+  const state = { rows: [], marks: {}, filter: 'all' };
+
+  function filtered() {
+    if (state.filter === 'long') return state.rows.filter(r => r.direction === 1);
+    if (state.filter === 'short') return state.rows.filter(r => r.direction === -1);
+    return state.rows;
+  }
 
   function stat(rows, key) {
     const val = r => Number(r[key]);
     const all = rows.filter(r => r[key] != null).map(val);
     // Direction-balanced, for the same reason every measurement in this
     // project is: in a trending market a long-heavy sample reads as skill.
+    // (Balanced collapses to the plain mean when a Long/Short tab has
+    // already restricted the sample to one direction — nothing left to
+    // average against.)
     const bull = rows.filter(r => r.direction === 1 && r[key] != null).map(val);
     const bear = rows.filter(r => r.direction === -1 && r[key] != null).map(val);
     return {
       n: all.length,
       winPct: all.length ? all.filter(v => v > 0).length / all.length * 100 : null,
       mean: mean(all),
-      balanced: (bull.length && bear.length) ? (mean(bull) + mean(bear)) / 2 : null
+      balanced: (bull.length && bear.length) ? (mean(bull) + mean(bear)) / 2
+        : (bull.length || bear.length) ? mean(all) : null
     };
   }
 
@@ -71,28 +92,56 @@
   function renderSummary(rows) {
     const resolved = rows.filter(r => r.status === 'resolved');
     const open = rows.filter(r => r.status === 'open');
+    const longs = rows.filter(r => r.direction === 1).length;
+    const shorts = rows.filter(r => r.direction === -1).length;
+
+    const baseTiles =
+      tile('Logged', rows.length) +
+      tile('Long', longs, 'var(--green-text)') +
+      tile('Short', shorts, 'var(--red-text)') +
+      tile('Open', open.length);
 
     if (!resolved.length) {
-      summaryEl.innerHTML =
-        tile('Logged', rows.length) +
-        tile('Open', open.length) +
-        tile('Resolved', 0) +
-        tile('Status', 'Awaiting outcomes', 'var(--gold-text)');
+      summaryEl.innerHTML = baseTiles + tile('Resolved', 0) + tile('Status', 'Awaiting outcomes', 'var(--gold-text)');
       return;
     }
 
     const a = stat(resolved, 'outcome_a');
     const b = stat(resolved, 'outcome_b');
-    summaryEl.innerHTML =
-      tile('Logged', rows.length) +
-      tile('Open', open.length) +
+
+    // TP-hit rate, restricted to rows the tracking migration actually
+    // covers — see TP_TRACKING_SINCE above.
+    const tracked = resolved.filter(r => Date.parse(r.resolved_at) >= TP_TRACKING_SINCE);
+    const tpRate = key => tracked.length ? tracked.filter(r => r[key]).length / tracked.length * 100 : null;
+
+    summaryEl.innerHTML = baseTiles +
       tile('Resolved', resolved.length) +
       tile('Win rate · A', a.winPct != null ? a.winPct.toFixed(0) + '%' : '--',
         a.winPct != null && a.winPct >= 50 ? 'var(--green-text)' : 'var(--red-text)') +
       tile('Mean R · A', fmtR(a.mean), rColor(a.mean)) +
       tile('Balanced R · A', fmtR(a.balanced), rColor(a.balanced)) +
       tile('Mean R · B', fmtR(b.mean), rColor(b.mean)) +
-      tile('Balanced R · B', fmtR(b.balanced), rColor(b.balanced));
+      tile('Balanced R · B', fmtR(b.balanced), rColor(b.balanced)) +
+      tile('TP1 Hit', tracked.length ? tpRate('tp1_hit').toFixed(0) + '% (n=' + tracked.length + ')' : '--') +
+      tile('TP2 Hit', tracked.length ? tpRate('tp2_hit').toFixed(0) + '%' : '--') +
+      tile('TP3 Hit', tracked.length ? tpRate('tp3_hit').toFixed(0) + '%' : '--');
+  }
+
+  function renderTabs() {
+    const n = f => f === 'all' ? state.rows.length
+      : state.rows.filter(r => r.direction === (f === 'long' ? 1 : -1)).length;
+    const tabs = [['all', 'All'], ['long', 'Long'], ['short', 'Short']];
+    document.getElementById('tabs').innerHTML = tabs.map(([key, label]) =>
+      `<button class="chip${state.filter === key ? ' active' : ''}" data-filter="${key}">${label} (${n(key)})</button>`
+    ).join('');
+    document.getElementById('tabs').querySelectorAll('[data-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.filter = btn.dataset.filter;
+        renderTabs();
+        renderSummary(filtered());
+        renderList(filtered(), state.marks);
+      });
+    });
   }
 
   function statusCell(r) {
@@ -122,6 +171,27 @@
     const entry = Number(r.entry), target = Number(r.target);
     const dist = target - entry;
     return [1 / 3, 2 / 3, 1].map(f => entry + dist * f);
+  }
+
+  // % of the way from entry to the full target (TP3), in the SAME units for
+  // open and resolved rows so the column reads consistently: for an open
+  // row it's the live mark's progress; for a resolved one it's derived from
+  // Plan B's outcome (a fixed-stop, single-target walk — the closest thing
+  // to "how far did the market actually get" free of any partial-exit
+  // bookkeeping). A stopped-out trade reads as a negative percentage, which
+  // is the honest reading: it moved the equivalent distance against you.
+  function progressPct(r, mark) {
+    const entry = Number(r.entry), target = Number(r.target), stop = Number(r.stop);
+    const risk = Math.abs(entry - stop);
+    const targetDist = Math.abs(target - entry);
+    if (!risk || !targetDist) return null;
+    if (r.status === 'open') {
+      if (mark == null) return null;
+      return ((r.direction * (mark - entry)) / targetDist) * 100;
+    }
+    if (r.outcome_b == null) return null;
+    const targetR = targetDist / risk;
+    return (r.outcome_b / targetR) * 100;
   }
 
   // Mark price for every OPEN row, fetched once per load() cycle (not on a
@@ -154,9 +224,14 @@
     }
   }
 
+  function tpBadge(hit, label) {
+    const color = hit ? 'var(--green-text)' : 'var(--text3)';
+    return `<span style="color:${color};font-size:11px;">${label}${hit ? ' ✓' : ''}</span>`;
+  }
+
   function renderList(rows, marks) {
     if (!rows.length) {
-      listEl.innerHTML = '<div class="empty-state">No signals logged yet. The journal fills up as the scanner finds EXCELLENT (score 80+) setups while signed in.</div>';
+      listEl.innerHTML = '<div class="empty-state">No signals in this view yet.</div>';
       return;
     }
     const body = rows.map(r => {
@@ -167,6 +242,13 @@
       // (partial takes / breakeven only apply once a TP is genuinely hit).
       const risk = Math.abs(r.entry - r.stop);
       const pnlR = (mark != null && risk) ? (r.direction * (mark - r.entry)) / risk : null;
+      const pct = progressPct(r, mark);
+      const tracked = r.status === 'resolved' && Date.parse(r.resolved_at) >= TP_TRACKING_SINCE;
+      const tpCell = r.status === 'open'
+        ? `${tpBadge(mark != null && (r.direction === 1 ? mark >= tp1 : mark <= tp1), 'TP1')} ${tpBadge(mark != null && (r.direction === 1 ? mark >= tp2 : mark <= tp2), 'TP2')} ${tpBadge(mark != null && (r.direction === 1 ? mark >= tp3 : mark <= tp3), 'TP3')}`
+        : tracked
+          ? `${tpBadge(r.tp1_hit, 'TP1')} ${tpBadge(r.tp2_hit, 'TP2')} ${tpBadge(r.tp3_hit, 'TP3')}`
+          : '<span style="color:var(--text3);font-size:11px;">not tracked</span>';
       return `
       <tr>
         <td>${esc(r.symbol.replace(/USDT$/, ''))} <span style="color:var(--text3);font-size:11px;">${esc(r.market)}</span></td>
@@ -179,8 +261,10 @@
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp1)}</td>
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp2)}</td>
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp3)}</td>
+        <td style="white-space:nowrap;">${tpCell}</td>
         <td class="mono">${r.status === 'open' ? fmtPrice(mark) : '--'}</td>
         <td class="mono" style="color:${rColor(pnlR)}">${r.status === 'open' ? fmtR(pnlR) : '--'}</td>
+        <td class="mono" style="color:${rColor(pct)}">${fmtPct(pct)}</td>
         <td class="mono">${r.risk_pct != null ? Number(r.risk_pct).toFixed(2) + '%' : '--'}</td>
         <td>${statusCell(r)}</td>
         <td class="mono" style="color:${rColor(r.outcome_a)}">${fmtR(r.outcome_a)}</td>
@@ -194,8 +278,8 @@
         <table class="flows-table">
           <thead><tr>
             <th>Coin</th><th>Side</th><th>Score</th><th>Trigger</th><th>Regime</th>
-            <th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>
-            <th>Mark</th><th>PnL</th>
+            <th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>TP Touches</th>
+            <th>Mark</th><th>PnL</th><th>% to Target</th>
             <th>1R</th><th>Status</th><th>Plan A</th><th>Plan B</th><th>Logged</th>
           </tr></thead>
           <tbody>${body}</tbody>
@@ -209,10 +293,11 @@
         headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rows = await res.json();
-      const marks = await fetchMarkPrices(rows);
-      renderSummary(rows);
-      renderList(rows, marks);
+      state.rows = await res.json();
+      state.marks = await fetchMarkPrices(state.rows);
+      renderTabs();
+      renderSummary(filtered());
+      renderList(filtered(), state.marks);
     } catch (e) {
       summaryEl.innerHTML = '';
       listEl.innerHTML = `<div class="empty-state">Could not load the journal (${esc(e.message)}).</div>`;
