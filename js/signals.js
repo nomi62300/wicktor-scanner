@@ -91,6 +91,31 @@ const SignalJournal = (() => {
   }
 
   /**
+   * Did price ever reach TP1/TP2/TP3 (1/3, 2/3, and the full price-move
+   * target), as a plain fact about the market — independent of which exit
+   * plan would have banked it. The ORIGINAL stop is held fixed for the
+   * whole walk (never moved to breakeven the way Plan A does), so this
+   * answers "did the market get there," not "would Plan A's management
+   * have gotten there." Same stop-wins-ties rule as realisedR: a bar that
+   * touches the stop and a TP together counts as the stop, so nothing
+   * after that bar is recorded.
+   */
+  function tpTouches(bars, direction, entry, risk, targetR) {
+    const tR = targetR || 3;
+    const stopPx = entry - direction * risk;
+    const levels = [1 / 3, 2 / 3, 1].map(f => entry + direction * f * tR * risk);
+    const hit = [false, false, false];
+    for (const b of bars) {
+      const stopHit = direction === 1 ? b.l <= stopPx : b.h >= stopPx;
+      if (stopHit) break;
+      for (let i = 0; i < 3; i++) {
+        if (direction === 1 ? b.h >= levels[i] : b.l <= levels[i]) hit[i] = true;
+      }
+    }
+    return { tp1: hit[0], tp2: hit[1], tp3: hit[2] };
+  }
+
+  /**
    * Logs qualifying signals from a finished scan. Idempotent by design: the
    * table's unique key is (symbol, market, direction, bar_time), so every
    * client watching the same bar writes the same row and the database keeps
@@ -174,6 +199,7 @@ const SignalJournal = (() => {
       // though it were a result.
       if (!complete && a.reason === 'timeout') continue;
 
+      const tp = tpTouches(window, sig.direction, sig.entry, risk, targetR);
       try {
         await client().from(TABLE).update({
           status: 'resolved',
@@ -181,7 +207,8 @@ const SignalJournal = (() => {
           resolved_bar_time: window[window.length - 1].t,
           outcome_a: +a.r.toFixed(4),
           outcome_b: +b.r.toFixed(4),
-          exit_reason: a.reason
+          exit_reason: a.reason,
+          tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3
         }).eq('id', sig.id).eq('status', 'open');
         resolved++;
       } catch (e) { console.warn('[SignalJournal] resolve threw', e); }
@@ -222,7 +249,7 @@ const SignalJournal = (() => {
     } catch (e) { console.warn('[SignalJournal] summary threw', e); return null; }
   }
 
-  return { logFromScan, resolveOpen, summary, realisedR, MIN_SCORE, HOLD_BARS, PLAN_A, PLAN_B };
+  return { logFromScan, resolveOpen, summary, realisedR, tpTouches, MIN_SCORE, HOLD_BARS, PLAN_A, PLAN_B };
 })();
 
 if (typeof module !== 'undefined') module.exports = SignalJournal;
