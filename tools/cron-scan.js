@@ -273,6 +273,7 @@ async function resolveOpen(scannedCandles) {
     // itself.
     if (!complete && a.reason === 'timeout') continue;
 
+    const tp = Journal.tpTouches(window, sig.direction, +sig.entry, risk, targetR);
     await pg(`${TABLE}?id=eq.${sig.id}&status=eq.open`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -281,7 +282,8 @@ async function resolveOpen(scannedCandles) {
         resolved_bar_time: window[window.length - 1].t,
         outcome_a: +a.r.toFixed(4),
         outcome_b: +b.r.toFixed(4),
-        exit_reason: a.reason
+        exit_reason: a.reason,
+        tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3
       }),
       headers: { Prefer: 'return=minimal' }
     });
