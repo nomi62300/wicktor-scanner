@@ -99,30 +99,62 @@
     return `<span style="color:var(--text2);text-transform:capitalize;">${esc(r.exit_reason || 'resolved')}</span>`;
   }
 
+  // Matches app.js's formatPrice() convention, kept local since this page
+  // is deliberately standalone.
+  function fmtPrice(n) {
+    if (n == null || isNaN(n)) return '--';
+    n = Number(n);
+    if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (n >= 1) return n.toFixed(2);
+    if (n >= 0.01) return n.toFixed(4);
+    // Sub-cent alts (meme coins etc.) lose all information at 4dp -- show
+    // enough significant figures to actually see the level.
+    return n.toPrecision(4);
+  }
+
+  // TP1/TP2/TP3 are Plan A's rungs (js/signals.js PLAN_A): a third off at
+  // 1/3 of the target, a third at 2/3, the rest at the full target. The
+  // stored `target` column IS TP3 -- entry and target are the two real
+  // numbers the model committed to; TP1/TP2 are interpolated for display.
+  function tpLevels(r) {
+    const entry = Number(r.entry), target = Number(r.target);
+    const dist = target - entry;
+    return [1 / 3, 2 / 3, 1].map(f => entry + dist * f);
+  }
+
   function renderList(rows) {
     if (!rows.length) {
       listEl.innerHTML = '<div class="empty-state">No signals logged yet. The journal fills up as the scanner finds EXCELLENT (score 80+) setups while signed in.</div>';
       return;
     }
-    const body = rows.map(r => `
+    const body = rows.map(r => {
+      const [tp1, tp2, tp3] = tpLevels(r);
+      return `
       <tr>
         <td>${esc(r.symbol.replace(/USDT$/, ''))} <span style="color:var(--text3);font-size:11px;">${esc(r.market)}</span></td>
         <td style="color:${r.direction === 1 ? 'var(--green-text)' : 'var(--red-text)'};">${r.direction === 1 ? 'Long' : 'Short'}</td>
         <td class="mono">${esc(r.score)}</td>
         <td style="font-size:11px;color:var(--text2);">${esc(r.trigger_name || '--')}</td>
         <td style="font-size:11px;color:var(--text2);">${esc(r.context_regime || '--')}</td>
+        <td class="mono">${fmtPrice(r.entry)}</td>
+        <td class="mono" style="color:var(--red-text);">${fmtPrice(r.stop)}</td>
+        <td class="mono" style="color:var(--green-text);">${fmtPrice(tp1)}</td>
+        <td class="mono" style="color:var(--green-text);">${fmtPrice(tp2)}</td>
+        <td class="mono" style="color:var(--green-text);">${fmtPrice(tp3)}</td>
         <td class="mono">${r.risk_pct != null ? Number(r.risk_pct).toFixed(2) + '%' : '--'}</td>
         <td>${statusCell(r)}</td>
         <td class="mono" style="color:${rColor(r.outcome_a)}">${fmtR(r.outcome_a)}</td>
         <td class="mono" style="color:${rColor(r.outcome_b)}">${fmtR(r.outcome_b)}</td>
         <td style="color:var(--text3);font-size:11px;white-space:nowrap;">${esc(new Date(r.created_at).toLocaleString())}</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     listEl.innerHTML = `
       <div style="overflow-x:auto;">
         <table class="flows-table">
           <thead><tr>
             <th>Coin</th><th>Side</th><th>Score</th><th>Trigger</th><th>Regime</th>
+            <th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>
             <th>1R</th><th>Status</th><th>Plan A</th><th>Plan B</th><th>Logged</th>
           </tr></thead>
           <tbody>${body}</tbody>
