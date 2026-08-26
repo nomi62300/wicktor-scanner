@@ -41,6 +41,8 @@
     applyTheme(next);
   });
 
+  const BYBIT = 'https://api.bybit.com';
+
   const fmtR = v => v == null ? '--' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + 'R';
   const rColor = v => v == null ? 'var(--text3)' : (v >= 0 ? 'var(--green-text)' : 'var(--red-text)');
   const mean = xs => xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null;
@@ -122,13 +124,49 @@
     return [1 / 3, 2 / 3, 1].map(f => entry + dist * f);
   }
 
-  function renderList(rows) {
+  // Mark price for every OPEN row, fetched once per load() cycle (not on a
+  // separate timer) -- exactly two requests regardless of how many open
+  // rows there are, since Bybit's tickers endpoint returns the whole
+  // category in one call. Missing/failed fetch degrades to '--' rather than
+  // breaking the page; this is a display convenience, not the journal's
+  // record of truth (that's still entry/stop/target, fixed at signal time).
+  async function fetchMarkPrices(rows) {
+    const open = rows.filter(r => r.status === 'open');
+    if (!open.length) return {};
+    const needSpot = open.some(r => r.market === 'SPOT');
+    const needPerp = open.some(r => r.market === 'PERP');
+    const marks = {};
+    await Promise.all([
+      needSpot ? fetchCategory('spot', marks) : null,
+      needPerp ? fetchCategory('linear', marks) : null
+    ]);
+    return marks;
+
+    async function fetchCategory(category, out) {
+      try {
+        const res = await fetch(`${BYBIT}/v5/market/tickers?category=${category}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.retCode !== 0) return;
+        const market = category === 'linear' ? 'PERP' : 'SPOT';
+        for (const t of data.result.list) out[`${t.symbol}:${market}`] = parseFloat(t.lastPrice);
+      } catch (e) { console.warn('[SignalsPage] mark price fetch failed', category, e.message); }
+    }
+  }
+
+  function renderList(rows, marks) {
     if (!rows.length) {
       listEl.innerHTML = '<div class="empty-state">No signals logged yet. The journal fills up as the scanner finds EXCELLENT (score 80+) setups while signed in.</div>';
       return;
     }
     const body = rows.map(r => {
       const [tp1, tp2, tp3] = tpLevels(r);
+      const mark = r.status === 'open' ? marks[`${r.symbol}:${r.market}`] : null;
+      // Running R against the SAME risk unit the trade was specified with —
+      // mark-to-market, not a claim about how the trade will actually exit
+      // (partial takes / breakeven only apply once a TP is genuinely hit).
+      const risk = Math.abs(r.entry - r.stop);
+      const pnlR = (mark != null && risk) ? (r.direction * (mark - r.entry)) / risk : null;
       return `
       <tr>
         <td>${esc(r.symbol.replace(/USDT$/, ''))} <span style="color:var(--text3);font-size:11px;">${esc(r.market)}</span></td>
@@ -141,6 +179,8 @@
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp1)}</td>
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp2)}</td>
         <td class="mono" style="color:var(--green-text);">${fmtPrice(tp3)}</td>
+        <td class="mono">${r.status === 'open' ? fmtPrice(mark) : '--'}</td>
+        <td class="mono" style="color:${rColor(pnlR)}">${r.status === 'open' ? fmtR(pnlR) : '--'}</td>
         <td class="mono">${r.risk_pct != null ? Number(r.risk_pct).toFixed(2) + '%' : '--'}</td>
         <td>${statusCell(r)}</td>
         <td class="mono" style="color:${rColor(r.outcome_a)}">${fmtR(r.outcome_a)}</td>
@@ -155,6 +195,7 @@
           <thead><tr>
             <th>Coin</th><th>Side</th><th>Score</th><th>Trigger</th><th>Regime</th>
             <th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>
+            <th>Mark</th><th>PnL</th>
             <th>1R</th><th>Status</th><th>Plan A</th><th>Plan B</th><th>Logged</th>
           </tr></thead>
           <tbody>${body}</tbody>
@@ -169,8 +210,9 @@
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const rows = await res.json();
+      const marks = await fetchMarkPrices(rows);
       renderSummary(rows);
-      renderList(rows);
+      renderList(rows, marks);
     } catch (e) {
       summaryEl.innerHTML = '';
       listEl.innerHTML = `<div class="empty-state">Could not load the journal (${esc(e.message)}).</div>`;
