@@ -198,8 +198,20 @@ async function logSignals(coins) {
   // Identical bucketing to js/signals.js, so a concurrent browser scan
   // dedupes against these rows rather than racing them.
   const barTime = Math.floor(Date.now() / BAR_MS) * BAR_MS;
+
+  // bar_time only dedupes WITHIN one 5M candle -- a setup that stays
+  // EXCELLENT across consecutive runs advances into a new candle each
+  // time and passes the unique constraint as a "new" row. Mirrors
+  // js/signals.js's guard: skip a symbol that already has an open,
+  // unresolved row for the same market+direction, matching the backtests'
+  // one-position-per-symbol discipline (`open[dir] = i + HOLD`).
+  const open = await pg(`${TABLE}?select=symbol,market,direction&status=eq.open&limit=500`);
+  const alreadyOpen = new Set((open || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
+
   const rows = coins
     .filter(c => c.score >= Journal.MIN_SCORE)
+    .filter(c => !c.setup || !c.setup.direction ||
+      !alreadyOpen.has(`${c.rawSymbol}:${c.market}:${c.setup.direction}`))
     .map(c => rowFor(c, barTime))
     .filter(Boolean);
 
