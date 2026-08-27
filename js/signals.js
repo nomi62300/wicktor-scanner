@@ -187,7 +187,15 @@ const SignalJournal = (() => {
    * the scanner only runs while a browser is open, so a signal may have hit
    * its stop hours ago and recovered since. Comparing spot would score that
    * as a winner. `candlesBySymbol` is keyed "SYMBOL:MARKET" and holds the
-   * 5M array the scan already has, so this normally costs no extra requests.
+   * 5M array the scan already has, so this normally costs no extra requests
+   * for the common case.
+   *
+   * A symbol whose coin has since dropped out of the scanned universe
+   * (ranked out of the top-N by volume) is NOT in candlesBySymbol, and used
+   * to stay open forever as a result — one row sat open for ~20h this way,
+   * long past its own 4h timeout, simply because it fell out of a scan.
+   * Fetched directly here instead, once per missing symbol, mirroring the
+   * same fallback tools/cron-scan.js already had.
    */
   async function resolveOpen(candlesBySymbol) {
     if (!canWrite()) return 0;
@@ -199,9 +207,34 @@ const SignalJournal = (() => {
       open = data || [];
     } catch (e) { console.warn('[SignalJournal] fetch threw', e); return 0; }
 
+    const cache = { ...candlesBySymbol };
+    const missingSigs = open.filter(s => !cache[`${s.symbol}:${s.market}`]);
+    if (missingSigs.length) {
+      await Promise.all(missingSigs.map(async sig => {
+        const key = `${sig.symbol}:${sig.market}`;
+        if (cache[key]) return;   // another signal on the same symbol already fetched it
+        try {
+          // bar_time can be hours old (a symbol that dropped out of the
+          // scanned universe stays unresolved until this runs) — bybitKlines
+          // only fetches the LATEST N bars, which would miss an old window
+          // entirely, so this fetches from bar_time forward directly.
+          const category = sig.market === 'PERP' ? 'linear' : 'spot';
+          const res = await fetch(
+            `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${sig.symbol}` +
+            `&interval=5&start=${sig.bar_time}&limit=${HOLD_BARS + 2}`
+          );
+          const data = await res.json();
+          if (data.retCode !== 0) return;
+          cache[key] = data.result.list
+            .map(r => ({ t: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), v: Number(r[5]) }))
+            .reverse();
+        } catch (e) { console.warn('[SignalJournal] fallback candle fetch failed', key, e); }
+      }));
+    }
+
     let resolved = 0;
     for (const sig of open) {
-      const candles = candlesBySymbol[`${sig.symbol}:${sig.market}`];
+      const candles = cache[`${sig.symbol}:${sig.market}`];
       if (!candles || !candles.length) continue;
       const after = candles.filter(c => c.t > sig.bar_time);
       if (!after.length) continue;
