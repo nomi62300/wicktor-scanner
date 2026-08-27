@@ -120,15 +120,37 @@ const SignalJournal = (() => {
    * table's unique key is (symbol, market, direction, bar_time), so every
    * client watching the same bar writes the same row and the database keeps
    * one. Failures are swallowed — journalling must never break a scan.
+   *
+   * THAT KEY ONLY DEDUPES WITHIN ONE 5M CANDLE. It does NOT stop a setup
+   * that stays EXCELLENT across consecutive scans from being logged again
+   * every time a new candle closes — bar_time legitimately advances each
+   * cycle, so the unique constraint sees a "new" row every time. One
+   * symbol was observed logging 2 rows 5 minutes apart from a single
+   * ongoing move (2026-08-26). The backtests this model was validated
+   * against never had this problem: they explicitly hold one position per
+   * symbol+direction until it resolves (`open[dir] = i + HOLD`) before
+   * scoring anything else on that symbol. Mirrored here — skip a symbol if
+   * it already has an OPEN unresolved row for the same market+direction,
+   * so the live journal actually measures what the backtest measured.
    */
   async function logFromScan(coins) {
     if (!canWrite() || !coins || !coins.length) return 0;
+
+    let alreadyOpen;
+    try {
+      const { data, error } = await client().from(TABLE)
+        .select('symbol,market,direction').eq('status', 'open').limit(500);
+      if (error) { console.warn('[SignalJournal] open-check failed', error); return 0; }
+      alreadyOpen = new Set((data || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
+    } catch (e) { console.warn('[SignalJournal] open-check threw', e); return 0; }
+
     const rows = [];
     for (const c of coins) {
       const s = c.setup;
       if (!s || !s.direction || c.score < MIN_SCORE) continue;
       const rr = s.riskReward;
       if (!rr || !rr.stop || !rr.target) continue;
+      if (alreadyOpen.has(`${c.rawSymbol}:${c.market}:${s.direction}`)) continue;
       rows.push({
         symbol: c.rawSymbol, market: c.market, direction: s.direction,
         // Bucketed to the 5M grid so every client agrees on the key even if
