@@ -11,11 +11,151 @@ Phase 8, outcome-logging, OI 15m%, the extended 7-TF panel, the
 CoinPaprika fallback tier, sloped regression-channel levels, all of
 Phase 5 Stages 0-4 (strategy-enrichment indicator math through
 advanced-tier scoring — the full 12-strategy batch), Phase 3 (real
-Supabase Auth + account-scoped watchlist), and a Flows 1Y column added
-in follow-up sessions with the owner present. Deliberately left
-unmerged on a branch pending review, per standing branch discipline
-(`main` auto-deploys live). Not version-bumped or tagged; that happens
-at merge time.
+Supabase Auth + account-scoped watchlist), a Flows 1Y column, the v2
+methodology rebuild (Phases A-C4 below, then the post-C4 economics fix,
+out-of-sample validation, and the auto-resolving signal journal), and the
+price-move target fix — all added in follow-up sessions with the owner
+present.
+
+**No longer unmerged.** `beta.wicktor.top`'s custom domain moved to a
+separate repo, `wicktor-v1` (a clean pre-rebuild snapshot, no auth, no
+journal — the real-user-facing product now). That freed this repo's own
+`main` to receive this branch directly (merge `9b8f3e9`, 2026-08-25, and
+every commit since); `main` and `terminal-build/phase-0-1` are kept in
+sync going forward, live at `nomi62300.github.io/wicktor-scanner/` and
+`terminal.wicktor.top`. Not version-bumped or tagged yet regardless — C5
+(short-squeeze/OI positioning) and Phases D/E are still open.
+
+### Added (Live signal journal — MAE/MFE + candle path, logs every scan)
+`signal_journal` gains `mae_r`/`mfe_r` (worst/best a trade ever looked, in
+R against its own stop, up to whichever of stop/target is hit first) and
+`path` (the actual `[t,o,h,l,c]` bars resolved against, up to 48). Mirrors
+`tools/analyze-mae.js`'s fixture-side computation exactly, so live results
+are directly comparable to that backtest, and a specific trade can be
+re-examined later even after Bybit's own history ages out.
+
+**The "skip if symbol already open" gate (added two commits earlier, see
+below) was removed the same day it shipped.** It matched how the
+backtests measure — one position per symbol until resolved — but this
+table is a calibration record of the score, not a simulated trading
+account; gating on "already open" starves the journal exactly when a
+setup is most persistently strong. Every qualifying scan is logged now,
+correlated back-to-back rows on a persisting move included.
+
+### Added (`tools/analyze-mae.js` — stop-placement study)
+Buckets every EXCELLENT signal's Maximum Adverse Excursion by final
+outcome. **Winners barely dip**: median MAE only 0.16-0.18R of the current
+1H-structure stop, p90 still under 0.53R on both fixture sets — real
+slack. Tightening the stop to 70-85% of its current distance improved NET
+on *both* sets; beyond that they diverge sharply (in-sample keeps
+improving to 0.30x, out-of-sample does not) — the signature of
+overfitting, so nothing past ~0.70x is recommended from fixtures alone.
+Not yet applied to `RR.stopBufferAtr`/`minStopAtr` — pending a live-data
+cross-check now that `mae_r` is recorded on real trades.
+
+### Fixed (Journal: two ways an open signal could get stuck)
+- A symbol that fell out of the scanned top-N-by-volume universe was
+  never re-included in `candlesBySymbol` on later scans, so it stayed
+  `open` indefinitely regardless of what price did — one row sat open
+  ~20h, 5x its own 4h timeout. `resolveOpen()` now fetches directly from
+  the signal's own `bar_time` forward for any symbol missing from the
+  current scan (mirrors a fallback `tools/cron-scan.js` already had).
+- Resolution only ever runs inside a signed-in browser's scan cycle
+  (there is still no working unattended cron — see `headless cron`
+  below); confirmed live after a ~17.5h gap with zero scans, during
+  which every open row was simply frozen.
+
+### Fixed (Journal: a persisting setup logged as multiple "new" signals)
+The dedup key (`symbol, market, direction, bar_time`) only dedupes
+*within* one 5M candle. `bar_time` legitimately advances every closed
+candle, so a symbol staying EXCELLENT across consecutive scans passed the
+constraint as a "new" row each time — one coin logged twice, 5 minutes
+apart, from a single ongoing move. Guarded against by skipping a symbol
+with an already-open row (superseded the same day — see "logs every
+scan" above, once the guard was found to work against the journal's
+actual purpose). The 4 stale duplicates it had already created were
+cleaned up via migration (deletion here only ever happens through a
+reviewed migration, never a standing client permission).
+
+### Added (Signal Journal dashboard — `signals.html`)
+Standalone page, no login/access gate (the table is public-select by
+design — a market observation isn't personal data). Reads PostgREST
+directly, auto-refreshes every 60s. Shows Entry/SL/TP1-3 as real price
+levels (TP1/TP2 interpolated at 1/3 and 2/3 of the stored target; TP3 is
+the stored target itself), live Mark price and running PnL fetched once
+per refresh cycle (2 Bybit requests total, not per-row), a Long/Short/All
+tab filter that recomputes every summary tile for the active subset, and
+TP1/TP2/TP3 hit-rate tiles (`tp1_hit`/`tp2_hit`/`tp3_hit`, computed with
+the ORIGINAL stop held fixed — never moved to breakeven — so they
+describe the market, not either exit plan's management). A "% to Target"
+column reads consistently for open (mark-implied) and resolved
+(Plan B-derived) rows alike; a stopped-out trade correctly shows negative.
+Also wired a matching summary panel into the main app's Settings.
+
+### Fixed (Account panel: "Create an account" invisible)
+The signed-out panel's `.settings-links` row put a `width:100%` Sign In
+button next to Create an account with no wrap, pushing the second button
+entirely outside the visible panel — reachable only via an unlabeled
+horizontal scrollbar. Looked like sign-up didn't exist. Stacked vertically
+instead.
+
+### Changed (Post-C4 — the stop/target geometry, corrected twice)
+**First pass:** stop moved from 5M structure to 1H structure, target from
+"second structural level" to a fixed 3R. Fee arithmetic only involves the
+stop (`fees in R = fee% / 1R%`); a 5M stop put 1R at a quoted 0.255% of
+price against a 0.110% taker round trip — net **-0.35R**. The 1H stop was
+measured to fix this.
+
+**Second pass, days later, prompted by the live journal itself:** the
+"1R = 0.952%" figure quoted for the 1H fix was never production's number.
+The tool that chose it (`sweep-stop-target.js`) took the nearest
+structural level unfiltered and buffered with the 5M ATR; `riskReward()`
+filters to levels genuinely against the trade and buffers with the STOP
+timeframe's ATR — several times larger. **Production 1R is a median
+~2.4%, ranging 0.5%-25%.** With that range, a fixed 3R target meant a
+1.5% move for one signal and a 75% move for another; measured, it reached
+target on 4.7% of trades and timed out on 74.8% — not a 3R strategy, a
+four-hour hold scored at mark-to-market.
+
+**Target is now a fixed ~4% price move** (`RR.targetPct`), not an
+R-multiple — `ratio` becomes an output, not an input. Chosen because both
+fixture sets agree on ~4% (+0.086 OOS / +0.094 in-sample) while
+disagreeing completely on the best R-multiple (0.75R vs 2R), the
+signature of a fitted parameter. A fee-viability floor and sanity cap
+(`minRiskPct: 1.0`, `maxRiskPct: 25.0`) route through the existing
+`viable` gate — below ~1% risk the taker round trip exceeds the edge at
+every target tested. Out-of-sample EXCELLENT: win 49.3% → **55.0%**, net
+taker +0.0375R → **+0.0567R**. `TRIGGER_FIT` corrected in the same pass
+after being tuned against a stopless measurement that no longer matched
+the real trade structure. Exit plans (`PLAN_A`/`PLAN_B`) now express
+rungs as fractions of the target rather than fixed R, since hardcoded
+1R/2R/3R would sit beyond the objective on wide-stop setups and never
+fill. 135/136 tests (the one failure predates this work).
+
+### Added (Auto-resolving signal journal — Supabase-backed)
+`signal_journal` table + `js/signals.js`: logs every EXCELLENT signal a
+signed-in scan finds, auto-resolves against the real candle path (never
+compares to current spot — the scanner only runs while a browser is
+open, so a signal could have hit its stop hours ago and recovered).
+Scores **two exit plans from the same signals**: Plan A (a third off at
+each TP, stop to breakeven after TP1) beat Plan B (hold to a single
+target) out-of-sample on both expectancy and lower variance. RLS:
+public-select, signed-in insert/resolve only, no delete grant (dropping a
+row is a migration, never a client permission) — mirrors a real RLS-vs-
+grants bug the watchlist table hit earlier (policies alone don't grant
+base access).
+
+### Added (Out-of-sample validation)
+Every tuned number (stop source, target multiple, `TRIGGER_FIT`, band
+threshold) re-tested unchanged on 3 fixture windows never used to tune
+anything (Feb/Mar/Apr 2026, including a -20% bear). Blanket score≥60 went
+from +0.019R net in-sample to **-0.063R net out-of-sample** — textbook
+overfitting. **EXCELLENT (≥80) held**: +0.0707R in-sample → +0.0375R OOS
+(pre price-move-target fix), win rate near-unchanged (49.4%→49.3%), rank
+order preserved. Conclusion: EXCELLENT is the only tradeable band; WATCH
+is a watchlist, not a signal. Also measured signal independence (0.3%/
+3.1% of outcome variance shared per-day — signals price close to
+independent, not one correlated market bet).
 
 ### Changed (Phase C4 — the setup scoring model)
 Replaces `tradeQualityScore()`'s alignment-dominated blend. **59 of 60
