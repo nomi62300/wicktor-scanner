@@ -199,19 +199,13 @@ async function logSignals(coins) {
   // dedupes against these rows rather than racing them.
   const barTime = Math.floor(Date.now() / BAR_MS) * BAR_MS;
 
-  // bar_time only dedupes WITHIN one 5M candle -- a setup that stays
-  // EXCELLENT across consecutive runs advances into a new candle each
-  // time and passes the unique constraint as a "new" row. Mirrors
-  // js/signals.js's guard: skip a symbol that already has an open,
-  // unresolved row for the same market+direction, matching the backtests'
-  // one-position-per-symbol discipline (`open[dir] = i + HOLD`).
-  const open = await pg(`${TABLE}?select=symbol,market,direction&status=eq.open&limit=500`);
-  const alreadyOpen = new Set((open || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
-
+  // Deliberately logs every qualifying run, even for a symbol already
+  // open -- see the matching note in js/signals.js's logFromScan(). This
+  // table is a calibration record of the score, not a simulated trading
+  // account; gating on "already open" was measured to starve exactly the
+  // setups persistent enough to be most worth observing.
   const rows = coins
     .filter(c => c.score >= Journal.MIN_SCORE)
-    .filter(c => !c.setup || !c.setup.direction ||
-      !alreadyOpen.has(`${c.rawSymbol}:${c.market}:${c.setup.direction}`))
     .map(c => rowFor(c, barTime))
     .filter(Boolean);
 
@@ -286,6 +280,9 @@ async function resolveOpen(scannedCandles) {
     if (!complete && a.reason === 'timeout') continue;
 
     const tp = Journal.tpTouches(window, sig.direction, +sig.entry, risk, targetR);
+    const targetDist = Math.abs(+sig.target - +sig.entry);
+    const mae = Journal.maeMfe(window, sig.direction, +sig.entry, risk, targetDist);
+    const pathData = window.map(bar => [bar.t, bar.o, bar.h, bar.l, bar.c]);
     await pg(`${TABLE}?id=eq.${sig.id}&status=eq.open`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -295,7 +292,9 @@ async function resolveOpen(scannedCandles) {
         outcome_a: +a.r.toFixed(4),
         outcome_b: +b.r.toFixed(4),
         exit_reason: a.reason,
-        tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3
+        tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3,
+        mae_r: +mae.maeR.toFixed(4), mfe_r: +mae.mfeR.toFixed(4),
+        path: pathData
       }),
       headers: { Prefer: 'return=minimal' }
     });

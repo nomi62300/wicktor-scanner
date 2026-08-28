@@ -116,41 +116,59 @@ const SignalJournal = (() => {
   }
 
   /**
+   * Maximum Adverse/Favorable Excursion: the worst and best the trade ever
+   * looked, in R against its OWN stop distance, up to whichever of the
+   * signal's real stop/target is hit first (or the whole window, on a
+   * timeout). This is what actually answers "how close did price get to
+   * the stop" and "how far could a tighter stop have survived" — a
+   * realised R alone only says whether the stop was crossed, not by how
+   * much room there was. Matches tools/analyze-mae.js's fixture-side
+   * computation, so live results are directly comparable to the backtest.
+   */
+  function maeMfe(bars, direction, entry, risk, targetDist) {
+    const stopPx = entry - direction * risk;
+    const targetPx = entry + direction * targetDist;
+    let maeR = 0, mfeR = 0;
+    for (const b of bars) {
+      const advPx = direction === 1 ? b.l : b.h;
+      const favPx = direction === 1 ? b.h : b.l;
+      const advR = (direction * (entry - advPx)) / risk;
+      const favR = (direction * (favPx - entry)) / risk;
+      if (advR > maeR) maeR = advR;
+      if (favR > mfeR) mfeR = favR;
+      const stopHit = direction === 1 ? b.l <= stopPx : b.h >= stopPx;
+      const targetHit = direction === 1 ? b.h >= targetPx : b.l <= targetPx;
+      if (stopHit || targetHit) break;
+    }
+    return { maeR, mfeR };
+  }
+
+  /**
    * Logs qualifying signals from a finished scan. Idempotent by design: the
    * table's unique key is (symbol, market, direction, bar_time), so every
    * client watching the same bar writes the same row and the database keeps
    * one. Failures are swallowed — journalling must never break a scan.
    *
-   * THAT KEY ONLY DEDUPES WITHIN ONE 5M CANDLE. It does NOT stop a setup
-   * that stays EXCELLENT across consecutive scans from being logged again
-   * every time a new candle closes — bar_time legitimately advances each
-   * cycle, so the unique constraint sees a "new" row every time. One
-   * symbol was observed logging 2 rows 5 minutes apart from a single
-   * ongoing move (2026-08-26). The backtests this model was validated
-   * against never had this problem: they explicitly hold one position per
-   * symbol+direction until it resolves (`open[dir] = i + HOLD`) before
-   * scoring anything else on that symbol. Mirrored here — skip a symbol if
-   * it already has an OPEN unresolved row for the same market+direction,
-   * so the live journal actually measures what the backtest measured.
+   * DELIBERATELY LOGS EVERY QUALIFYING SCAN, even for a symbol that already
+   * has an open row. An earlier version gated this — skip a symbol already
+   * open, matching how the backtests hold one position per symbol until it
+   * resolves — but that is the wrong model for what this table IS: a
+   * calibration record of the SCORE's behavior, not a simulated trading
+   * account. Gating on "already open" starved the journal exactly when a
+   * setup was most persistently strong, which is backwards for measuring
+   * signal quality. Every qualifying scan is its own observation of what
+   * the model believed at that closed candle; more of them, including
+   * correlated back-to-back ones on a persisting move, is more signal
+   * about calibration, not noise to be suppressed.
    */
   async function logFromScan(coins) {
     if (!canWrite() || !coins || !coins.length) return 0;
-
-    let alreadyOpen;
-    try {
-      const { data, error } = await client().from(TABLE)
-        .select('symbol,market,direction').eq('status', 'open').limit(500);
-      if (error) { console.warn('[SignalJournal] open-check failed', error); return 0; }
-      alreadyOpen = new Set((data || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
-    } catch (e) { console.warn('[SignalJournal] open-check threw', e); return 0; }
-
     const rows = [];
     for (const c of coins) {
       const s = c.setup;
       if (!s || !s.direction || c.score < MIN_SCORE) continue;
       const rr = s.riskReward;
       if (!rr || !rr.stop || !rr.target) continue;
-      if (alreadyOpen.has(`${c.rawSymbol}:${c.market}:${s.direction}`)) continue;
       rows.push({
         symbol: c.rawSymbol, market: c.market, direction: s.direction,
         // Bucketed to the 5M grid so every client agrees on the key even if
@@ -255,6 +273,11 @@ const SignalJournal = (() => {
       if (!complete && a.reason === 'timeout') continue;
 
       const tp = tpTouches(window, sig.direction, sig.entry, risk, targetR);
+      const targetDist = Math.abs(sig.target - sig.entry);
+      const mae = maeMfe(window, sig.direction, sig.entry, risk, targetDist);
+      // [t,o,h,l,c] only -- volume adds nothing to a stop-placement study
+      // and this is stored for every resolution, keep it lean.
+      const path = window.map(bar => [bar.t, bar.o, bar.h, bar.l, bar.c]);
       try {
         await client().from(TABLE).update({
           status: 'resolved',
@@ -263,7 +286,9 @@ const SignalJournal = (() => {
           outcome_a: +a.r.toFixed(4),
           outcome_b: +b.r.toFixed(4),
           exit_reason: a.reason,
-          tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3
+          tp1_hit: tp.tp1, tp2_hit: tp.tp2, tp3_hit: tp.tp3,
+          mae_r: +mae.maeR.toFixed(4), mfe_r: +mae.mfeR.toFixed(4),
+          path
         }).eq('id', sig.id).eq('status', 'open');
         resolved++;
       } catch (e) { console.warn('[SignalJournal] resolve threw', e); }
@@ -304,7 +329,7 @@ const SignalJournal = (() => {
     } catch (e) { console.warn('[SignalJournal] summary threw', e); return null; }
   }
 
-  return { logFromScan, resolveOpen, summary, realisedR, tpTouches, MIN_SCORE, HOLD_BARS, PLAN_A, PLAN_B };
+  return { logFromScan, resolveOpen, summary, realisedR, tpTouches, maeMfe, MIN_SCORE, HOLD_BARS, PLAN_A, PLAN_B };
 })();
 
 if (typeof module !== 'undefined') module.exports = SignalJournal;
