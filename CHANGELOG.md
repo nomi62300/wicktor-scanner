@@ -26,6 +26,44 @@ sync going forward, live at `nomi62300.github.io/wicktor-scanner/` and
 `terminal.wicktor.top`. Not version-bumped or tagged yet regardless — C5
 (short-squeeze/OI positioning) and Phases D/E are still open.
 
+### Added (Headless cron — the journal no longer needs a browser open)
+The journal only ever ran while a signed-in tab was open — verified live
+(2026-08-29): an 11-hour gap with nobody browsing meant **zero** new
+signals and **zero** resolutions, regardless of what the market did.
+`tools/cron-scan.js` was built for this already but couldn't run on
+GitHub's hosted runners — Bybit 403s them (measured, both
+`api.bybit.com` and `api.bytick.com`; a network block on the runner's IP,
+not a bad hostname).
+
+**Root-caused the "needs a real ESM port" blocker by direct probe rather
+than trusting the earlier note.** Importing `js/indicators.js`/`scoring.js`
+into Deno does NOT throw — Deno just gives every file its own module
+scope, so the bare-identifier sharing classic `<script>` tags and Node's
+`require()` both provide for free doesn't happen automatically. The fix
+is a one-line `globalThis` bridge appended to each of `indicators.js`,
+`scoring.js`, `signals.js` (mirrors the exact mechanism
+`global.Indicators = require(...)` already used in `tools/cron-scan.js`),
+not a rewrite. Verified harmless in Node: 135/136 tests unchanged.
+
+`supabase/functions/cron-scan/index.ts` is a straight Deno port of
+`tools/cron-scan.js`'s orchestration, importing the three real files
+unmodified. Gated by an explicit service-role-key comparison (verify_jwt
+alone would still admit the public anon key). Measured against
+production: 239 coins scored in 6.6s.
+
+**A second, non-obvious blocker found and fixed the same day:** Edge
+Functions route to whichever region is nearest the *caller* by default,
+not the project's home region — an invocation forced to `us-east-1` hit
+the identical "no reachable Bybit host" failure GitHub's runners get
+directly; forcing `ap-northeast-1` (this project's actual region,
+confirmed to reach Bybit) succeeded every time. Every caller now sends
+`x-region: ap-northeast-1` explicitly, or a US-based caller (GitHub
+Actions included) would silently land on a blocked region and undo the
+whole fix. `.github/workflows/signal-journal-scan.yml` no longer runs the
+scan itself — one HTTPS call to the Edge Function, schedule re-enabled
+(`*/5 * * * *`, was workflow_dispatch-only). Confirmed end-to-end through
+the real workflow: 7 signals logged, 1 auto-resolved.
+
 ### Added (Live signal journal — MAE/MFE + candle path, logs every scan)
 `signal_journal` gains `mae_r`/`mfe_r` (worst/best a trade ever looked, in
 R against its own stop, up to whichever of stop/target is hit first) and
