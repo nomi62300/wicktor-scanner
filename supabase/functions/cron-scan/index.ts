@@ -16,6 +16,14 @@
 // project is ap-northeast-1, Tokyo) was measured to reach Bybit fine
 // (2026-08-29 probe: HTTP 200 from api.bybit.com/v5/market/time).
 //
+// THAT REGION IS NOT AUTOMATIC. Edge Functions route to whichever region
+// is nearest the CALLER by default, not to the project's home region —
+// measured directly: forcing an invocation to us-east-1 hit the same
+// "no reachable Bybit host" failure GitHub's own runners get. Every
+// caller of this function MUST send `x-region: ap-northeast-1`, or a
+// US-based caller (GitHub Actions included) silently lands on a blocked
+// region and this whole fix is undone.
+//
 // IT REUSES THE PRODUCTION SCORING PATH RATHER THAN RE-IMPLEMENTING IT.
 // js/indicators.js, js/scoring.js and js/signals.js are imported directly
 // (unmodified logic — only a `globalThis` bridge was added to each, since
