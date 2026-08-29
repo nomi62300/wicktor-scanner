@@ -24,13 +24,20 @@ name: Signal journal scan
 #
 # Instead this workflow just makes ONE HTTPS call to a Supabase Edge
 # Function (supabase/functions/cron-scan) that runs the identical scan
-# logic from Supabase's own Tokyo region, which DOES reach Bybit (measured
-# 2026-08-29: HTTP 200 from api.bybit.com/v5/market/time). GitHub's runner
-# only ever talks to Supabase here, never to Bybit, so the IP block is
-# irrelevant to this call. js/indicators.js, js/scoring.js and js/signals.js
-# needed one addition each (a `globalThis` bridge, since Deno gives every
-# ES module its own scope) but no rewrite — confirmed by direct probe
-# before building the real function.
+# logic. js/indicators.js, js/scoring.js and js/signals.js needed one
+# addition each (a `globalThis` bridge, since Deno gives every ES module
+# its own scope) but no rewrite — confirmed by direct probe before
+# building the real function.
+#
+# THE x-region HEADER IS NOT OPTIONAL. Supabase Edge Functions route to
+# whichever region is closest to the CALLER by default, not to the
+# project's home region — measured directly: an invocation forced to
+# us-east-1 hit the SAME "no reachable Bybit host" failure GitHub's own
+# runners get (a US-cloud IP block), while ap-northeast-1 (this project's
+# actual region, confirmed to reach Bybit) succeeded every time. GitHub's
+# runners are US-based, so without this header they'd silently route to a
+# blocked region and this fix would appear to work in manual testing (from
+# a different origin) while failing on the real schedule.
 # ---------------------------------------------------------------------------
 
 on:
@@ -68,7 +75,8 @@ jobs:
           if [ "$DRY_RUN" = "1" ]; then url="${url}&dry_run=1"; fi
           http_code=$(curl -s -o response.json -w "%{http_code}" "$url" \
             -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}")
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "x-region: ap-northeast-1")
           cat response.json
           echo ""
           if [ "$http_code" != "200" ]; then
