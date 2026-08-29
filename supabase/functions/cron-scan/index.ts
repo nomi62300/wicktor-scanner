@@ -56,12 +56,21 @@ const RESOLVE_BARS = 300;
 const EXPIRE_AFTER_MS = 48 * 60 * 60 * 1000;
 const INTERVAL: Record<string, string> = { '5m': '5', '15m': '15', '1h': '60' };
 
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+// Observed transient (2026-08-29): a cold-start probe failed once, then 3/3
+// immediate retries succeeded — not the GitHub-runner-style hard IP block,
+// just an occasional blip. Two passes over both hosts, not one, so a single
+// bad moment doesn't fail an entire scheduled run.
 async function pickHost(): Promise<string> {
-  for (const host of HOSTS) {
-    try {
-      const res = await fetch(`${host}/v5/market/time`);
-      if (res.ok) return host;
-    } catch { /* try next host */ }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const host of HOSTS) {
+      try {
+        const res = await fetch(`${host}/v5/market/time`);
+        if (res.ok) return host;
+      } catch { /* try next host */ }
+    }
+    if (attempt === 0) await sleep(1000);
   }
   throw new Error('no reachable Bybit host');
 }
