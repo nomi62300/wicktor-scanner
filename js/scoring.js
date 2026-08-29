@@ -942,3 +942,6 @@ const Scoring = (() => {
 })();
 
 if (typeof module !== 'undefined') module.exports = Scoring;
+// See the matching note in js/indicators.js — bridges Deno's per-file
+// module scoping so js/signals.js can reference bare `Scoring` too.
+if (typeof globalThis !== 'undefined') globalThis.Scoring = Scoring;

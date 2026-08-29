@@ -333,3 +333,5 @@ const SignalJournal = (() => {
 })();
 
 if (typeof module !== 'undefined') module.exports = SignalJournal;
+// See the matching note in js/indicators.js.
+if (typeof globalThis !== 'undefined') globalThis.SignalJournal = SignalJournal;

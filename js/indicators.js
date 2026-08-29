@@ -1514,4 +1514,13 @@ const Indicators = (() => {
 })();
 
 if (typeof module !== 'undefined') module.exports = Indicators;
+// Deno (Supabase Edge Functions) gives every file its own module scope, so
+// the bare-identifier sharing that classic <script> tags and Node's
+// require() both provide for free does not happen automatically. This is
+// the bridge: a real property on the shared global object, which bare
+// identifier lookups in scoring.js/signals.js fall back to when imported
+// AFTER this file (same mechanism as `global.Indicators = require(...)`
+// in tools/cron-scan.js, just via `globalThis` instead of `global`).
+// Harmless in a browser (globalThis === window there already) and in Node.
+if (typeof globalThis !== 'undefined') globalThis.Indicators = Indicators;
 
