@@ -1,9 +1,9 @@
 name: Signal journal scan
 
 # Runs the scanner headlessly so the journal records the market rather than
-# the owner's browsing hours. Before this existed, signals were only logged
-# while a signed-in tab happened to be open, which silently deleted whole
-# sessions (overnight, weekends) from the evidence.
+# the owner's browsing hours. Verified live (2026-08-29): an 11-hour gap
+# with nobody browsing meant zero new signals AND zero resolutions in that
+# window, regardless of what the market did.
 #
 # GitHub's scheduler is best-effort: 5 minutes is the floor, and runs are
 # routinely delayed or skipped when the platform is busy. That is acceptable
@@ -16,23 +16,26 @@ name: Signal journal scan
 # for 60 days. If the journal goes quiet, check that before debugging code.
 #
 # ---------------------------------------------------------------------------
-# THE SCHEDULE IS DELIBERATELY OFF. Bybit 403s every request from GitHub's
-# hosted runners — measured, both api.bybit.com and api.bytick.com, so it is
-# the runner's US cloud IP being blocked rather than one bad hostname. The
-# scan itself is correct and runs fine anywhere Bybit answers (verified
-# locally and against production Supabase); it simply cannot run HERE.
+# THIS NO LONGER RUNS tools/cron-scan.js DIRECTLY. Bybit 403s every request
+# from GitHub's hosted runners (measured, both api.bybit.com and
+# api.bytick.com — the runner's US cloud IP is blocked, not one bad
+# hostname). The scan logic is correct and runs fine anywhere Bybit
+# answers; it simply cannot run on THIS network.
 #
-# Supabase's own region (ap-northeast-1) reaches Bybit fine — measured with a
-# throwaway probe function — so an Edge Function is the natural home. That
-# move is blocked on a real port, not a config change: js/indicators.js and
-# friends are sloppy-mode browser IIFEs and Deno evaluates ESM in strict
-# mode, so they fail at boot before any scan starts.
-#
-# Left dispatchable so it can be run by hand from a machine-independent
-# place the moment a reachable runner exists.
+# Instead this workflow just makes ONE HTTPS call to a Supabase Edge
+# Function (supabase/functions/cron-scan) that runs the identical scan
+# logic from Supabase's own Tokyo region, which DOES reach Bybit (measured
+# 2026-08-29: HTTP 200 from api.bybit.com/v5/market/time). GitHub's runner
+# only ever talks to Supabase here, never to Bybit, so the IP block is
+# irrelevant to this call. js/indicators.js, js/scoring.js and js/signals.js
+# needed one addition each (a `globalThis` bridge, since Deno gives every
+# ES module its own scope) but no rewrite — confirmed by direct probe
+# before building the real function.
 # ---------------------------------------------------------------------------
 
 on:
+  schedule:
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       universe_size:
@@ -53,17 +56,22 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Run scan and journal signals
+      - name: Invoke cron-scan Edge Function
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '120' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
-        run: node tools/cron-scan.js
+        run: |
+          url="https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cron-scan?universe_size=${UNIVERSE_SIZE}"
+          if [ "$DRY_RUN" = "1" ]; then url="${url}&dry_run=1"; fi
+          http_code=$(curl -s -o response.json -w "%{http_code}" "$url" \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}")
+          cat response.json
+          echo ""
+          if [ "$http_code" != "200" ]; then
+            echo "cron-scan returned HTTP $http_code"
+            exit 1
+          fi
