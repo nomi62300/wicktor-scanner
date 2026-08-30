@@ -199,13 +199,16 @@ async function logSignals(coins) {
   // dedupes against these rows rather than racing them.
   const barTime = Math.floor(Date.now() / BAR_MS) * BAR_MS;
 
-  // Deliberately logs every qualifying run, even for a symbol already
-  // open -- see the matching note in js/signals.js's logFromScan(). This
-  // table is a calibration record of the score, not a simulated trading
-  // account; gating on "already open" was measured to starve exactly the
-  // setups persistent enough to be most worth observing.
+  // Skip a symbol that already has an open row for the same
+  // market+direction -- one position per symbol until it resolves or
+  // times out. See the matching note in js/signals.js's logFromScan().
+  const open = await pg(`${TABLE}?select=symbol,market,direction&status=eq.open&limit=500`);
+  const alreadyOpen = new Set((open || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
+
   const rows = coins
     .filter(c => c.score >= Journal.MIN_SCORE)
+    .filter(c => !c.setup || !c.setup.direction ||
+      !alreadyOpen.has(`${c.rawSymbol}:${c.market}:${c.setup.direction}`))
     .map(c => rowFor(c, barTime))
     .filter(Boolean);
 

@@ -149,26 +149,33 @@ const SignalJournal = (() => {
    * client watching the same bar writes the same row and the database keeps
    * one. Failures are swallowed — journalling must never break a scan.
    *
-   * DELIBERATELY LOGS EVERY QUALIFYING SCAN, even for a symbol that already
-   * has an open row. An earlier version gated this — skip a symbol already
-   * open, matching how the backtests hold one position per symbol until it
-   * resolves — but that is the wrong model for what this table IS: a
-   * calibration record of the SCORE's behavior, not a simulated trading
-   * account. Gating on "already open" starved the journal exactly when a
-   * setup was most persistently strong, which is backwards for measuring
-   * signal quality. Every qualifying scan is its own observation of what
-   * the model believed at that closed candle; more of them, including
-   * correlated back-to-back ones on a persisting move, is more signal
-   * about calibration, not noise to be suppressed.
+   * SKIPS A SYMBOL THAT ALREADY HAS AN OPEN ROW for the same market+
+   * direction — one position per symbol at a time, not re-entered until it
+   * resolves or times out. This flipped twice: originally gated (matching
+   * how the backtests hold one position per symbol), then opened up to log
+   * every qualifying scan (more calibration data, including correlated
+   * repeats of a persisting move), now gated again on the owner's explicit
+   * call — a live position should not "re-enter" itself every 5 minutes
+   * while it is still open. `open` is one lookup per call, not per row.
    */
   async function logFromScan(coins) {
     if (!canWrite() || !coins || !coins.length) return 0;
+
+    let alreadyOpen;
+    try {
+      const { data, error } = await client().from(TABLE)
+        .select('symbol,market,direction').eq('status', 'open').limit(500);
+      if (error) { console.warn('[SignalJournal] open-check failed', error); return 0; }
+      alreadyOpen = new Set((data || []).map(r => `${r.symbol}:${r.market}:${r.direction}`));
+    } catch (e) { console.warn('[SignalJournal] open-check threw', e); return 0; }
+
     const rows = [];
     for (const c of coins) {
       const s = c.setup;
       if (!s || !s.direction || c.score < MIN_SCORE) continue;
       const rr = s.riskReward;
       if (!rr || !rr.stop || !rr.target) continue;
+      if (alreadyOpen.has(`${c.rawSymbol}:${c.market}:${s.direction}`)) continue;
       rows.push({
         symbol: c.rawSymbol, market: c.market, direction: s.direction,
         // Bucketed to the 5M grid so every client agrees on the key even if
