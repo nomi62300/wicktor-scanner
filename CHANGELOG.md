@@ -64,6 +64,27 @@ scan itself — one HTTPS call to the Edge Function, schedule re-enabled
 (`*/5 * * * *`, was workflow_dispatch-only). Confirmed end-to-end through
 the real workflow: 7 signals logged, 1 auto-resolved.
 
+### Added (`tools/test-sloped-break.js` — a taught method, measured and rejected)
+Tests a trading course's core setup: enter on a 5M close through a sloped
+1H trendline. We already compute that line — `regressionChannelLevels()`
+fits a regression through 3-6 fractal pivots at r2 >= 0.6, returned as
+`resistanceSloped`/`supportSloped` — render it on the card, and never
+score it, so this was a fair test rather than a strawman.
+
+**It is a losing signal on both fixture sets**: win 41.4% / 40.0%, NET
+**-0.2038 / -0.1226**, against an EXCELLENT baseline of +0.0470 /
++0.0974. Our existing FLAT `levelBreak` beats it on both sets, and
+requiring both together is the worst combination measured. No additive
+benefit within EXCELLENT either (in-sample: +0.0950 with vs +0.0974
+without). **Not built.**
+
+One reported result had to be retracted on cross-validation: an
+out-of-sample monotonic gradient (tighter trendline fit → worse
+performance, -0.0832 → -0.1825 → -0.3786) did not replicate in-sample
+(-0.1131 / -0.1318 / -0.0908, non-monotonic). A three-bucket trend in one
+sample plus a plausible mechanism is not a finding — caught only because
+both sets are always run.
+
 ### Added (Live signal journal — MAE/MFE + candle path, logs every scan)
 `signal_journal` gains `mae_r`/`mfe_r` (worst/best a trade ever looked, in
 R against its own stop, up to whichever of stop/target is hit first) and
