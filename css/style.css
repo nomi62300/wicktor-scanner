@@ -300,6 +300,12 @@ input:focus-visible {
   gap: 4px;
   margin-bottom: 16px;
   border-bottom: 1px solid var(--border);
+  /* Six tabs don't fit a phone width. Without this the row silently
+     overflowed the viewport instead of wrapping (flex items don't wrap by
+     default) -- Watchlist just went off-screen with no way to reach it. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .main-nav-tab {
@@ -312,6 +318,8 @@ input:focus-visible {
   padding: 8px 4px 10px;
   margin-right: 16px;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .main-nav-tab:hover { color: var(--text); }
