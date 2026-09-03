@@ -36,7 +36,15 @@ select cron.schedule(
     url := 'https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cron-scan?universe_size=350',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_key', true),
+      -- Read from Supabase Vault, NOT from a GUC and NOT inlined here.
+      -- ALTER DATABASE ... SET is refused for this role (42501), and
+      -- inlining would put a service-role key in a public git repo. The
+      -- secret is created out-of-band; this migration only references it by
+      -- name, so the file is safe to commit.
+      'Authorization', 'Bearer ' || (
+        select decrypted_secret from vault.decrypted_secrets
+        where name = 'wicktor_service_key'
+      ),
       -- Not optional: Edge Functions route to the region nearest the caller,
       -- and Bybit blocks the US regions. See the function's header.
       'x-region', 'ap-northeast-1'
