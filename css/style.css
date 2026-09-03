@@ -466,8 +466,6 @@ input:focus-visible {
   padding: 14px;
   cursor: pointer;
   transition: border-color 0.15s;
-  /* Positioning context for .new-badge, which pins to the card's corner. */
-  position: relative;
 }
 .coin-card:hover { border-color: var(--border-strong); }
 .coin-card.unlock-severe { border-color: rgba(224,116,95,0.4); }
@@ -490,6 +488,11 @@ input:focus-visible {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  /* The diff flags carry a full sentence ("score increased from 58 to 65"),
+     which is far wider than the old arrow badge. Wrap rather than overflow
+     the card on narrow widths. */
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .card-time {
@@ -498,6 +501,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 3px;
+  flex-wrap: wrap;
 }
 
 .market-badge {
@@ -698,21 +702,19 @@ input:focus-visible {
 }
 .next-scan.stale { color: var(--gold-text); border-color: var(--gold); }
 
-/* Diff badges against the previous stored scan. */
-.new-badge {
-  position: absolute;
-  top: 8px; right: 8px;
-  background: var(--gold);
-  color: #12161c;
+/* Diff flags against the previous stored scan. Same pill family as
+   .market-badge, one size down, sitting inline after the card timestamp. */
+.card-flag {
   font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  margin-left: 5px;
+  white-space: nowrap;
 }
-.score-delta { font-size: 9px; font-weight: 600; margin-left: 5px; vertical-align: middle; }
-.score-delta.up { color: var(--green-text); }
-.score-delta.down { color: var(--gold-text); }
+.card-flag.new  { background: rgba(217,180,106,0.3); color: var(--gold);       border: 1px solid rgba(217,180,106,0.4); }
+.card-flag.up   { background: rgba(79,174,142,0.25); color: var(--green-text); border: 1px solid rgba(79,174,142,0.4); }
+.card-flag.down { background: rgba(224,116,95,0.22); color: var(--red-text);   border: 1px solid rgba(224,116,95,0.4); }
 
 .trade-plan { background: var(--surf2); border-radius: 9px; padding: 8px 10px; margin-bottom: 10px; }
 .trade-plan-row { display: flex; justify-content: space-between; gap: 6px; }

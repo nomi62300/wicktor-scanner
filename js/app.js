@@ -65,7 +65,7 @@
   const MAINTENANCE_MODE = false;
 
   const DEFAULT_SETTINGS = {
-    universeSize: 120,
+    universeSize: 350,
     refreshIntervalSec: 300,
     includeCryptoSpot: true,
     includeStocks: false,
@@ -461,6 +461,36 @@
   function getFilteredCoins() {
     let list = state.coins;
 
+    // SETTINGS GATE — applied before the filter chips.
+    //
+    // These used to decide what got SCANNED (they built scanTargets, and
+    // universeSize was passed to Api.topUniverse). The server now scans
+    // everything regardless, so they became dead settings for one commit:
+    // toggling Perps off changed nothing. They are display gates now, which
+    // is what they were always for from the user's side — "which setups do I
+    // want to see, and how many" — and is the shape tiering needs later,
+    // since a tier limits what a user may see rather than what the shared
+    // scan computes.
+    const s = state.settings;
+    list = list.filter(c => {
+      if (c.market === 'PERP') return s.includePerps !== false;
+      // Spot splits two ways: tokenized stocks are a separate toggle from
+      // crypto spot, exactly as they were when this gated the scan.
+      const isStock = typeof Api !== 'undefined' && Api.isXStock
+        ? Api.isXStock(c.rawSymbol) : false;
+      return isStock ? s.includeStocks === true : s.includeCryptoSpot !== false;
+    });
+
+    // universeSize caps how deep into the ranked universe this viewer sees.
+    // Ranked by score, not by volume: the server already picked the top-N by
+    // volume, so re-cutting by volume here would be a second copy of a
+    // decision already made, while score is what this list is ordered by.
+    if (s.universeSize > 0) {
+      const spot = list.filter(c => c.market === 'SPOT').slice(0, s.universeSize);
+      const perp = list.filter(c => c.market === 'PERP').slice(0, s.universeSize);
+      list = spot.concat(perp);
+    }
+
     // market group — OR within (a coin can only be one), AND across groups.
     // Split out from quality so "Spot" + "3TF aligned" means their
     // INTERSECTION, not the union the old combined "primary" group gave.
@@ -683,7 +713,7 @@
     el.settingsPanel.classList.add('open');
   }
   function closeSettings() {
-    state.settings.universeSize = Math.max(10, Math.min(120, parseInt(el.universeInput.value) || 120));
+    state.settings.universeSize = Math.max(10, Math.min(350, parseInt(el.universeInput.value) || 350));
     state.settings.refreshIntervalSec = Math.max(1, Math.min(10, parseInt(el.refreshInput.value) || 5)) * 60;
     state.settings.includeCryptoSpot = el.cryptoSpotToggle.checked;
     state.settings.includeStocks = el.stocksToggle.checked;

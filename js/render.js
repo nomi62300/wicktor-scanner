@@ -254,17 +254,25 @@ const Render = (() => {
     </div>`;
   }
 
-  // How the score moved since the previous stored scan. Shown only when it
-  // actually changed — an unchanged coin gets nothing, since the absence of
-  // a badge already means "same as last time", and a "0" badge on most
-  // cards would be noise competing with the ones that did move.
+  // How the score moved since the previous stored scan, and whether the coin
+  // is newly qualifying. Both are pill labels in the same family as the
+  // SPOT/PERP market badge, one size down, and both sit inline after the
+  // "Xm ago" timestamp rather than floating over a corner of the card.
+  //
+  // Shown only when something actually changed: an unchanged coin gets
+  // nothing, because the absence of a badge already reads as "same as last
+  // scan", and a neutral badge on most cards would drown out the few that
+  // moved.
   function scoreDeltaHtml(delta, score) {
     if (delta == null || delta === 0) return '';
     const up = delta > 0;
-    const cls = up ? 'score-delta up' : 'score-delta down';
-    const arrow = up ? '▲' : '▼';
     const was = score - delta;
-    return `<span class="${cls}" title="Score ${was} → ${score} since the last scan">${arrow}${Math.abs(delta)}</span>`;
+    const verb = up ? 'increased' : 'reduced';
+    return `<span class="card-flag ${up ? 'up' : 'down'}">score ${verb} from ${was} to ${score}</span>`;
+  }
+
+  function newFlagHtml(isNew) {
+    return isNew ? '<span class="card-flag new">new</span>' : '';
   }
 
   function cardHtml(coin, idx, settings) {
@@ -279,14 +287,13 @@ const Render = (() => {
     return `
     <div class="coin-card${unlockSevereCls}${sideCls}" data-idx="${idx}" tabindex="0" role="button" aria-label="${esc(coin.symbol)} details">
       <div class="card-row-top">
-        <span class="card-time"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(coin.discoveredAgo)} ago</span>
+        <span class="card-time"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(coin.discoveredAgo)} ago${newFlagHtml(coin.isNew)}${scoreDeltaHtml(coin.scoreDelta, coin.score)}</span>
         ${marketBadgeHtml(coin.market)}
       </div>
-      ${coin.isNew ? '<span class="new-badge" title="First appeared in this scan">NEW</span>' : ''}
       <div class="card-head">
         ${scoreRingSvg(coin.score)}
         <div>
-          <div class="card-sym">${esc(coin.symbol)}${scoreDeltaHtml(coin.scoreDelta, coin.score)}</div>
+          <div class="card-sym">${esc(coin.symbol)}</div>
           <span class="sector-chip">${esc(coin.sector)}</span>
         </div>
       </div>

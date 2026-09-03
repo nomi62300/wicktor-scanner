@@ -164,8 +164,8 @@
 
   <div class="settings-field">
     <label class="settings-label" for="setting-universe">Coin universe size</label>
-    <input id="setting-universe" type="number" min="10" max="120" value="120">
-    <div class="settings-hint">How many top-volume USDT pairs to scan (10–120). Larger = more thorough, slower refresh.</div>
+    <input id="setting-universe" type="number" min="10" max="350" value="350">
+    <div class="settings-hint">How many top-volume USDT pairs to show per market (10–350). The scan itself always covers the full universe on the server, so raising this costs you nothing in speed.</div>
   </div>
 
   <div class="settings-field">
@@ -315,14 +315,14 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js"></script>
 <!-- ?v= forces a stale cache to drop old geometry; bump on any scoring change -->
-<script src="js/indicators.js?v=2.2.0"></script>
-<script src="js/scoring.js?v=2.2.0"></script>
-<script src="js/api.js?v=2.2.0"></script>
-<script src="js/outcomes.js?v=2.2.0"></script>
-<script src="js/auth.js?v=2.2.0"></script>
-<script src="js/signals.js?v=2.2.0"></script>
-<script src="js/coinview.js?v=2.2.0"></script>
-<script src="js/render.js?v=2.2.0"></script>
-<script src="js/app.js?v=2.2.0"></script>
+<script src="js/indicators.js?v=2.2.1"></script>
+<script src="js/scoring.js?v=2.2.1"></script>
+<script src="js/api.js?v=2.2.1"></script>
+<script src="js/outcomes.js?v=2.2.1"></script>
+<script src="js/auth.js?v=2.2.1"></script>
+<script src="js/signals.js?v=2.2.1"></script>
+<script src="js/coinview.js?v=2.2.1"></script>
+<script src="js/render.js?v=2.2.1"></script>
+<script src="js/app.js?v=2.2.1"></script>
 </body>
 </html>
