@@ -137,14 +137,26 @@ const Render = (() => {
    *        divergenceOverall, continuation, exhaustion, reversal)
    * }
    */
+  // Isolated-margin liquidation distance from entry is roughly
+  // (1/leverage - MMR) of price. For the $-risk math above to mean what it
+  // says, liquidation has to sit BEYOND the stop -- otherwise a leverage
+  // setting that's too high liquidates the position before the planned
+  // stop-loss even triggers, turning a bounded, sized loss into an
+  // unplanned full-margin one. Solving for the leverage that keeps
+  // liquidation at least SAFETY_BUFFER beyond the stop:
+  //   maxLev = 1 / (stopFrac * SAFETY_BUFFER + MMR)
+  // MMR (maintenance margin rate) varies by exchange/symbol/tier -- this
+  // uses a conservative placeholder for a common major at moderate
+  // leverage, not this coin's actual tier, which is why the UI calls it an
+  // estimate and says to confirm the real number before setting leverage.
+  const ASSUMED_MMR = 0.005;
+  const LIQ_SAFETY_BUFFER = 1.25;
+
   /**
    * $ risk -> position size, from the SAME riskReward() numbers the journal
-   * and the scoring model already use — no new trade math, just surfacing
-   * it. `notional / accountSize` is exactly the leverage required to hit
-   * the target $ risk at this stop distance (algebraically riskPct/stopPct
-   * — verified by hand: accountSize=1000, riskPct=1%, stopPct=2% ->
-   * notional=$500, leverage=0.5x). Returns null rather than guessing when
-   * an input is missing, so the card can just omit the line.
+   * and the scoring model already use — no new trade math for the size
+   * itself, just surfacing it. Returns null rather than guessing when an
+   * input is missing, so the card can just omit the line.
    */
   function positionSizing(rr, market, accountSize, riskPct) {
     if (!rr || !rr.entry || !rr.stop || !accountSize || !riskPct) return null;
@@ -153,9 +165,15 @@ const Render = (() => {
     const riskDollars = accountSize * (riskPct / 100);
     const notionalDollars = riskDollars / (stopPct / 100);
     const sizeUnits = notionalDollars / rr.entry;
+
+    let maxSafeLeverage = null;
+    if (market === 'PERP') {
+      const stopFrac = stopPct / 100;
+      maxSafeLeverage = Math.max(1, Math.floor(1 / (stopFrac * LIQ_SAFETY_BUFFER + ASSUMED_MMR)));
+    }
+
     return {
-      riskDollars, notionalDollars, sizeUnits,
-      leverage: market === 'PERP' ? notionalDollars / accountSize : null,
+      riskDollars, notionalDollars, sizeUnits, maxSafeLeverage,
       // Spot has no margin: flag when the position needs more cash than
       // the account holds rather than showing a leverage figure that
       // doesn't apply to it.
@@ -185,11 +203,19 @@ const Render = (() => {
     const slColor = 'var(--red-text)', tpColor = 'var(--green-text)';
 
     const sizing = positionSizing(rr, coin.market, settings.accountSize, settings.riskPerTradePct);
+    const leverageTip = 'Estimated ceiling assuming ~0.5% maintenance margin and a 25% safety buffer beyond ' +
+      'the stop — your exchange\'s real maintenance margin rate varies by symbol and tier. Confirm the exact ' +
+      'liquidation price on the order screen before setting leverage. Above this, liquidation can trigger ' +
+      'before your stop-loss does.';
+    const marginTip = 'Isolated caps this position\'s max loss at what you allocate to it — the stop distance ' +
+      'above is only a real loss ceiling under isolated margin. Cross shares your whole account\'s collateral ' +
+      'across every open position, so a bad move on a DIFFERENT signal can liquidate this one before its own ' +
+      'stop is touched. Not recommended here.';
     const sizeRow = sizing ? `
       <div class="trade-plan-size-row">
         <span>Risk <b>$${fmtMoney(sizing.riskDollars)}</b> (${esc(settings.riskPerTradePct)}%)</span>
         <span>Size <b>${fmtMoney(sizing.sizeUnits)}</b> (~$${fmtMoney(sizing.notionalDollars)})</span>
-        ${sizing.leverage != null ? `<span>Lev <b>${sizing.leverage.toFixed(2)}x</b></span>` : ''}
+        ${sizing.maxSafeLeverage != null ? `<span>Isolated<span class="cont-info" title="${esc(marginTip)}">i</span> · max <b>${sizing.maxSafeLeverage}x</b><span class="cont-info" title="${esc(leverageTip)}">i</span></span>` : ''}
       </div>
       ${sizing.exceedsAccount ? `<div class="trade-plan-warn">Position needs $${fmtMoney(sizing.notionalDollars)} — more than your account size; spot has no leverage to cover the gap.</div>` : ''}
     ` : `<div class="trade-plan-size-row"><span>Set account size + risk % in Settings to see position size</span></div>`;
