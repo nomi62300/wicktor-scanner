@@ -1,0 +1,37 @@
+name: Sector snapshot
+
+# Records sector performance + the coin→sector map so the sector-rotation
+# question ("do coins in a strong sector produce better signals?") becomes
+# answerable. It cannot be backtested — fixtures hold raw OHLC only and
+# CoinPaprika will not serve historical category performance — so the only
+# route is accumulating it forward. See project memory: trendline-break test.
+#
+# Hourly, not 5-minutely: this is 7-day sector performance, which moves over
+# days. An occasional missed run costs nothing, and each row is timestamped
+# so analysis joins to the nearest snapshot before a signal rather than
+# assuming a fixed cadence.
+#
+# UNLIKE .github/workflows/signal-journal-scan.yml, this runs the Node script
+# DIRECTLY on the runner. That workflow has to bounce through a Supabase Edge
+# Function because Bybit 403s GitHub's hosted runners; that block is Bybit's,
+# and CoinPaprika does not do it. If CoinPaprika ever starts blocking cloud
+# IPs the script exits non-zero on an empty sector list, so it will fail
+# loudly here rather than silently writing gaps into the series.
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # offset from the hour to avoid the busy :00 queue
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'   # global fetch, no dependencies to install
+      - name: Snapshot sectors
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node tools/snapshot-sectors.js

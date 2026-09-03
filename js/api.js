@@ -642,11 +642,28 @@ const Api = (() => {
    * behaviour — callers that need "no data" semantics must pass null
    * explicitly rather than relying on this.
    */
+  // A market-cap-weighted mean has NO outlier defence, which is easy to
+  // miss because weighting FEELS like it protects you. Measured 2026-09-03:
+  // LOKA at $21M (1.4% of Gaming's $1.54B) reported a 28,248% 7d change and
+  // moved the whole sector to +507%; 1.4% x 28,248% is still +381pp. LOOM
+  // at +4,279% added another +121pp. Metaverse read +399% off LOKA alone.
+  // Those ranked #1 and #2, and topNarrativeCandidates() sources scan-
+  // universe coins from the top 4 — so bad upstream data was steering which
+  // coins got scanned at all.
+  //
+  // Winsorised rather than dropped: a genuine +400% week still counts (as
+  // +300%), it just cannot run away with the average. Beyond a few hundred
+  // percent weekly is a redenomination, a relisting, or bad data — and if a
+  // move were truly that large the market cap would have moved with it, so
+  // the weighting would already reflect it.
+  const MAX_SANE_CHANGE_PCT = 300;
+
   function weightedChangeFor(coins, field) {
     let totalMcap = 0, weightedSum = 0;
     for (const coin of coins) {
-      const chg = coin[field];
-      if (chg == null || coin.market_cap == null) continue;
+      const raw = coin[field];
+      if (raw == null || coin.market_cap == null) continue;
+      const chg = Math.max(-MAX_SANE_CHANGE_PCT, Math.min(MAX_SANE_CHANGE_PCT, raw));
       totalMcap += coin.market_cap;
       weightedSum += coin.market_cap * chg;
     }
