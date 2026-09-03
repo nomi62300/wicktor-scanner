@@ -254,6 +254,19 @@ const Render = (() => {
     </div>`;
   }
 
+  // How the score moved since the previous stored scan. Shown only when it
+  // actually changed — an unchanged coin gets nothing, since the absence of
+  // a badge already means "same as last time", and a "0" badge on most
+  // cards would be noise competing with the ones that did move.
+  function scoreDeltaHtml(delta, score) {
+    if (delta == null || delta === 0) return '';
+    const up = delta > 0;
+    const cls = up ? 'score-delta up' : 'score-delta down';
+    const arrow = up ? '▲' : '▼';
+    const was = score - delta;
+    return `<span class="${cls}" title="Score ${was} → ${score} since the last scan">${arrow}${Math.abs(delta)}</span>`;
+  }
+
   function cardHtml(coin, idx, settings) {
     const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
     const rsiRow = coin.rsiByTf.map((v, i) =>
@@ -269,10 +282,11 @@ const Render = (() => {
         <span class="card-time"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(coin.discoveredAgo)} ago</span>
         ${marketBadgeHtml(coin.market)}
       </div>
+      ${coin.isNew ? '<span class="new-badge" title="First appeared in this scan">NEW</span>' : ''}
       <div class="card-head">
         ${scoreRingSvg(coin.score)}
         <div>
-          <div class="card-sym">${esc(coin.symbol)}</div>
+          <div class="card-sym">${esc(coin.symbol)}${scoreDeltaHtml(coin.scoreDelta, coin.score)}</div>
           <span class="sector-chip">${esc(coin.sector)}</span>
         </div>
       </div>

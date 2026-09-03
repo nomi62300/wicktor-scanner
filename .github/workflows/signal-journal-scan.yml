@@ -15,6 +15,16 @@ name: Signal journal scan
 # Note: GitHub disables scheduled workflows in repos with no commit activity
 # for 60 days. If the journal goes quiet, check that before debugging code.
 #
+# UNIVERSE SIZE IS CAPPED BY THE EDGE FUNCTION'S RESOURCE LIMIT, NOT BY
+# TASTE. Measured 2026-09-04: 350 -> 636 coins in 25s and 400 -> 734 coins
+# in 26s both succeed, while 500 returns WORKER_RESOURCE_LIMIT (HTTP 546)
+# with no snapshot AND no journal writes for that cycle. 350 is deliberately
+# below the ~450 cliff: the number of coins passing the tradeable filter
+# drifts upward as Bybit lists pairs, so running near the edge would turn
+# into intermittent total-loss cycles later. Raise only with a fresh
+# measurement, or after moving the scan to a host without a per-invocation
+# resource cap.
+#
 # ---------------------------------------------------------------------------
 # THIS NO LONGER RUNS tools/cron-scan.js DIRECTLY. Bybit 403s every request
 # from GitHub's hosted runners (measured, both api.bybit.com and
@@ -68,7 +78,7 @@ jobs:
       - name: Invoke cron-scan Edge Function
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '120' }}
+          UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '350' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
         run: |
           url="https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cron-scan?universe_size=${UNIVERSE_SIZE}"

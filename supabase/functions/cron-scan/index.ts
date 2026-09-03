@@ -48,13 +48,20 @@ import '../../../js/indicators.js';
 import '../../../js/scoring.js';
 // @ts-ignore
 import '../../../js/signals.js';
+// @ts-ignore
+import '../../../js/coinview.js';
 
 declare const Scoring: any;
 declare const SignalJournal: any;
+declare const CoinView: any;
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? 'https://fpyfetynfobfrpunnnhv.supabase.co';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const TABLE = 'signal_journal';
+const SNAP_TABLE = 'scan_snapshot';
+// The client only ever reads the newest two. A few spares absorb a slow
+// reader mid-prune and make a bad run diagnosable after the fact.
+const SNAP_KEEP = 6;
 
 const HOSTS = ['https://api.bybit.com', 'https://api.bytick.com'];
 const BAR_MS = 5 * 60 * 1000;
@@ -62,7 +69,7 @@ const BATCH = 5;
 const RESOLVE_LIMIT = 100;
 const RESOLVE_BARS = 300;
 const EXPIRE_AFTER_MS = 48 * 60 * 60 * 1000;
-const INTERVAL: Record<string, string> = { '5m': '5', '15m': '15', '1h': '60' };
+const INTERVAL: Record<string, string> = { '5m': '5', '15m': '15', '1h': '60', '4h': '240' };
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -111,7 +118,7 @@ async function universe(host: string, category: string, count: number) {
   const r = await bybit(host, `/v5/market/tickers?category=${category}`);
   return r.list
     .filter((t: any) => tradeable(t.symbol))
-    .map((t: any) => ({ symbol: t.symbol, volume24h: +(t.turnover24h || 0) }))
+    .map((t: any) => ({ symbol: t.symbol, volume24h: +(t.turnover24h || 0), price: +(t.lastPrice || 0) }))
     .sort((a: any, b: any) => b.volume24h - a.volume24h)
     .slice(0, count);
 }
@@ -140,35 +147,109 @@ async function pg(path: string, opts: RequestInit = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-async function scoreCoin(host: string, base: { symbol: string }, category: string) {
-  const [h1, m15, m5, oi] = await Promise.all([
+// One CoinPaprika request gives market caps for the whole universe. Mirrors
+// js/api.js marketCapMap()'s tier-1 path and its keying (uppercase symbol,
+// first entry wins) so the MCap line and the micro/small/mid/large filters
+// keep reading the same numbers they always have. No CoinGecko fallback
+// here: a missing mcap degrades to an em-dash on the card, which is not
+// worth four extra paginated requests inside a scheduled function.
+async function mcapMap(): Promise<Record<string, number>> {
+  const map: Record<string, number> = {};
+  try {
+    const res = await fetch('https://api.coinpaprika.com/v1/tickers?quotes=USD');
+    if (!res.ok) return map;
+    for (const c of await res.json()) {
+      const sym = String(c.symbol || '').toUpperCase();
+      const mc = c.quotes && c.quotes.USD ? c.quotes.USD.market_cap : null;
+      if (sym && mc != null && !(sym in map)) map[sym] = mc;
+    }
+  } catch { /* card shows an em-dash; not worth failing a scan over */ }
+  return map;
+}
+
+async function scoreCoin(
+  host: string,
+  base: { symbol: string; price: number },
+  category: string,
+  mcaps: Record<string, number>
+) {
+  const [h4, h1, m15, m5, oi] = await Promise.all([
+    klines(host, category, base.symbol, '4h', 100),
     klines(host, category, base.symbol, '1h', 100),
     klines(host, category, base.symbol, '15m', 100),
     klines(host, category, base.symbol, '5m', 100),
     category === 'linear' ? oiChange15m(host, base.symbol) : Promise.resolve(null)
   ]);
+  // 4H is display-only (the Active TF chip row), so a missing 4H must not
+  // drop a coin the way a missing scoring timeframe does.
   if (!h1 || !m15 || !m5) return null;
 
   const result = Scoring.evaluate({ h1, m15, m5 }, { oiChange15m: oi });
   if (!result) return null;
 
-  return {
-    rawSymbol: base.symbol,
-    market: category === 'linear' ? 'PERP' : 'SPOT',
-    score: result.score,
-    setup: result.setup,
-    m5
-  };
+  const market = category === 'linear' ? 'PERP' : 'SPOT';
+  const cleanSym = base.symbol.replace(/USDT$/, '').replace(/x$/i, '').toUpperCase();
+  const view = CoinView.build(result, base, { h4, h1, m15, m5 }, {
+    market,
+    mcapRaw: mcaps[cleanSym] ?? null,
+    sector: null
+  });
+  if (!view) return null;
+
+  // `setup` is small and the journal needs it. `m5` is NOT returned: at a
+  // 500-coin universe, retaining 100 candles per coin was the difference
+  // between running and WORKER_RESOURCE_LIMIT (measured — 400 died at ~19s
+  // with an empty body). resolveOpen() already fetches 5M candles for any
+  // open signal it wasn't handed, and open signals are a handful, not the
+  // whole universe, so nothing is lost but the memory.
+  return { ...view, setup: result.setup };
 }
 
-async function scanCategory(host: string, category: string, size: number, out: any[]) {
+async function scanCategory(
+  host: string, category: string, size: number, out: any[], mcaps: Record<string, number>
+) {
   const list = await universe(host, category, size);
   for (let i = 0; i < list.length; i += BATCH) {
     const chunk = await Promise.all(
-      list.slice(i, i + BATCH).map((b: any) => scoreCoin(host, b, category).catch(() => null))
+      list.slice(i, i + BATCH).map((b: any) => scoreCoin(host, b, category, mcaps).catch(() => null))
     );
     chunk.forEach(c => { if (c) out.push(c); });
   }
+}
+
+// Stores the whole scored universe for browsers to read, then prunes.
+// `setup` and `m5` are dropped: m5 is 100 candles per coin (the single
+// largest thing in memory here) and setup duplicates fields the view
+// already carries. Only what render.js and app.js actually read is stored.
+async function writeSnapshot(coins: any[], log: string[]) {
+  const scores: Record<string, number> = {};
+  const views = coins.map(({ setup, ...view }) => {
+    scores[`${view.rawSymbol}:${view.market}`] = view.score;
+    return view;
+  });
+
+  await pg(SNAP_TABLE, {
+    method: 'POST',
+    body: JSON.stringify({ coin_count: views.length, scores, coins: views }),
+    headers: { Prefer: 'return=minimal' }
+  });
+
+  // Prune anything past the newest SNAP_KEEP. Done after the insert so a
+  // failed write never leaves the table emptier than it started.
+  try {
+    const keep = await pg(`${SNAP_TABLE}?select=id&order=captured_at.desc&limit=${SNAP_KEEP}`);
+    if (Array.isArray(keep) && keep.length === SNAP_KEEP) {
+      const oldest = keep[keep.length - 1].id;
+      await pg(`${SNAP_TABLE}?id=lt.${oldest}`, {
+        method: 'DELETE', headers: { Prefer: 'return=minimal' }
+      });
+    }
+  } catch (e) {
+    log.push(`snapshot prune failed (non-fatal): ${String(e).slice(0, 120)}`);
+  }
+
+  log.push(`snapshot stored: ${views.length} coins`);
+  return views.length;
 }
 
 function rowFor(coin: any, barTime: number) {
@@ -309,26 +390,32 @@ Deno.serve(async (req: Request) => {
   const log: string[] = [];
   try {
     const host = await pickHost();
+    const mcaps = await mcapMap();
     const coins: any[] = [];
-    await scanCategory(host, 'spot', universeSize, coins);
-    await scanCategory(host, 'linear', universeSize, coins);
-    log.push(`scored ${coins.length} coins`);
+    await scanCategory(host, 'spot', universeSize, coins, mcaps);
+    await scanCategory(host, 'linear', universeSize, coins, mcaps);
+    log.push(`scored ${coins.length} coins (mcaps ${Object.keys(mcaps).length})`);
 
+    // Deliberately empty: resolveOpen() fetches 5M candles per OPEN signal
+    // instead of the scan carrying them for every coin. See scoreCoin().
     const candlesBySymbol: Record<string, any> = {};
-    coins.forEach(c => { candlesBySymbol[`${c.rawSymbol}:${c.market}`] = c.m5; });
 
-    let logged = 0, touched = 0;
+    let logged = 0, touched = 0, snapshot = 0;
     if (dryRun) {
       const barTime = Math.floor(Date.now() / BAR_MS) * BAR_MS;
       logged = coins.filter(c => c.score >= SignalJournal.MIN_SCORE).map(c => rowFor(c, barTime)).filter(Boolean).length;
-      log.push(`DRY_RUN: would log ${logged}, skipping writes and resolution`);
+      log.push(`DRY_RUN: would log ${logged} and snapshot ${coins.length}, skipping writes`);
     } else {
       logged = await logSignals(coins, log);
       touched = await resolveOpen(host, candlesBySymbol, log);
+      // Last: the journal is the record that must not be missed, the
+      // snapshot is a display cache. If this throws, the run has already
+      // done its irreplaceable work.
+      snapshot = await writeSnapshot(coins, log);
     }
 
     return new Response(JSON.stringify({
-      ok: true, logged, touched, seconds: (Date.now() - started) / 1000, log
+      ok: true, logged, touched, snapshot, seconds: (Date.now() - started) / 1000, log
     }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: String(e), log }), {
