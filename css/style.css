@@ -675,6 +675,16 @@ input:focus-visible {
 .level-box-value { font-size: 12px; font-family: var(--font-mono); }
 .level-box-sloped { font-size: 10px; font-family: var(--font-mono); color: var(--text3); margin-top: 3px; }
 
+.trade-plan { background: var(--surf2); border-radius: 9px; padding: 8px 10px; margin-bottom: 10px; }
+.trade-plan-row { display: flex; justify-content: space-between; gap: 6px; }
+.trade-plan-item { flex: 1; text-align: center; }
+.trade-plan-label { font-size: 8px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.3px; }
+.trade-plan-value { font-size: 11px; font-family: var(--font-mono); margin-top: 1px; }
+.trade-plan-tps { display: flex; justify-content: space-between; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.trade-plan-size-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text2); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
+.trade-plan-size-row b { color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+.trade-plan-warn { color: var(--red-text); font-size: 10px; margin-top: 4px; }
+
 .news-section-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
 .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .news-item:last-child { border-bottom: none; }
