@@ -466,6 +466,8 @@ input:focus-visible {
   padding: 14px;
   cursor: pointer;
   transition: border-color 0.15s;
+  /* Positioning context for .new-badge, which pins to the card's corner. */
+  position: relative;
 }
 .coin-card:hover { border-color: var(--border-strong); }
 .coin-card.unlock-severe { border-color: rgba(224,116,95,0.4); }
@@ -682,6 +684,35 @@ input:focus-visible {
 .level-box-label { font-size: 9px; color: var(--text3); }
 .level-box-value { font-size: 12px; font-family: var(--font-mono); }
 .level-box-sloped { font-size: 10px; font-family: var(--font-mono); color: var(--text3); margin-top: 3px; }
+
+/* Countdown pill, in the slot the manual Scan button used to occupy. */
+.next-scan {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text2);
+  background: var(--surf2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 11px;
+  white-space: nowrap;
+}
+.next-scan.stale { color: var(--gold-text); border-color: var(--gold); }
+
+/* Diff badges against the previous stored scan. */
+.new-badge {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: var(--gold);
+  color: #12161c;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.score-delta { font-size: 9px; font-weight: 600; margin-left: 5px; vertical-align: middle; }
+.score-delta.up { color: var(--green-text); }
+.score-delta.down { color: var(--gold-text); }
 
 .trade-plan { background: var(--surf2); border-radius: 9px; padding: 8px 10px; margin-bottom: 10px; }
 .trade-plan-row { display: flex; justify-content: space-between; gap: 6px; }

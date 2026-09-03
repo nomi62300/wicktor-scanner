@@ -27,6 +27,12 @@
   // page reload within the window doesn't immediately refetch either.
   const TOP_STRIP_REFRESH_MS = 30 * 60 * 1000;
 
+  // Read-only access to the stored scan. The publishable key is meant to be
+  // public (same key js/auth.js already ships); scan_snapshot is
+  // select-only for anon and written solely by the scheduled function.
+  const SUPABASE_REST = 'https://fpyfetynfobfrpunnnhv.supabase.co/rest/v1';
+  const SUPABASE_ANON = 'sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC';
+
   // Beta-tester access gate — narrow and explicit: keep the live URL from
   // casual/random visitors, NOT real per-user accounts (no identities, no
   // backend). Comparing a SHA-256 hash instead of a plaintext string only
@@ -95,7 +101,9 @@
     rawMovers: [],
     refreshTimer: null,
     modalCoin: null,
-    newsCache: {}         // symbol -> news result
+    newsCache: {},        // symbol -> news result
+    newsData: null,       // shared feed, re-fetched with market context
+    snapshotAt: null      // captured_at (ms) of the loaded scan snapshot
   };
 
   function loadJson(key, fallback) {
@@ -149,7 +157,7 @@
     signalJournalClose: document.getElementById('signal-journal-close'),
     signalJournalBody: document.getElementById('signal-journal-body'),
     search: document.getElementById('search-input'),
-    scanBtn: document.getElementById('scan-btn'),
+    nextScan: document.getElementById('next-scan'),
     themeBtn: document.getElementById('theme-btn'),
     settingsBtn: document.getElementById('settings-btn'),
     modalBackdrop: document.getElementById('modal-backdrop'),
@@ -167,9 +175,6 @@
     perpCapInput: document.getElementById('setting-perp-cap'),
     accountSizeInput: document.getElementById('setting-account-size'),
     riskPctInput: document.getElementById('setting-risk-pct'),
-    scanProgress: document.getElementById('scan-progress'),
-    scanProgressFill: document.getElementById('scan-progress-fill'),
-    scanProgressLabel: document.getElementById('scan-progress-label'),
     maintenanceOverlay: document.getElementById('maintenance-overlay'),
     accessGate: document.getElementById('access-gate'),
     accessCodeInput: document.getElementById('access-code-input'),
@@ -224,177 +229,61 @@
   }
 
   // -------------------------------------------------------- Core pipeline
-  async function computeCoin(base, category, mcapMap, newsData) {
-    // OI has no spot-market concept — perpetuals only, fetched alongside
-    // candles (not sequentially) so it doesn't add latency to the scan.
-    const [candles, oiChange15m] = await Promise.all([
-      Api.fetchCandleSet(category, base.symbol),
-      category === 'linear'
-        ? Api.openInterestChange15m(base.symbol).catch(() => null)
-        : Promise.resolve(null)
+  //
+  // THE SCAN NO LONGER RUNS HERE. Until 2026-09-04 every browser fetched
+  // Bybit klines for the whole universe and scored them locally, on a timer,
+  // per open tab. That made universe size a per-viewer cost (240 coins was
+  // already ~12s of coin-analysis), multiplied Bybit rate-limit exposure by
+  // the number of tabs, and let two people looking at the scanner at the
+  // same moment see different results.
+  //
+  // supabase/functions/cron-scan now scores the whole universe every 5
+  // minutes and stores it (see the scan_snapshot migration). This file just
+  // reads the newest snapshot, layers on the three per-browser fields the
+  // server cannot know, and renders. Nothing here calls Bybit for coins, and
+  // nothing here writes to the signal journal — the same scheduled function
+  // already owns both, so doing it from a browser would only duplicate or
+  // race it.
+
+  const SNAPSHOT_POLL_MS = 60 * 1000;   // how often to look for a newer one
+  const SCAN_PERIOD_MS = 5 * 60 * 1000; // the cron's cadence, for the countdown
+
+  async function sb(pathAndQuery) {
+    const res = await fetch(`${SUPABASE_REST}/${pathAndQuery}`, {
+      headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` }
+    });
+    if (!res.ok) throw new Error(`snapshot ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * Market context that is NOT the coin scan: top-strip stats, sector
+   * performance, and the news feed the cards' news badge reads. A handful of
+   * requests, unrelated to universe size.
+   */
+  async function refreshMarketContext() {
+    const [newsData, globalRes, fngRes, , sectorRes] = await Promise.all([
+      Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
+      Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
+      Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
+      Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); }),
+      Api.fastSectorPerformance().catch(e => { console.warn('[App] fast sector fetch failed', e); return []; })
     ]);
-    if (!candles.h1) return null;
-    const result = Scoring.evaluate(candles, { oiChange15m });
-    if (!result) return null;
 
-    const market = category === 'linear' ? 'PERP' : 'SPOT';
-    const key = `${base.symbol}:${market}`;
-    markDiscovered(key);
+    state.newsData = newsData;
+    const sectorPerf = sectorRes || [];
+    state.fastSectors = sectorPerf;
+    state.narrativePerf = sectorPerf.length
+      ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
+      : null;
 
-    const closes1h = candles.h1.map(c => c.c);
-    const priceNum = base.price;
-    const volatility = classifyVolatility(candles.h1);
-    const tfChips = [
-      tfChipData('4H', candles.h4),
-      tfChipData('1H', candles.h1),
-      tfChipData('15M', candles.m15),
-      tfChipData('5M', candles.m5)
-    ];
-
-    // display symbol without USDT suffix, and without trailing x for stocks (kept as-is with x for clarity)
-    const displaySymbol = base.symbol.replace(/USDT$/, '');
-
-    const cleanSym = displaySymbol.replace(/x$/i, '');
-    const rawMcap = mcapMap[cleanSym.toUpperCase()];
-
-    let unlock = null; // populated lazily/best-effort in a later pass if desired
-
-    // Compute news metadata eagerly from the pre-fetched feed
-    const articles = newsData ? newsData.articles : null;
-    const newsItems = articles ? Api.newsForSymbol(articles, base.symbol) : [];
-    const newsResult = { items: newsItems };
-    state.newsCache[base.symbol] = newsResult;
-    const newsMeta = {
-      count: newsItems.length,
-      dominantSentiment: newsItems.length > 0 ? newsItems[0].sentiment : null
-    };
-
-    return {
-      symbol: displaySymbol,
-      rawSymbol: base.symbol,
-      sector: base.narrativeSector || (base.isStock ? 'Tokenized Stock' : 'Crypto'),
-      price: formatPrice(priceNum),
-      priceRaw: priceNum,
-      market,
-      side: result.bias === 1 ? (market === 'PERP' ? 'Long' : 'Buy') : (market === 'PERP' ? 'Short' : 'Sell'),
-      discoveredAgo: discoveredAgoLabel(key),
-      mcap: Api.formatMcap(rawMcap),
-      mcapRaw: rawMcap,
-      volatility,
-      unlock,
-      newsMeta,
-      watchlisted: state.watchlist.has(key),
-      tfChips,
-      resistance: formatPrice(result.tfSnapshots[0].resistance),
-      support: formatPrice(result.tfSnapshots[0].support),
-      // v2 sloped-channel levels — null unless the regression fit was
-      // good enough (r2 >= 0.6); modal shows them as a secondary line
-      // under the flat fractal-point level, never in place of it.
-      // Carried out of the scan so the signal journal can resolve open
-      // signals against the path that actually happened, without refetching.
-      // Stripped before this object is stored in state.coins.
-      _candles5m: candles.m5,
-      resistanceSloped: result.tfSnapshots[0].resistanceSloped,
-      supportSloped: result.tfSnapshots[0].supportSloped,
-      ...result
-    };
-  }
-
-  // Card's Active TF row (4H/1H/15M/5M): last-candle close vs the one
-  // before it — a simple, display-only trend reading, deliberately not
-  // the Alligator-confidence tiering used for scoring (that's a 1H/15M/5M-
-  // only concept and doesn't have a 4H analog without a much bigger
-  // computation this row doesn't need).
-  function tfChipData(label, candles) {
-    if (!candles || candles.length < 2) return { label, trend: 'flat', pct: null };
-    const last = candles[candles.length - 1];
-    const prev = candles[candles.length - 2];
-    const pct = prev.c ? ((last.c - prev.c) / prev.c) * 100 : 0;
-    const trend = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
-    return { label, trend, pct };
-  }
-
-  function classifyVolatility(h1candles) {
-    const last20 = h1candles.slice(-20);
-    if (last20.length < 5) return 'Low';
-    const ranges = last20.map(c => (c.h - c.l) / c.c);
-    const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
-    if (avgRange > 0.05) return 'Extreme';
-    if (avgRange > 0.03) return 'High';
-    if (avgRange > 0.015) return 'Moderate';
-    return 'Low';
-  }
-
-  function formatPrice(n) {
-    if (n == null || isNaN(n)) return '--';
-    if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    if (n >= 1) return n.toFixed(2);
-    return n.toFixed(4);
-  }
-
-  async function runScan() {
-    console.time('[Scan] total');
-    setLoading(true);
-    try {
-      let globalData = null, fngData = null;
-
-      // Sector/narrative data used to be a fire-and-forget promise: it sat
-      // in the blocking fetch below, paying sectorPerformance7d()'s ~20s
-      // CoinGecko time budget before the card grid even started, so it was
-      // decoupled and narrative coin-sourcing became best-effort — in
-      // practice it almost never resolved in time on a cold cache, and a
-      // rate-limited run returned as little as 1 of 16 sectors, silently
-      // shrinking the scan universe.
-      //
-      // fastSectorPerformance() is 2 CoinPaprika requests (~1.1s cold, 0ms
-      // warm) instead of 17 CoinGecko ones, so it can simply be awaited
-      // inline below. Narrative injection now fires deterministically
-      // rather than by luck.
-      // 1. Fetch market data, news, global stats, FNG in parallel — sector
-      // performance is intentionally excluded, see above.
-      // refreshXStockSet() populates Api.isXStock()'s live symbol set (no-ops
-      // within its 24h TTL) — must complete before any isXStock() call below.
-      console.time('[Scan] parallel-fetches');
-      const [mcapMap, newsData, globalRes, fngRes, sectorRes] = await Promise.all([
-        Api.marketCapMap().catch(e => { console.warn('[App] mcap map fetch failed', e); return {}; }),
-        Api.fetchAllNews().catch(e => { console.warn('[App] news fetch failed', e); return null; }),
-        Api.coingeckoGlobal().catch(e => { console.warn('[App] coingecko global fetch failed', e); return null; }),
-        Api.fearGreedIndex().catch(e => { console.warn('[App] fear greed fetch failed', e); return null; }),
-        Api.refreshXStockSet().catch(e => { console.warn('[App] xStock set refresh failed', e); }),
-        Api.fastSectorPerformance().catch(e => { console.warn('[App] fast sector fetch failed', e); return []; })
-      ]);
-      globalData = globalRes;
-      fngData = fngRes;
-      const sectorPerf = sectorRes || [];
-      // Shared with the Heatmap tab so it never triggers its own fetch.
-      state.fastSectors = sectorPerf;
-      state.narrativePerf = sectorPerf.length
-        ? [...sectorPerf].sort((a, b) => b.weightedChange7d - a.weightedChange7d).slice(0, 4)
-        : null;
-      console.timeEnd('[Scan] parallel-fetches');
-
-      // 2. Fetch Bybit universes in parallel (needed for movers and initial render)
-      console.time('[Scan] universe-building');
-      // assetFilter is applied before ranking by volume — crypto volume dwarfs
-      // stock volume, so filtering after a shared top-N ranking would mean
-      // stocks almost never appear even with the toggle on.
-      const scanTargets = [];
-      if (state.settings.includeCryptoSpot) scanTargets.push({ category: 'spot', assetFilter: 'crypto' });
-      if (state.settings.includeStocks) scanTargets.push({ category: 'spot', assetFilter: 'stock' });
-      if (state.settings.includePerps) scanTargets.push({ category: 'linear', assetFilter: 'crypto' }); // stocks are spot-only, no leverage on Bybit
-
-      // Top strip (Pulse Spot/Perp, Top Gainers/Losers) is a market-overview
-      // feature, not a reflection of the user's scan configuration — fetch
-      // both ticker sets independent of which Crypto Spot/Stocks/Perps
-      // toggles are on, but only once every 30 min (see TOP_STRIP_REFRESH_MS)
-      // rather than on every scan, since this data doesn't move minute-to-
-      // minute. state.marketBreadth/rawMovers just carry over unchanged
-      // otherwise, so the strip stays populated between refreshes.
-      const topStripStale = (Date.now() - state.topStripFetchedAt) >= TOP_STRIP_REFRESH_MS;
-      if (topStripStale || !state.marketBreadth) {
+    // Pulse/movers move slowly and are a market overview rather than a
+    // reflection of scan config, so they keep their own 30-minute gate.
+    const topStripStale = (Date.now() - state.topStripFetchedAt) >= TOP_STRIP_REFRESH_MS;
+    if (topStripStale || !state.marketBreadth) {
+      try {
         const [spotTickers, linearTickers] = await Promise.all([
-          Api.bybitTickers('spot'),
-          Api.bybitTickers('linear')
+          Api.bybitTickers('spot'), Api.bybitTickers('linear')
         ]);
         state.marketBreadth = {
           spot: computeMarketBreadth(spotTickers),
@@ -403,161 +292,111 @@
         state.rawMovers = buildMoversFromTickers(spotTickers, linearTickers);
         state.topStripFetchedAt = Date.now();
         saveJson(STORAGE_KEYS.topStripFetchedAt, state.topStripFetchedAt);
+      } catch (e) {
+        console.warn('[App] top strip ticker fetch failed', e);
       }
+    }
 
-      const universes = [];
-      await Promise.all(scanTargets.map(async ({ category, assetFilter }) => {
-        const universe = await Api.topUniverse(category, state.settings.universeSize, assetFilter);
-        universes.push({ category, assetFilter, universe });
-      }));
-      console.timeEnd('[Scan] universe-building');
+    refreshTopStrip(globalRes, fngRes);
+    el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
+    if (dashboardLoaded) refreshDashboard();
+  }
 
-      // 3. Render the top strip early — Pulse/Gainers/Losers are already
-      // populated from the ticker fetch above, independent of scan state.
-      console.time('[Scan] top-strip-rendering');
-      refreshTopStrip(globalData, fngData);
-      el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
-      if (dashboardLoaded) refreshDashboard();
-      console.timeEnd('[Scan] top-strip-rendering');
-
-      // 4. Narrative coin sourcing (gated by includeNarrativeSectors, and only
-      // meaningful when the crypto spot pool it injects into is itself enabled).
-      // No longer best-effort: sectorPerf is awaited above, so this fires on
-      // every scan rather than only when a cached CoinGecko result happened
-      // to be warm.
-      console.time('[Scan] narrative-sourcing');
-      const narrativeEnabled = state.settings.includeNarrativeSectors !== false;
-      if (narrativeEnabled && state.settings.includeCryptoSpot && sectorPerf && sectorPerf.length) {
-        const volumeSymbols = new Set(
-          universes.flatMap(u => u.universe.map(b => b.symbol))
-        );
-        // Only inject symbols Bybit actually lists as spot pairs. A sector
-        // tag is a claim about a token, not about where it trades: liquid-
-        // staking entries (METH, RSETH, CBETH, STETH, MSOL, SOLVBTC) and
-        // other untraded tokens otherwise pass isTradeableUsdtPair() purely
-        // because "<SYMBOL>USDT" ends in USDT, then burn three Bybit kline
-        // round-trips each before failing soft. spotTickerSymbols is built
-        // from the ticker fetch already performed above, so this costs
-        // nothing extra.
-        const spotTickerSymbols = Api.spotSymbolSet();
-        const narrativeCandidates = Api.topNarrativeCandidates(sectorPerf);
-        const newCandidates = narrativeCandidates.filter(c =>
-          !volumeSymbols.has(c.symbol) &&
-          (spotTickerSymbols.size === 0 || spotTickerSymbols.has(c.symbol))
-        );
-        const rejected = narrativeCandidates.length - newCandidates.length;
-        if (rejected > 0) {
-          console.log(`[Scan] narrative: ${rejected} candidate(s) skipped (already in universe or not a Bybit spot pair)`);
+  /**
+   * Reads the newest stored scan, and the one before it purely for its score
+   * map, so each card can say whether it is newly qualifying and how its
+   * score moved. Only the newest row's full `coins` payload is fetched —
+   * pulling two whole universes every poll would be wasteful on mobile.
+   */
+  async function loadSnapshot({ force = false } = {}) {
+    try {
+      const head = await sb('scan_snapshot?select=captured_at&order=captured_at.desc&limit=1');
+      if (!head.length) {
+        if (!state.coins.length) {
+          el.cardGrid.innerHTML = '<div class="empty-state">No scan has been stored yet. The scheduled scan runs every 5 minutes.</div>';
         }
-        if (newCandidates.length > 0) {
-          const cryptoSpotEntry = universes.find(u => u.category === 'spot' && u.assetFilter === 'crypto');
-          if (cryptoSpotEntry) cryptoSpotEntry.universe.push(...newCandidates);
-        }
+        return;
       }
-      console.timeEnd('[Scan] narrative-sourcing');
+      const newestAt = new Date(head[0].captured_at).getTime();
+      // Unchanged since last poll: nothing to re-render, and re-fetching the
+      // payload would be pure waste.
+      if (!force && newestAt === state.snapshotAt) { updateNextScanLabel(); return; }
 
-      // 5. Run sequential batch analysis of all coins (Bybit klines + indicator scoring)
-      console.time('[Scan] coin-analysis');
-      const batchSize = 5;
-      const totalBatches = universes.reduce(
-        (sum, { universe }) => sum + Math.ceil(universe.length / batchSize), 0
-      );
-      const totalCoins = universes.reduce((sum, { universe }) => sum + universe.length, 0);
-      let batchesDone = 0;
-      let coinsDone = 0;
+      const [current, prior] = await Promise.all([
+        sb('scan_snapshot?select=captured_at,coins&order=captured_at.desc&limit=1'),
+        sb('scan_snapshot?select=scores&order=captured_at.desc&limit=1&offset=1')
+      ]);
+      if (!current.length) return;
 
-      // The maxAgeMinutes freshness filter used to live here and has been
-      // removed. It was broken and conceptually wrong, in that order:
-      //
-      // Broken — dropping a coin took an early return that skipped
-      // activeKeys.add(), so clearDiscoveredIfMissing() then deleted its
-      // discovery timestamp, and the next scan re-discovered it with a fresh
-      // one. A persistently trending coin therefore flickered on a ~20-minute
-      // cycle and its "discovered X ago" label reset each time, rather than
-      // being filtered once. Removing the filter also repairs that label,
-      // since the deletion path was the thing corrupting it.
-      //
-      // Wrong — freshness is not quality. The filter hid the highest-scoring
-      // persistent setups precisely because they had persisted. Measured, an
-      // ordinary trigger-age window predicts nothing extra on 5M (flat from
-      // 0 to 7 bars), so the concept it was reaching for is better served by
-      // trigger age, which is a market event rather than a bookkeeping
-      // artefact of when this browser first happened to see the symbol.
-      const allCoins = [];
-      const activeKeys = new Set();
+      const prevScores = prior.length ? (prior[0].scores || {}) : null;
+      const coins = (current[0].coins || []).map(c => decorateCoin(c, prevScores));
 
-      for (const { category, universe } of universes) {
-        for (let i = 0; i < universe.length; i += batchSize) {
-          const batch = universe.slice(i, i + batchSize);
-          const results = await Promise.all(batch.map(b => computeCoin(b, category, mcapMap, newsData)));
-          results.forEach(r => {
-            if (r) {
-              allCoins.push(r);
-              activeKeys.add(`${r.rawSymbol}:${r.market}`);
-            }
-          });
-          batchesDone++;
-          coinsDone += batch.length;
-          setScanProgress(coinsDone, totalCoins, batchesDone, totalBatches);
-        }
-      }
-
-      clearDiscoveredIfMissing(activeKeys);
-      // Harvest the raw 5M paths, then strip them: state.coins is retained
-      // and rendered, and 240 coins x 100 bars of candles has no business
-      // living there.
-      const candlesBySymbol = {};
-      allCoins.forEach(c => {
-        if (c._candles5m) candlesBySymbol[`${c.rawSymbol}:${c.market}`] = c._candles5m;
-        delete c._candles5m;
-      });
-
-      state.coins = allCoins.sort((a, b) => b.score - a.score);
-
-      // Fire-and-forget: the journal is a record, never a dependency of the
-      // scan. A Supabase outage must not stop the scanner working.
-      if (typeof SignalJournal !== 'undefined') {
-        SignalJournal.resolveOpen(candlesBySymbol)
-          .then(n => { if (n) console.log(`[Journal] resolved ${n} signal(s)`); })
-          .catch(e => console.warn('[Journal] resolve failed', e));
-        SignalJournal.logFromScan(state.coins)
-          .then(n => { if (n) console.log(`[Journal] logged ${n} signal(s)`); })
-          .catch(e => console.warn('[Journal] log failed', e));
-      }
-      console.timeEnd('[Scan] coin-analysis');
-
-      // 6. Render the card grid with the finished scan results — top strip
-      // data doesn't depend on state.coins anymore, so no need to recompute it.
-      console.time('[Scan] final-rendering');
+      clearDiscoveredIfMissing(new Set(coins.map(c => `${c.rawSymbol}:${c.market}`)));
+      state.coins = coins.sort((a, b) => b.score - a.score);
+      state.snapshotAt = new Date(current[0].captured_at).getTime();
       renderAll();
-      console.timeEnd('[Scan] final-rendering');
-    } catch (err) {
-      console.error('[App] scan failed', err);
-    } finally {
-      setLoading(false);
-      console.timeEnd('[Scan] total');
+      updateNextScanLabel();
+    } catch (e) {
+      console.warn('[App] snapshot load failed', e);
+      if (!state.coins.length) {
+        el.cardGrid.innerHTML = '<div class="empty-state">Could not reach the scan server. Retrying shortly.</div>';
+      }
     }
   }
 
-  function setScanProgress(coinsDone, totalCoins, batchesDone, totalBatches) {
-    const pct = totalBatches > 0 ? Math.round((batchesDone / totalBatches) * 100) : 0;
-    el.scanProgressFill.style.width = pct + '%';
-    el.scanProgressLabel.textContent = `Scanning ${coinsDone} of ${totalCoins}…`;
+  /**
+   * The three things a stored snapshot cannot carry, because they are facts
+   * about THIS browser rather than about the market: whether the coin is
+   * starred, when this browser first saw it, and its news badge. Plus the
+   * diff against the previous snapshot.
+   */
+  function decorateCoin(c, prevScores) {
+    const key = `${c.rawSymbol}:${c.market}`;
+    markDiscovered(key);
+
+    const items = state.newsData ? Api.newsForSymbol(state.newsData.articles, c.rawSymbol) : [];
+    if (state.newsData) state.newsCache[c.rawSymbol] = { items };
+
+    // A null prevScores means there IS no previous snapshot (first ever run,
+    // or the table was just pruned) — everything would otherwise be flagged
+    // as new, which is noise rather than information.
+    const prev = prevScores ? prevScores[key] : undefined;
+    return {
+      ...c,
+      watchlisted: state.watchlist.has(key),
+      discoveredAgo: discoveredAgoLabel(key),
+      newsMeta: { count: items.length, dominantSentiment: items.length ? items[0].sentiment : null },
+      isNew: prevScores ? !(key in prevScores) : false,
+      scoreDelta: (prevScores && typeof prev === 'number' && prev !== c.score) ? c.score - prev : null
+    };
+  }
+
+  // Counts down to the next expected scan, derived from the loaded
+  // snapshot's own timestamp rather than a stopwatch started at page load —
+  // otherwise opening the page mid-cycle would show a full 5:00 that is
+  // simply wrong. Also the place a stalled cron becomes visible.
+  function updateNextScanLabel() {
+    if (!el.nextScan) return;
+    if (!state.snapshotAt) { el.nextScan.textContent = 'Waiting for first scan'; return; }
+    const age = Date.now() - state.snapshotAt;
+    const remaining = SCAN_PERIOD_MS - age;
+    if (remaining <= 0) {
+      // Past due. GitHub/pg_cron scheduling is best-effort, so a little late
+      // is normal; a lot late means something is wrong and should say so
+      // rather than showing a stale grid as though it were live.
+      const lateMin = Math.floor(-remaining / 60000);
+      el.nextScan.textContent = lateMin >= 10 ? `Scan delayed ${lateMin}m` : 'Scan due now';
+      el.nextScan.classList.toggle('stale', lateMin >= 10);
+      return;
+    }
+    el.nextScan.classList.remove('stale');
+    const secs = Math.ceil(remaining / 1000);
+    el.nextScan.textContent = `Next scan ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   }
 
   function setLoading(isLoading) {
     if (isLoading && state.coins.length === 0) {
-      el.cardGrid.innerHTML = '<div class="loading-state">Scanning the market...</div>';
-    }
-    el.scanBtn.style.opacity = isLoading ? '0.6' : '1';
-    el.scanBtn.disabled = isLoading;
-    if (isLoading) {
-      // Reset bar to zero and reveal it
-      el.scanProgressFill.style.width = '0%';
-      el.scanProgressLabel.textContent = 'Scanning…';
-      el.scanProgress.classList.add('scanning');
-    } else {
-      el.scanProgress.classList.remove('scanning');
+      el.cardGrid.innerHTML = '<div class="loading-state">Loading latest scan...</div>';
     }
   }
 
@@ -858,7 +697,7 @@
     el.settingsBackdrop.classList.remove('open');
     el.settingsPanel.classList.remove('open');
     scheduleRefresh();
-    runScan();
+    refreshMarketContext().then(() => loadSnapshot({ force: true }));
   }
 
   // ------------------------------------------------------------- Account
@@ -957,13 +796,19 @@
   // ------------------------------------------------------------ Scheduling
   function scheduleRefresh() {
     if (state.refreshTimer) clearInterval(state.refreshTimer);
-    state.refreshTimer = setInterval(runScan, state.settings.refreshIntervalSec * 1000);
+    // Two independent cadences: poll for a newer stored scan every minute,
+    // and tick the countdown every second. The old refreshIntervalSec (a
+    // client scan cadence) no longer has anything to drive — the server's
+    // schedule is what decides when new data exists.
+    state.refreshTimer = setInterval(() => loadSnapshot(), SNAPSHOT_POLL_MS);
+    if (state.countdownTimer) clearInterval(state.countdownTimer);
+    state.countdownTimer = setInterval(updateNextScanLabel, 1000);
+    setInterval(() => refreshMarketContext().catch(() => {}), 5 * 60 * 1000);
   }
 
   // --------------------------------------------------------------- Wiring
   function bindStaticEvents() {
     el.themeBtn.addEventListener('click', toggleTheme);
-    el.scanBtn.addEventListener('click', runScan);
     el.settingsBtn.addEventListener('click', openSettings);
     el.settingsClose.addEventListener('click', closeSettings);
     el.settingsBackdrop.addEventListener('click', (e) => {
@@ -1310,7 +1155,7 @@
     initAccessGate(() => {
       bindStaticEvents();
       scheduleRefresh();
-      runScan();
+      refreshMarketContext().then(() => loadSnapshot({ force: true }));
       // Additive to the access gate above, not gated behind it in either
       // direction — Auth has its own independent session, unrelated to
       // the beta access-code check.
