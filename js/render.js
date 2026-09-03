@@ -137,7 +137,98 @@ const Render = (() => {
    *        divergenceOverall, continuation, exhaustion, reversal)
    * }
    */
-  function cardHtml(coin, idx) {
+  /**
+   * $ risk -> position size, from the SAME riskReward() numbers the journal
+   * and the scoring model already use — no new trade math, just surfacing
+   * it. `notional / accountSize` is exactly the leverage required to hit
+   * the target $ risk at this stop distance (algebraically riskPct/stopPct
+   * — verified by hand: accountSize=1000, riskPct=1%, stopPct=2% ->
+   * notional=$500, leverage=0.5x). Returns null rather than guessing when
+   * an input is missing, so the card can just omit the line.
+   */
+  function positionSizing(rr, market, accountSize, riskPct) {
+    if (!rr || !rr.entry || !rr.stop || !accountSize || !riskPct) return null;
+    const stopPct = rr.riskPct; // already (|entry-stop|/entry)*100
+    if (!stopPct) return null;
+    const riskDollars = accountSize * (riskPct / 100);
+    const notionalDollars = riskDollars / (stopPct / 100);
+    const sizeUnits = notionalDollars / rr.entry;
+    return {
+      riskDollars, notionalDollars, sizeUnits,
+      leverage: market === 'PERP' ? notionalDollars / accountSize : null,
+      // Spot has no margin: flag when the position needs more cash than
+      // the account holds rather than showing a leverage figure that
+      // doesn't apply to it.
+      exceedsAccount: market !== 'PERP' && notionalDollars > accountSize
+    };
+  }
+
+  function fmtMoney(n) {
+    if (n == null || isNaN(n)) return '--';
+    if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (n >= 1) return n.toFixed(2);
+    return n.toPrecision(3);
+  }
+
+  // EXCELLENT-only — deliberately mirrors the signal journal's own
+  // MIN_SCORE gate (js/signals.js), not a lower band. WATCH/AVOID showing
+  // a position-size line would imply a tradeable setup that out-of-sample
+  // testing already showed is not (see project-wicktor-v2-measured-findings:
+  // only EXCELLENT survived out-of-sample validation).
+  function tradePlanHtml(coin, settings) {
+    if (Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling).text !== 'EXCELLENT') return '';
+    const rr = coin.riskReward;
+    if (!rr || !rr.entry || !rr.stop || !rr.target || !coin.setupDirection) return '';
+
+    const dist = rr.target - rr.entry;
+    const tp1 = rr.entry + dist / 3, tp2 = rr.entry + dist * 2 / 3;
+    const slColor = 'var(--red-text)', tpColor = 'var(--green-text)';
+
+    const sizing = positionSizing(rr, coin.market, settings.accountSize, settings.riskPerTradePct);
+    const sizeRow = sizing ? `
+      <div class="trade-plan-size-row">
+        <span>Risk <b>$${fmtMoney(sizing.riskDollars)}</b> (${esc(settings.riskPerTradePct)}%)</span>
+        <span>Size <b>${fmtMoney(sizing.sizeUnits)}</b> (~$${fmtMoney(sizing.notionalDollars)})</span>
+        ${sizing.leverage != null ? `<span>Lev <b>${sizing.leverage.toFixed(2)}x</b></span>` : ''}
+      </div>
+      ${sizing.exceedsAccount ? `<div class="trade-plan-warn">Position needs $${fmtMoney(sizing.notionalDollars)} — more than your account size; spot has no leverage to cover the gap.</div>` : ''}
+    ` : `<div class="trade-plan-size-row"><span>Set account size + risk % in Settings to see position size</span></div>`;
+
+    return `
+    <div class="trade-plan">
+      <div class="trade-plan-row">
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">Entry</div>
+          <div class="trade-plan-value">$${esc(formatPriceForDisplay(rr.entry))}</div>
+        </div>
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">SL</div>
+          <div class="trade-plan-value" style="color:${slColor}">$${esc(formatPriceForDisplay(rr.stop))}</div>
+        </div>
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">TP3</div>
+          <div class="trade-plan-value" style="color:${tpColor}">$${esc(formatPriceForDisplay(rr.target))}</div>
+        </div>
+      </div>
+      <div class="trade-plan-tps">
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">TP1</div>
+          <div class="trade-plan-value" style="color:${tpColor}">$${esc(formatPriceForDisplay(tp1))}</div>
+        </div>
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">TP2</div>
+          <div class="trade-plan-value" style="color:${tpColor}">$${esc(formatPriceForDisplay(tp2))}</div>
+        </div>
+        <div class="trade-plan-item">
+          <div class="trade-plan-label">1R</div>
+          <div class="trade-plan-value">${rr.riskPct.toFixed(2)}%</div>
+        </div>
+      </div>
+      ${sizeRow}
+    </div>`;
+  }
+
+  function cardHtml(coin, idx, settings) {
     const band = Scoring.bandLabel(coin.score, coin.unlock, coin.ceiling);
     const rsiRow = coin.rsiByTf.map((v, i) =>
       `<span style="color:${rsiColor(v)}">${TF_LABELS[i]} ${v != null ? v : '--'}</span>`).join(' &middot; ');
@@ -168,6 +259,7 @@ const Render = (() => {
         <span class="card-price">$${esc(coin.price)}</span>
         ${sideBadgeHtml(coin.side)}
       </div>
+      ${tradePlanHtml(coin, settings || {})}
       <div class="tf-label">Active TF</div>
       ${tfChipRowHtml(coin.tfChips)}
       <div class="rsi-row">RSI: ${rsiRow}</div>
@@ -201,12 +293,12 @@ const Render = (() => {
     </div>`;
   }
 
-  function renderCardGrid(container, coins) {
+  function renderCardGrid(container, coins, settings) {
     if (!coins.length) {
       container.innerHTML = `<div class="empty-state">No coins match the current filters. Try widening your search or waiting for the next scan.</div>`;
       return;
     }
-    container.innerHTML = coins.map((c, i) => cardHtml(c, i)).join('');
+    container.innerHTML = coins.map((c, i) => cardHtml(c, i, settings)).join('');
   }
 
   // Exhaustion/Reversal keep their existing point-sum scoring untouched —

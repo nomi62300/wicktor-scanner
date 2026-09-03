@@ -66,7 +66,9 @@
     includePerps: true,
     spotCardsPerSide: 5,
     perpCardsPerSide: 5,
-    includeNarrativeSectors: true
+    includeNarrativeSectors: true,
+    accountSize: 1000,
+    riskPerTradePct: 1
   };
 
   let state = {
@@ -163,6 +165,8 @@
     narrativeToggle: document.getElementById('setting-narratives'),
     spotCapInput: document.getElementById('setting-spot-cap'),
     perpCapInput: document.getElementById('setting-perp-cap'),
+    accountSizeInput: document.getElementById('setting-account-size'),
+    riskPctInput: document.getElementById('setting-risk-pct'),
     scanProgress: document.getElementById('scan-progress'),
     scanProgressFill: document.getElementById('scan-progress-fill'),
     scanProgressLabel: document.getElementById('scan-progress-label'),
@@ -716,7 +720,7 @@
   function renderAll() {
     el.topStrip.innerHTML = Render.topStripHtml(state.topStripData);
     state.renderedCoins = applyCardCaps(getFilteredCoins());
-    Render.renderCardGrid(el.cardGrid, state.renderedCoins);
+    Render.renderCardGrid(el.cardGrid, state.renderedCoins, state.settings);
     bindCardEvents();
     maybeAutoStartTour();
   }
@@ -834,6 +838,8 @@
     el.narrativeToggle.checked = state.settings.includeNarrativeSectors !== false;
     el.spotCapInput.value = state.settings.spotCardsPerSide;
     el.perpCapInput.value = state.settings.perpCardsPerSide;
+    el.accountSizeInput.value = state.settings.accountSize;
+    el.riskPctInput.value = state.settings.riskPerTradePct;
     el.settingsBackdrop.classList.add('open');
     el.settingsPanel.classList.add('open');
   }
@@ -846,6 +852,8 @@
     state.settings.includeNarrativeSectors = el.narrativeToggle.checked;
     state.settings.spotCardsPerSide = Math.max(1, Math.min(20, parseInt(el.spotCapInput.value) || 5));
     state.settings.perpCardsPerSide = Math.max(1, Math.min(20, parseInt(el.perpCapInput.value) || 5));
+    state.settings.accountSize = Math.max(0, parseFloat(el.accountSizeInput.value) || 0);
+    state.settings.riskPerTradePct = Math.max(0.1, Math.min(10, parseFloat(el.riskPctInput.value) || 1));
     saveJson(STORAGE_KEYS.settings, state.settings);
     el.settingsBackdrop.classList.remove('open');
     el.settingsPanel.classList.remove('open');
