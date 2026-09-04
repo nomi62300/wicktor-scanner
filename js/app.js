@@ -331,7 +331,8 @@
       const prevScores = prior.length ? (prior[0].scores || {}) : null;
       const coins = (current[0].coins || []).map(c => decorateCoin(c, prevScores));
 
-      clearDiscoveredIfMissing(new Set(coins.map(c => `${c.rawSymbol}:${c.market}`)));
+      clearDiscoveredIfMissing(new Set(coins.map(c =>
+        `${c.rawSymbol}:${c.market}:${Scoring.bandLabel(c.score, c.unlock, c.ceiling).text}`)));
       state.coins = coins.sort((a, b) => b.score - a.score);
       state.snapshotAt = new Date(current[0].captured_at).getTime();
       renderAll();
@@ -352,7 +353,14 @@
    */
   function decorateCoin(c, prevScores) {
     const key = `${c.rawSymbol}:${c.market}`;
-    markDiscovered(key);
+    // Discovery is tracked per (symbol, market, BAND), not just symbol —
+    // otherwise "X ago" measures how long this coin has sat anywhere in the
+    // scanned top-350-by-volume universe, which barely relates to how long
+    // it's actually been EXCELLENT. A coin that was AVOID yesterday and
+    // flipped EXCELLENT five minutes ago must read as freshly discovered.
+    const band = Scoring.bandLabel(c.score, c.unlock, c.ceiling).text;
+    const bandKey = `${key}:${band}`;
+    markDiscovered(bandKey);
 
     const items = state.newsData ? Api.newsForSymbol(state.newsData.articles, c.rawSymbol) : [];
     if (state.newsData) state.newsCache[c.rawSymbol] = { items };
@@ -364,7 +372,7 @@
     return {
       ...c,
       watchlisted: state.watchlist.has(key),
-      discoveredAgo: discoveredAgoLabel(key),
+      discoveredAgo: discoveredAgoLabel(bandKey),
       newsMeta: { count: items.length, dominantSentiment: items.length ? items[0].sentiment : null },
       isNew: prevScores ? !(key in prevScores) : false,
       scoreDelta: (prevScores && typeof prev === 'number' && prev !== c.score) ? c.score - prev : null
@@ -473,12 +481,15 @@
     // scan computes.
     const s = state.settings;
     list = list.filter(c => {
-      if (c.market === 'PERP') return s.includePerps !== false;
-      // Spot splits two ways: tokenized stocks are a separate toggle from
-      // crypto spot, exactly as they were when this gated the scan.
+      // Tokenized stocks are their own toggle regardless of market — a stock
+      // PERP is still a stock. This used to only be checked on the SPOT
+      // branch, so an xStock PERP (e.g. NVDA, SMCI) always passed through
+      // the plain Perps gate no matter what "Include tokenized stocks" said.
       const isStock = typeof Api !== 'undefined' && Api.isXStock
         ? Api.isXStock(c.rawSymbol) : false;
-      return isStock ? s.includeStocks === true : s.includeCryptoSpot !== false;
+      if (isStock) return s.includeStocks === true;
+      if (c.market === 'PERP') return s.includePerps !== false;
+      return s.includeCryptoSpot !== false;
     });
 
     // universeSize caps how deep into the ranked universe this viewer sees.

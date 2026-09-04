@@ -147,24 +147,42 @@ const Api = (() => {
   const XSTOCK_SET_TTL = 24 * 60 * 60 * 1000; // 24 hours — new listings are rare
 
   /**
-   * Refreshes the live xStock symbol set from Bybit's instruments-info
-   * (symbolType === 'xstocks'). Call once near the start of a scan; safe to
-   * call repeatedly since it no-ops within XSTOCK_SET_TTL. Falls back to
-   * (and never shrinks below) KNOWN_XSTOCK_SYMBOLS on fetch failure.
+   * Refreshes the live stock/xStock symbol set from Bybit's instruments-info,
+   * across BOTH markets — these are two separate, differently-classified
+   * Bybit products, discovered live on 2026-09-04:
+   *  - category=spot,   symbolType === 'xstocks' (AAPLXUSDT, ~11 symbols,
+   *    the original small "tokenized stocks" product, spot-only).
+   *  - category=linear, symbolType === 'stock' or 'ETF' (plain-named perps —
+   *    NVDAUSDT, MUUSDT, AAPLUSDT, TQQQUSDT, ~220+ symbols and growing —
+   *    leveraged perpetuals on real US equities/ETFs, launched later and
+   *    never accounted for anywhere in this codebase until now: isXStock()
+   *    only ever checked the spot list, so every one of these was scored
+   *    and labeled exactly like ordinary crypto).
+   * Naming is NOT a reliable signal for either (see KNOWN_XSTOCK_SYMBOLS
+   * above, and note some linear symbols literally end in "STOCK" while most
+   * don't) — symbolType from the live API is the only authoritative source,
+   * so unlike the spot fallback there is no hardcoded fallback list for the
+   * linear side; a failed fetch just means 0 linear stocks detected until
+   * the next scan retries.
    */
   async function refreshXStockSet() {
     const now = Date.now();
     if (now - _xstockSetTs < XSTOCK_SET_TTL) return _xstockSet;
-    const instruments = await bybitInstruments('spot');
-    if (instruments && instruments.length) {
-      _spotSymbolSet = new Set(instruments.map(i => i.symbol));
-      const live = new Set(
-        instruments.filter(i => i.symbolType === 'xstocks').map(i => i.symbol)
-      );
-      if (live.size > 0) {
-        _xstockSet = live;
-        _xstockSetTs = now;
-      }
+    const [spotInstruments, linearInstruments] = await Promise.all([
+      bybitInstruments('spot'),
+      bybitInstruments('linear')
+    ]);
+    if (spotInstruments && spotInstruments.length) {
+      _spotSymbolSet = new Set(spotInstruments.map(i => i.symbol));
+    }
+    const liveSpotStocks = (spotInstruments || [])
+      .filter(i => i.symbolType === 'xstocks').map(i => i.symbol);
+    const liveLinearStocks = (linearInstruments || [])
+      .filter(i => i.symbolType === 'stock' || i.symbolType === 'ETF').map(i => i.symbol);
+    const live = new Set([...liveSpotStocks, ...liveLinearStocks]);
+    if (live.size > 0) {
+      _xstockSet = live;
+      _xstockSetTs = now;
     }
     return _xstockSet;
   }
