@@ -167,11 +167,36 @@ async function mcapMap(): Promise<Record<string, number>> {
   return map;
 }
 
+// Bybit runs two separate, differently-classified stock-perpetual products
+// (full story in js/api.js's refreshXStockSet, which mirrors this):
+//  - category=spot,   symbolType === 'xstocks' (AAPLXUSDT, ~11 symbols)
+//  - category=linear, symbolType === 'stock' or 'ETF' (AAPLUSDT, TQQQUSDT,
+//    ~220+ symbols, no "X" in the ticker) — leveraged perpetuals on real US
+//    equities/ETFs. This function had NO stock detection at all before
+//    2026-09-04, so every one of the linear symbols was scored and labeled
+//    sector "Crypto" exactly like ordinary crypto, with no way to tell them
+//    apart on a card. Naming isn't reliable for either list (some linear
+//    symbols end in literal "STOCK", most don't) — symbolType from the live
+//    API is the only authoritative source, fetched once per run.
+async function stockSymbolSet(host: string): Promise<Set<string>> {
+  const set = new Set<string>();
+  try {
+    const [spot, linear] = await Promise.all([
+      bybit(host, `/v5/market/instruments-info?category=spot&limit=1000`),
+      bybit(host, `/v5/market/instruments-info?category=linear&limit=1000`)
+    ]);
+    for (const i of spot.list || []) if (i.symbolType === 'xstocks') set.add(i.symbol);
+    for (const i of linear.list || []) if (i.symbolType === 'stock' || i.symbolType === 'ETF') set.add(i.symbol);
+  } catch { /* worst case sector reads "Crypto" for stocks this run, same as before this fix */ }
+  return set;
+}
+
 async function scoreCoin(
   host: string,
   base: { symbol: string; price: number },
   category: string,
-  mcaps: Record<string, number>
+  mcaps: Record<string, number>,
+  stocks: Set<string>
 ) {
   const [h4, h1, m15, m5, oi] = await Promise.all([
     klines(host, category, base.symbol, '4h', 100),
@@ -192,7 +217,7 @@ async function scoreCoin(
   const view = CoinView.build(result, base, { h4, h1, m15, m5 }, {
     market,
     mcapRaw: mcaps[cleanSym] ?? null,
-    sector: null
+    sector: stocks.has(base.symbol) ? 'Tokenized Stock' : null
   });
   if (!view) return null;
 
@@ -206,12 +231,12 @@ async function scoreCoin(
 }
 
 async function scanCategory(
-  host: string, category: string, size: number, out: any[], mcaps: Record<string, number>
+  host: string, category: string, size: number, out: any[], mcaps: Record<string, number>, stocks: Set<string>
 ) {
   const list = await universe(host, category, size);
   for (let i = 0; i < list.length; i += BATCH) {
     const chunk = await Promise.all(
-      list.slice(i, i + BATCH).map((b: any) => scoreCoin(host, b, category, mcaps).catch(() => null))
+      list.slice(i, i + BATCH).map((b: any) => scoreCoin(host, b, category, mcaps, stocks).catch(() => null))
     );
     chunk.forEach(c => { if (c) out.push(c); });
   }
@@ -390,10 +415,10 @@ Deno.serve(async (req: Request) => {
   const log: string[] = [];
   try {
     const host = await pickHost();
-    const mcaps = await mcapMap();
+    const [mcaps, stocks] = await Promise.all([mcapMap(), stockSymbolSet(host)]);
     const coins: any[] = [];
-    await scanCategory(host, 'spot', universeSize, coins, mcaps);
-    await scanCategory(host, 'linear', universeSize, coins, mcaps);
+    await scanCategory(host, 'spot', universeSize, coins, mcaps, stocks);
+    await scanCategory(host, 'linear', universeSize, coins, mcaps, stocks);
     log.push(`scored ${coins.length} coins (mcaps ${Object.keys(mcaps).length})`);
 
     // Deliberately empty: resolveOpen() fetches 5M candles per OPEN signal
