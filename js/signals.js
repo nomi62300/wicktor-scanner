@@ -303,14 +303,39 @@ const SignalJournal = (() => {
     return resolved;
   }
 
+  /**
+   * Pages through .range() instead of a single .limit() call. PostgREST
+   * enforces a hard per-request row cap (db-max-rows, project-level,
+   * currently 1000) that silently truncates any limit= no matter how high
+   * it's set — a plain .limit(2000) here quietly returned only the newest
+   * 1000 resolved rows once the journal crossed that size, describing a
+   * shrinking recent slice instead of the whole record. Range has no such
+   * cap, so this stays correct at any journal size.
+   */
+  async function fetchAllResolved(select) {
+    const PAGE = 1000;
+    const rows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await client().from(TABLE)
+        .select(select).eq('status', 'resolved')
+        .range(offset, offset + PAGE - 1);
+      if (error) break;
+      if (!data || !data.length) break;
+      rows.push(...data);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+    return rows;
+  }
+
   /** Aggregate performance so far, for the journal page. */
   async function summary() {
     if (!client()) return null;
     try {
-      const { data, error } = await client().from(TABLE)
-        .select('outcome_a,outcome_b,score,context_regime,trigger_name,risk_pct,direction')
-        .eq('status', 'resolved').limit(2000);
-      if (error || !data || !data.length) return null;
+      const data = await fetchAllResolved(
+        'outcome_a,outcome_b,score,context_regime,trigger_name,risk_pct,direction');
+      if (!data.length) return null;
       const mean = xs => xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null;
       const stat = key => {
         const all = data.map(d => d[key]).filter(v => v != null);

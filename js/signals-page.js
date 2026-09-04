@@ -15,16 +15,22 @@
   const REST = 'https://fpyfetynfobfrpunnnhv.supabase.co/rest/v1/signal_journal';
   const KEY = 'sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC';
   // LIST_LIMIT bounds the TABLE only (newest first) -- a UI display cap, not
-  // the record itself. STATS_LIMIT feeds the summary tiles and tab counts,
-  // which must reflect the WHOLE journal or they silently window to
-  // whatever the table happens to show. These used to be the same number,
-  // which was invisible while total rows stayed under 500; once the
-  // universe went 120->350 (2026-09-04) the logging rate rose enough that
-  // the newest 500 rows started covering ~2 days instead of the full
-  // history, and the summary quietly started describing that 2-day slice
-  // instead of the journal. Headroomed well above current volume (~800).
+  // the record itself. The summary tiles and tab counts must reflect the
+  // WHOLE journal or they silently window to whatever the table happens to
+  // show. These used to be the same number, which was invisible while total
+  // rows stayed under 500; once the universe went 120->350 (2026-09-04) the
+  // logging rate rose enough that the newest 500 rows started covering ~2
+  // days instead of the full history, and the summary quietly started
+  // describing that 2-day slice instead of the journal (fixed by fetching
+  // stats separately). A SECOND version of the same bug then showed up at
+  // 1000+ total rows: PostgREST enforces a hard per-request row cap
+  // (db-max-rows, project-level, currently 1000) that silently truncates
+  // ANY limit= no matter how high the client asks — so a one-shot
+  // "limit=20000" stats fetch was itself quietly capped once the journal
+  // crossed 1000 rows. fetchAllRows() below pages through with the Range
+  // header instead, which has no such cap, so this is correct at any size
+  // rather than needing a bigger number raised again next time it fills up.
   const LIST_LIMIT = 500;
-  const STATS_LIMIT = 20000;
   const BYBIT = 'https://api.bybit.com';
   // tp1_hit/tp2_hit/tp3_hit were added by the 20260826090000 migration —
   // rows resolved before that default to false regardless of what actually
@@ -308,17 +314,37 @@
       </div>`;
   }
 
+  // Pages through a PostgREST query with the Range header, which (unlike
+  // limit=) has no server-side cap — a single request tops out at
+  // db-max-rows (1000) no matter what limit= asks for. Stops once a page
+  // comes back short of a full page, or once content-range's stated total
+  // has been reached, whichever the server tells us first.
+  async function fetchAllRows(urlBase, headers) {
+    const rows = [];
+    const PAGE = 1000;
+    let offset = 0;
+    while (true) {
+      const res = await fetch(urlBase, { headers: { ...headers, Range: `${offset}-${offset + PAGE - 1}` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const page = await res.json();
+      rows.push(...page);
+      const total = Number((res.headers.get('content-range') || '').split('/')[1]);
+      if (page.length < PAGE || (total && rows.length >= total)) break;
+      offset += PAGE;
+    }
+    return rows;
+  }
+
   async function load() {
     try {
       const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
-      const [listRes, statsRes] = await Promise.all([
-        fetch(`${REST}?select=*&order=created_at.desc&limit=${LIST_LIMIT}`, { headers }),
-        fetch(`${REST}?select=direction,status,outcome_a,outcome_b,tp1_hit,tp2_hit,tp3_hit,resolved_at&limit=${STATS_LIMIT}`, { headers })
+      const [listRows, statsRows] = await Promise.all([
+        fetch(`${REST}?select=*&order=created_at.desc&limit=${LIST_LIMIT}`, { headers })
+          .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); }),
+        fetchAllRows(`${REST}?select=direction,status,outcome_a,outcome_b,tp1_hit,tp2_hit,tp3_hit,resolved_at`, headers)
       ]);
-      if (!listRes.ok) throw new Error(`HTTP ${listRes.status}`);
-      if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
-      state.rows = await listRes.json();
-      state.statsRows = await statsRes.json();
+      state.rows = listRows;
+      state.statsRows = statsRows;
       state.marks = await fetchMarkPrices(state.rows);
       tableNoteEl.textContent = state.statsRows.length > state.rows.length
         ? `Table shows the newest ${state.rows.length.toLocaleString()} of ${state.statsRows.length.toLocaleString()} logged signals. Summary and tab counts above reflect all ${state.statsRows.length.toLocaleString()}.`
