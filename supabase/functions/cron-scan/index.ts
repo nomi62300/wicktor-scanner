@@ -213,11 +213,22 @@ async function scoreCoin(
   if (!result) return null;
 
   const market = category === 'linear' ? 'PERP' : 'SPOT';
-  const cleanSym = base.symbol.replace(/USDT$/, '').replace(/x$/i, '').toUpperCase();
+  const isStock = stocks.has(base.symbol);
+  // The trailing "x" strip unwraps the OLD spot-xStock naming convention
+  // (NVDAXUSDT -> NVDAX -> NVDA) for the CoinPaprika lookup below. It must
+  // only fire for symbols actually confirmed as stocks — applied
+  // unconditionally it also mangled ordinary crypto tickers that happen to
+  // end in X (AVAXUSDT -> AVAX -> AVA, and likewise GMX/SNX/STX/TRX/ZRX/
+  // IMX/DYDX/FRAX/MPLX...), silently breaking their mcap lookup. The new
+  // linear stock symbols (MUUSDT, AAPLUSDT, ...) never end in "x" anyway,
+  // so gating on `isStock` alone is correct for both stock naming schemes.
+  let cleanSym = base.symbol.replace(/USDT$/, '');
+  if (isStock) cleanSym = cleanSym.replace(/x$/i, '');
+  cleanSym = cleanSym.toUpperCase();
   const view = CoinView.build(result, base, { h4, h1, m15, m5 }, {
     market,
     mcapRaw: mcaps[cleanSym] ?? null,
-    sector: stocks.has(base.symbol) ? 'Tokenized Stock' : null
+    sector: isStock ? 'Tokenized Stock' : null
   });
   if (!view) return null;
 
