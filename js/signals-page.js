@@ -14,7 +14,17 @@
 (() => {
   const REST = 'https://fpyfetynfobfrpunnnhv.supabase.co/rest/v1/signal_journal';
   const KEY = 'sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC';
-  const LIMIT = 500;
+  // LIST_LIMIT bounds the TABLE only (newest first) -- a UI display cap, not
+  // the record itself. STATS_LIMIT feeds the summary tiles and tab counts,
+  // which must reflect the WHOLE journal or they silently window to
+  // whatever the table happens to show. These used to be the same number,
+  // which was invisible while total rows stayed under 500; once the
+  // universe went 120->350 (2026-09-04) the logging rate rose enough that
+  // the newest 500 rows started covering ~2 days instead of the full
+  // history, and the summary quietly started describing that 2-day slice
+  // instead of the journal. Headroomed well above current volume (~800).
+  const LIST_LIMIT = 500;
+  const STATS_LIMIT = 20000;
   const BYBIT = 'https://api.bybit.com';
   // tp1_hit/tp2_hit/tp3_hit were added by the 20260826090000 migration —
   // rows resolved before that default to false regardless of what actually
@@ -25,6 +35,7 @@
 
   const summaryEl = document.getElementById('summary');
   const listEl = document.getElementById('list');
+  const tableNoteEl = document.getElementById('table-note');
 
   function esc(str) {
     const d = document.createElement('div');
@@ -56,12 +67,22 @@
   // Cached from the last successful load(), so switching the Long/Short tab
   // re-renders instantly from what's already in memory rather than
   // re-fetching — the tab is a client-side filter, not a new query.
-  const state = { rows: [], marks: {}, filter: 'all' };
+  // rows = windowed (LIST_LIMIT, newest first) for the table.
+  // statsRows = the whole journal (STATS_LIMIT, minimal columns) for the
+  // summary tiles and tab counts, so they never describe a recent slice
+  // instead of the record.
+  const state = { rows: [], statsRows: [], marks: {}, filter: 'all' };
 
   function filtered() {
     if (state.filter === 'long') return state.rows.filter(r => r.direction === 1);
     if (state.filter === 'short') return state.rows.filter(r => r.direction === -1);
     return state.rows;
+  }
+
+  function statsFiltered() {
+    if (state.filter === 'long') return state.statsRows.filter(r => r.direction === 1);
+    if (state.filter === 'short') return state.statsRows.filter(r => r.direction === -1);
+    return state.statsRows;
   }
 
   function stat(rows, key) {
@@ -128,8 +149,8 @@
   }
 
   function renderTabs() {
-    const n = f => f === 'all' ? state.rows.length
-      : state.rows.filter(r => r.direction === (f === 'long' ? 1 : -1)).length;
+    const n = f => f === 'all' ? state.statsRows.length
+      : state.statsRows.filter(r => r.direction === (f === 'long' ? 1 : -1)).length;
     const tabs = [['all', 'All'], ['long', 'Long'], ['short', 'Short']];
     document.getElementById('tabs').innerHTML = tabs.map(([key, label]) =>
       `<button class="chip${state.filter === key ? ' active' : ''}" data-filter="${key}">${label} (${n(key)})</button>`
@@ -138,7 +159,7 @@
       btn.addEventListener('click', () => {
         state.filter = btn.dataset.filter;
         renderTabs();
-        renderSummary(filtered());
+        renderSummary(statsFiltered());
         renderList(filtered(), state.marks);
       });
     });
@@ -289,14 +310,21 @@
 
   async function load() {
     try {
-      const res = await fetch(`${REST}?select=*&order=created_at.desc&limit=${LIMIT}`, {
-        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      state.rows = await res.json();
+      const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+      const [listRes, statsRes] = await Promise.all([
+        fetch(`${REST}?select=*&order=created_at.desc&limit=${LIST_LIMIT}`, { headers }),
+        fetch(`${REST}?select=direction,status,outcome_a,outcome_b,tp1_hit,tp2_hit,tp3_hit,resolved_at&limit=${STATS_LIMIT}`, { headers })
+      ]);
+      if (!listRes.ok) throw new Error(`HTTP ${listRes.status}`);
+      if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
+      state.rows = await listRes.json();
+      state.statsRows = await statsRes.json();
       state.marks = await fetchMarkPrices(state.rows);
+      tableNoteEl.textContent = state.statsRows.length > state.rows.length
+        ? `Table shows the newest ${state.rows.length.toLocaleString()} of ${state.statsRows.length.toLocaleString()} logged signals. Summary and tab counts above reflect all ${state.statsRows.length.toLocaleString()}.`
+        : '';
       renderTabs();
-      renderSummary(filtered());
+      renderSummary(statsFiltered());
       renderList(filtered(), state.marks);
     } catch (e) {
       summaryEl.innerHTML = '';
