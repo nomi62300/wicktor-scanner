@@ -25,16 +25,12 @@ const path = require('path');
 global.Indicators = require('../js/indicators.js');
 const Scoring = require('../js/scoring.js');
 const I = global.Indicators;
+const { closedIndexAt, TF_MS } = require('./lib/align.js');
 
 const WIN = 200, WARMUP = 90, HOLD = 48, MIN_SCORE = 60;
 const TAKER = 0.11, MAKER = 0.04;
 const hydrate = t => t ? t.map(([a, o, h, l, c, v]) => ({ t: a, o, h, l, c, v })) : null;
 const wd = (a, e) => a.slice(Math.max(0, e - WIN + 1), e + 1);
-function ctxAt(c, ts) {
-  let lo = 0, hi = c.length - 1, b = -1;
-  while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m].t <= ts) { b = m; lo = m + 1; } else hi = m - 1; }
-  return b;
-}
 
 function run(file) {
   const fx = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -45,7 +41,7 @@ function run(file) {
       if (!m5 || !m15 || !h1 || m5.length < WARMUP + HOLD + 6) continue;
       const open = { 1: -1, '-1': -1 };
       for (let i = WARMUP; i < m5.length - HOLD - 1; i++) {
-        const ts = m5[i].t, c15 = ctxAt(m15, ts), c1h = ctxAt(h1, ts);
+        const ts = m5[i].t, c15 = closedIndexAt(m15, ts, TF_MS.m15), c1h = closedIndexAt(h1, ts, TF_MS.h1);
         if (c15 < WARMUP || c1h < 60) continue;
         const sn = [I.analyzeTimeframe(wd(h1, c1h)), I.analyzeTimeframe(wd(m15, c15)), I.analyzeTimeframe(wd(m5, i))];
         if (!sn[0] || !sn[2]) continue;
@@ -114,6 +110,24 @@ function main() {
   console.log();
   line('IN-SAMPLE excellent', stats(A.rows.filter(x => x.band === 'EXCELLENT')));
   line('OUT-OF-SAMPLE excellent', stats(B.rows.filter(x => x.band === 'EXCELLENT')));
+
+  // A pooled point estimate can look real and still be noise. Per-trade net
+  // (each row netted against its OWN riskPct, not the group's median), 95%
+  // CI, direction-balanced the same way every other number here is.
+  function ci95Net(rows, fee) {
+    const netOf = x => x.r - fee / x.riskPct;
+    const arm = dir => rows.filter(x => x.dir === dir).map(netOf);
+    const b = arm(1), s = arm(-1);
+    if (b.length < 2 || s.length < 2) return null;
+    const se = a => { const m = mean(a); return Math.sqrt(mean(a.map(v => (v - m) ** 2)) * a.length / (a.length - 1) / a.length); };
+    const m = (mean(b) + mean(s)) / 2, e = Math.sqrt(se(b) ** 2 + se(s) ** 2) / 2;
+    return { m, lo: m - 1.96 * e, hi: m + 1.96 * e, n: rows.length };
+  }
+  const oosExcellent = B.rows.filter(x => x.band === 'EXCELLENT');
+  const ci = ci95Net(oosExcellent, TAKER);
+  if (ci) console.log(`  OOS excellent 95% CI (net taker, per-trade, balanced): ` +
+    `${sg(ci.m)}  [${sg(ci.lo)}, ${sg(ci.hi)}]  n=${ci.n}  ` +
+    `excludes zero: ${ci.lo > 0 ? 'YES (positive)' : ci.hi < 0 ? 'YES (negative)' : 'NO'}`);
 
   console.log('\nDoes the score still rank out of sample?');
   hdr();

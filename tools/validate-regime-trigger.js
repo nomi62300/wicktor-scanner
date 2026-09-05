@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 global.Indicators = require('../js/indicators.js');
 const I = global.Indicators;
+const { closedIndexAt, TF_MS } = require('./lib/align.js');
 
 const hydrate = t => t ? t.map(([a, o, h, l, c, v]) => ({ t: a, o, h, l, c, v })) : null;
 const fx = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'market-sample.json'), 'utf8'));
@@ -34,17 +35,6 @@ const PAIRS = [
   { entry: 'm5', context: 'm15', label: '5M entry / 15M regime' },
   { entry: 'm15', context: 'h1', label: '15M entry / 1H regime' }
 ];
-
-// Most recent context bar that had already CLOSED at the entry bar's time.
-// Guards against reading a context bar from the future.
-function contextIndexAt(contextCandles, ts) {
-  let lo = 0, hi = contextCandles.length - 1, best = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (contextCandles[mid].t <= ts) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
-  }
-  return best;
-}
 
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
 const sg = x => x == null ? '   --' : (x >= 0 ? '+' : '') + x.toFixed(3);
@@ -70,7 +60,7 @@ for (const pair of PAIRS) {
     }
 
     for (let i = MIN; i < entry.length - H; i++) {
-      const cIdx = contextIndexAt(ctx, entry[i].t);
+      const cIdx = closedIndexAt(ctx, entry[i].t, TF_MS[pair.context]);
       if (cIdx < MIN) continue;
       const regime = ctxRegime[cIdx];
       if (!regime || regime === 'unknown') continue;

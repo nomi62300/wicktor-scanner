@@ -31,6 +31,7 @@ const path = require('path');
 global.Indicators = require('../js/indicators.js');
 const Scoring = require('../js/scoring.js');
 const I = global.Indicators;
+const { closedIndexAt, TF_MS } = require('./lib/align.js');
 
 const WIN = 200, WARMUP = 90, HOLD = 24;
 const TAKER = 0.055 * 2;   // % of notional, round trip
@@ -51,11 +52,6 @@ function aggregate(candles, n) {
     });
   }
   return out;
-}
-function ctxIndexAt(c, ts) {
-  let lo = 0, hi = c.length - 1, b = -1;
-  while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m].t <= ts) { b = m; lo = m + 1; } else hi = m - 1; }
-  return b;
 }
 
 // riskDist from a chosen source, in PRICE units
@@ -84,9 +80,9 @@ function main() {
 
       for (let i = WARMUP; i < m5.length - HOLD; i++) {
         const ts = m5[i].t;
-        const c15 = ctxIndexAt(m15, ts), c1h = ctxIndexAt(h1, ts);
+        const c15 = closedIndexAt(m15, ts, TF_MS.m15), c1h = closedIndexAt(h1, ts, TF_MS.h1);
         if (c15 < WARMUP || c1h < 60) continue;
-        const c30 = ctxIndexAt(m30, ts), c4h = h4 ? ctxIndexAt(h4, ts) : -1;
+        const c30 = closedIndexAt(m30, ts, TF_MS.m30), c4h = h4 ? closedIndexAt(h4, ts, TF_MS.h4) : -1;
         // indices 3/4 are extra stop sources only — evaluateSnapshots reads
         // 0..2, so appending cannot change what the model scores.
         const snaps = [
