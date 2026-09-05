@@ -29,19 +29,11 @@ const path = require('path');
 global.Indicators = require('../js/indicators.js');
 const Scoring = require('../js/scoring.js');
 const I = global.Indicators;
+const { closedIndexAt, TF_MS } = require('./lib/align.js');
 
 const WIN = 200;       // rolling window; verified exact against full prefix
 const WARMUP = 90;     // bars before a snapshot is trustworthy
 const hydrate = t => t ? t.map(([a, o, h, l, c, v]) => ({ t: a, o, h, l, c, v })) : null;
-
-function ctxIndexAt(candles, ts) {
-  let lo = 0, hi = candles.length - 1, best = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (candles[mid].t <= ts) { best = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  return best;
-}
 const windowed = (arr, end) => arr.slice(Math.max(0, end - WIN + 1), end + 1);
 
 function simulate(candles, from, dir, entry, stop, target, hold) {
@@ -88,7 +80,7 @@ function main() {
 
       for (let i = WARMUP; i < entrySeries.length - hold; i++) {
         const ts = entrySeries[i].t;
-        const ci15 = ctxIndexAt(m15, ts), ci1h = ctxIndexAt(h1, ts);
+        const ci15 = closedIndexAt(m15, ts, TF_MS.m15), ci1h = closedIndexAt(h1, ts, TF_MS.h1);
         if (ci15 < WARMUP || ci1h < 60) continue;
 
         // [1H, 15M, 5M]. In swing mode the entry timeframe IS 15M, so the

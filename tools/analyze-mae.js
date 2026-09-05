@@ -27,6 +27,7 @@ const path = require('path');
 global.Indicators = require('../js/indicators.js');
 const Scoring = require('../js/scoring.js');
 const I = global.Indicators;
+const { closedIndexAt, TF_MS } = require('./lib/align.js');
 
 const WIN = 200, WARMUP = 90, HOLD = 48;
 const TAKER = 0.11;
@@ -36,14 +37,6 @@ const wd = (arr, end) => arr.slice(Math.max(0, end - WIN + 1), end + 1);
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
 const sg = x => x == null ? '    --' : (x >= 0 ? '+' : '') + x.toFixed(4);
 
-function ctxAt(candles, ts) {
-  let lo = 0, hi = candles.length - 1, best = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (candles[mid].t <= ts) { best = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  return best;
-}
 
 function balanced(rows, key) {
   const b = mean(rows.filter(r => r.dir === 1).map(r => r[key]));
@@ -92,7 +85,7 @@ function collect(file, minScore) {
       if (!m5 || !m15 || !h1 || m5.length < WARMUP + HOLD + 6) continue;
       const open = { 1: -1, '-1': -1 };
       for (let i = WARMUP; i < m5.length - HOLD - 1; i++) {
-        const ts = m5[i].t, c15 = ctxAt(m15, ts), c1h = ctxAt(h1, ts);
+        const ts = m5[i].t, c15 = closedIndexAt(m15, ts, TF_MS.m15), c1h = closedIndexAt(h1, ts, TF_MS.h1);
         if (c15 < WARMUP || c1h < 60) continue;
         const sn = [I.analyzeTimeframe(wd(h1, c1h)), I.analyzeTimeframe(wd(m15, c15)), I.analyzeTimeframe(wd(m5, i))];
         if (!sn[0] || !sn[2]) continue;
