@@ -2,3 +2,4 @@
 supabase/.temp/
 tools/fixtures/market-deep.json
 tools/fixtures/market-oos.json
+tools/fixtures/positioning.json

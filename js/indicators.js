@@ -722,7 +722,7 @@ const Indicators = (() => {
     stopBufferAtr: 0.25,
     minStopAtr: 0.4,
     fallbackStopAtr: 1.0,
-    targetPct: 4.0,       // objective as % of ENTRY PRICE — see the note below
+    targetPct: 1.0,       // objective as % of ENTRY PRICE — see the note below
     minRiskPct: 1.0,      // below this, fees are unwinnable
     maxRiskPct: 25.0      // above this the structure is pathological
   };
@@ -731,7 +731,7 @@ const Indicators = (() => {
   // cached JavaScript labels its rows honestly instead of inheriting a
   // database default that describes code it is not running. Bump this
   // whenever the trade geometry above changes.
-  const MODEL_VERSION = 'v2.1-pricemove-target';
+  const MODEL_VERSION = 'v2.2-near-target';
 
   /**
    * `stopFrom` is the snapshot whose structure the stop rides, and it
@@ -776,6 +776,36 @@ const Indicators = (() => {
    * disagree completely on the best multiple (0.75R out-of-sample, 2R
    * in-sample), which is what a fitted parameter looks like. Agreement
    * across independent periods is the whole reason to prefer this form.
+   *
+   * REVISED 2026-09-07: targetPct 4.0 -> 1.0, and MODEL_VERSION bumped to
+   * v2.2-near-target so the two geometries never mix in the journal.
+   * The 4% figure above came from FIXTURE backtests. Four thousand
+   * REAL logged trades disagree with it: 4% is the worst or near-worst
+   * setting in all four panels (in/out-of-sample x exit plan A/B), and
+   * the median trade only ever travels ~29% of the way to it. Measured
+   * PAIRED (same trades, both exit rules, so the fee cancels and the
+   * comparison is not two noisy independent means):
+   *
+   *            2.4%    2.0%    1.6%    1.2%    1.0%    0.8%   (target move)
+   *   IS  A   +.009   +.004   +.004   +.015   +.014   +.011
+   *   OOS A   +.011   +.020*  +.024*  +.020   +.024   +.019
+   *   IS  B   +.006   +.007   +.006   -.000   +.008   +.008
+   *   OOS B   +.002   +.015   +.023*  +.022*  +.023   +.030*
+   *                                     (* = 95% CI excludes zero)
+   *
+   * 11 of 12 deltas positive, the exception being -0.0001. Significance
+   * only appears out-of-sample; the evidence here is the CONSISTENCY of
+   * the sign across four independent panels, not any single starred cell.
+   * 1.0% has the best four-panel average (+0.017R) and sits mid-plateau
+   * rather than on a sharp peak — 1.6%-0.8% are all within noise of each
+   * other, so the exact point inside that range is not what matters.
+   *
+   * ⚠️ This makes a LOSING model lose less. It does not make it
+   * profitable: ~-0.077R becomes roughly -0.06R. It was shipped because
+   * the scanner is logging anyway and a bumped MODEL_VERSION buys a clean
+   * A/B against the 4,269 rows already recorded at 4% — not because the
+   * model is believed to work. See project memory: five straight
+   * pre-registered hypotheses have failed.
    *
    * The floor is the other half. Below ~1% risk, the 0.11% taker round trip
    * costs more than 0.11R and the edge cannot cover it: that bucket loses
