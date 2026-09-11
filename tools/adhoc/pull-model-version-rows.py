@@ -3,7 +3,11 @@ import json
 
 REST = "https://fpyfetynfobfrpunnnhv.supabase.co/rest/v1/signal_journal"
 KEY = "sb_publishable_95VI9mw_oHduFoqUlToCmg_CpfPucLC"
-COLS = "symbol,market,direction,entry,stop,target,risk_pct,bar_time,resolved_bar_time,status,resolved_at,outcome_a,outcome_b,exit_reason,model_version"
+COLS = ("symbol,market,direction,entry,stop,target,risk_pct,bar_time,resolved_bar_time,"
+        "status,resolved_at,outcome_a,outcome_b,exit_reason,model_version,"
+        # signal-quality metadata, needed to ask WHY a side underperforms
+        "score,band,context_regime,trigger_name,trigger_bars_ago,"
+        "component_entry,component_context,component_method,mae_r,mfe_r,tp1_hit,tp2_hit,tp3_hit")
 
 def fetch_all(filt):
     rows = []
