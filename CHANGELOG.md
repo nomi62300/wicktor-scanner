@@ -4,6 +4,79 @@ All notable changes to Wicktor are documented in this file, in the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. This
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] - on branch `claude/ftse-backtest-strategy-dragev`
+
+### Added (ORB — opening-range breakout harness for indices)
+
+New measurement tool for a session-open box strategy on UK100/FTSE: 15M
+opening range, chop filters A (box height floor) and B (no clean break
+within 45-60 min), 5M breakout, retest closing outside the box, stop
+*beyond* the opposite edge, 1.0-1.2R target, plus an optional RSI-divergence
+reversal branch. Zero new dependencies, as everywhere else here.
+
+`tools/lib/tz.js`, `tools/lib/csv-bars.js`, `tools/lib/orb-strategy.js`,
+`tools/lib/orb-resolve.js`, `tools/lib/equity.js`,
+`tools/lib/no-lookahead.js`, `tools/orb-backtest.js`, `tools/orb-synth.js`,
+`tools/orb-crossval.js`, `tests/orb.test.js` (64 tests), `docs/ftse-data.md`.
+
+**No new exit walker.** `js/signals.js:59` `realisedR()` already implements
+this repo's convention — a bar touching both stop and target counts as the
+STOP, timeouts marked to market — so ORB calls it with `PLAN_B` and
+cross-checks every trade against a second walker that also reports the exit
+index; a disagreement throws rather than picking a winner.
+
+**Three bugs caught during the build, all by the controls rather than by
+reading the code:**
+
+1. *The negative control caught a biased generator.* Synthetic bars first
+   drew each high/low as noise independent of the close walk. A barrier test
+   reads h and l, so independent wick noise triggers whichever barrier is
+   NEARER more often — and with a 1R stop against a 1.2R target the stop is
+   always nearer. The harness measured a systematic **-0.046R on data with no
+   edge**, the same order as the spread cost it exists to detect. Fixed by
+   simulating 12 sub-steps per minute and taking OHLC from the path actually
+   visited. Target share moved 42.0% -> 45.7% against the 45.5% theoretical,
+   and gross expectancy is now zero to within 0.85 SE across 8 seeds.
+
+2. *The divergence branch was near-dead code.* It was evaluated once, at the
+   breakout bar. But a fractal needs two bars of right flank, and the pattern
+   the author trades forms INSIDE the breakout leg — on the scripted fixture
+   the break is bar 33 and the divergence only becomes knowable at bar 39.
+   Now re-checked every bar from breakout to entry, matching the author's
+   own rule ("before entering the trade I look at the RSI").
+
+3. *`divergence()` could not see the pattern being traded.* `js/indicators.js:511`
+   requires a strictly higher high; the author's chart shows a double top.
+   `tolerantDivergence()` in `orb-strategy.js` adds an ATR-relative tolerance
+   locally, leaving the shared indicator untouched, and the report counts how
+   many reversals only the tolerant rule caught (8 of 35 on synthetic data).
+
+**Lookahead is enforced mechanically, not promised.** `tools/lib/no-lookahead.js`
+wraps the bar array in a Proxy that throws on any read past the decision bar;
+Suite G runs the whole state machine over a synthetic year inside it. This is
+the automated version of the bug `tools/lib/align.js` documents.
+
+**Timezones get their own layer** because a fixed UTC hour puts the box an
+hour off the open for ~7 months of any 12-month backtest, silently. Each
+window carries its own zone: on 2025-03-20, 09:30 New York is **13:30**
+London, not 14:30, because the UK and US transitions are three weeks apart.
+Conversion is one-directional (UTC -> local fields only), so the spring-gap
+and autumn-fold pathologies cannot arise. A naive CSV timestamp with no
+`--tz-in` is a hard error, and `--validate-only` prints a first-bar-per-day
+histogram that exposes a wrong zone in seconds.
+
+**Not yet run on real data.** No FTSE bars exist in the repo; the session
+that built this had every market-data host and both package registries
+blocked by egress policy. `docs/ftse-data.md` has the MQL5 exporter and two
+other routes. Every number produced so far is from `--synthetic`, which is
+stamped as a mechanism test.
+
+`package.json` gains a `scripts` block (no dependencies). `test` uses `;`
+rather than `&&` because `tests/indicators.test.js` exits 1 on a known
+pre-existing failure ("fractals output on real candles is unaffected by
+heikinAshi") that predates this work and is left as found — chaining would
+have skipped the ORB suite silently.
+
 ## [Unreleased] - on branch `terminal-build/phase-0-1`
 
 Phase 0 + Phase 1 done unsupervised overnight; Phase 2, Phase 6, Phase 7,
