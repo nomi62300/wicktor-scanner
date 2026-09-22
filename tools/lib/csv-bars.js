@@ -358,7 +358,8 @@ function resolveSpecs({ specsFile, symbol, pointSize, pointValue, minLot, lotSte
   if (out.pointSize == null || !(out.pointSize > 0)) {
     throw new Error(
       'csv-bars: point size unknown.\n' +
-      '  Supply --specs <Bybit-Live-4_specs.csv> or --point-size <n> (UK100 is typically 0.1).\n' +
+      '  Supply --specs <SYMBOL_specs.csv> (any broker; tools/mt5/ExportBars.mq5 writes it)\n' +
+      '  or --point-size <n> (UK100 is typically 0.1).\n' +
       '  Refusing to infer it from close-price decimals: an index printing "10734" reads as\n' +
       '  0 decimals and yields a point 100x too large, inflating every spread cost by 100x.');
   }

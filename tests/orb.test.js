@@ -437,6 +437,33 @@ function runDivergent(cfgOv, stopShort = false) {
 }
 
 // ===========================================================================
+console.log('\nSuite F2 — broker symbol decorations resolve to the right session');
+// ===========================================================================
+const CROSSVAL = require('../tools/orb-crossval.js');
+test('UK100m (Exness), UK100.s, GER40# etc all map to the correct cash open', () => {
+  const OPENS = CROSSVAL.OPENS;
+  const keys = Object.keys(OPENS).sort((a, b) => b.length - a.length);
+  const base = sym => { const u = String(sym).toUpperCase();
+                        return keys.find(k => u.startsWith(k)) || u.replace(/[.\-_#+].*$/, ''); };
+  // The bug this pins: stripping only a dotted suffix turns UK100m into
+  // UK100M, which matches nothing, so an Exness export would be skipped.
+  assert.strictEqual(base('UK100m'), 'UK100');
+  assert.strictEqual(base('UK100.s'), 'UK100');
+  assert.strictEqual(base('GER40#'), 'GER40');
+  assert.strictEqual(base('USTECm'), 'USTEC');
+  assert.strictEqual(base('US500m'), 'US500');
+  assert.strictEqual(OPENS[base('UK100m')].openMin, 8 * 60);
+  assert.strictEqual(OPENS[base('UK100m')].zone, 'Europe/London');
+  assert.strictEqual(OPENS[base('USTECm')].zone, 'America/New_York');
+  assert.strictEqual(OPENS[base('GER40#')].zone, 'Europe/Berlin');
+});
+test('longest-key matching stops a short key swallowing a longer one', () => {
+  const keys = Object.keys(CROSSVAL.OPENS).sort((a, b) => b.length - a.length);
+  const base = sym => keys.find(k => String(sym).toUpperCase().startsWith(k));
+  assert.strictEqual(base('US2000.s'), 'US2000', 'must not resolve as US200/US30');
+});
+
+// ===========================================================================
 console.log('\nSuite G — the lookahead tripwire (mechanical, not a promise)');
 // ===========================================================================
 test('the state machine never reads a bar beyond the decision bar, over a full year', () => {

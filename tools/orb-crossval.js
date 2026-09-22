@@ -18,7 +18,10 @@
 
    Read-only. Usage:
      node tools/orb-crossval.js --data data/ --tz-in Europe/Helsinki \
-          --symbols UK100.s,GER40.s,SP500.s,NAS100.s --specs data/specs.csv
+          --symbols UK100m,GER40m,US500m,USTECm --specs data/UK100m_specs.csv
+
+   Broker decorations (UK100m on Exness, UK100.s elsewhere, GER40#) all
+   resolve to the same session open — see baseName() below.
    ========================================================================== */
 
 const path = require('path');
@@ -37,19 +40,41 @@ const SYNTH = require('./orb-synth.js');
 // zone would silently shift several of them for the weeks when regional
 // daylight-saving transitions disagree.
 const OPENS = {
-  'UK100': { openMin: 8 * 60, zone: 'Europe/London', flatMin: 16 * 60 + 25 },
-  'GER40': { openMin: 9 * 60, zone: 'Europe/Berlin', flatMin: 17 * 60 + 25 },
-  'SP500': { openMin: 9 * 60 + 30, zone: 'America/New_York', flatMin: 15 * 60 + 55 },
-  'NAS100': { openMin: 9 * 60 + 30, zone: 'America/New_York', flatMin: 15 * 60 + 55 },
-  'DJ30': { openMin: 9 * 60 + 30, zone: 'America/New_York', flatMin: 15 * 60 + 55 },
-  'US2000': { openMin: 9 * 60 + 30, zone: 'America/New_York', flatMin: 15 * 60 + 55 }
+  'UK100':     { openMin: 8 * 60,      zone: 'Europe/London',     flatMin: 16 * 60 + 25 },
+  'FTSE100':   { openMin: 8 * 60,      zone: 'Europe/London',     flatMin: 16 * 60 + 25 },
+  'GER40':     { openMin: 9 * 60,      zone: 'Europe/Berlin',     flatMin: 17 * 60 + 25 },
+  'DE40':      { openMin: 9 * 60,      zone: 'Europe/Berlin',     flatMin: 17 * 60 + 25 },
+  'DE30':      { openMin: 9 * 60,      zone: 'Europe/Berlin',     flatMin: 17 * 60 + 25 },
+  'SP500':     { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'US500':     { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'NAS100':    { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'USTEC':     { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'US100':     { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'DJ30':      { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'US30':      { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'US2000':    { openMin: 9 * 60 + 30, zone: 'America/New_York',  flatMin: 15 * 60 + 55 },
+  'NIKKEI225': { openMin: 9 * 60,      zone: 'Asia/Tokyo',        flatMin: 14 * 60 + 55 },
+  'HK50':      { openMin: 9 * 60 + 30, zone: 'Asia/Hong_Kong',    flatMin: 15 * 60 + 55 }
 };
-const baseName = sym => sym.replace(/\.[a-z]+$/i, '').toUpperCase();
+
+/**
+ * Brokers decorate the same instrument differently — UK100.s (one broker),
+ * UK100m (Exness), USTECm, US500.a, GER40#. Stripping a dotted suffix alone
+ * handles UK100.s and silently fails on UK100m, which uppercases to UK100M
+ * and matches nothing. So match on the LONGEST key the symbol starts with,
+ * which covers every decoration without needing to enumerate them, and keeps
+ * US30 from swallowing US300-style names by preferring the longer key.
+ */
+const OPEN_KEYS = Object.keys(OPENS).sort((a, b) => b.length - a.length);
+function baseName(sym) {
+  const u = String(sym).toUpperCase();
+  return OPEN_KEYS.find(k => u.startsWith(k)) || u.replace(/[.\-_#+].*$/, '');
+}
 
 function main() {
   const a = SYNTH.parseArgs(process.argv);
   const dir = a.data || 'data';
-  const symbols = String(a.symbols || 'UK100.s,GER40.s,SP500.s,NAS100.s').split(',').map(s => s.trim());
+  const symbols = String(a.symbols || 'UK100m,GER40m,US500m,USTECm').split(',').map(s => s.trim());
 
   // FROZEN. Whatever was selected in-sample goes here once and is not touched.
   const CONFIG = {

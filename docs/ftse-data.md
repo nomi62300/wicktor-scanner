@@ -13,7 +13,7 @@ wider network policy.
 
 ---
 
-## Route 1 — MT5 export of `UK100.s` (best quality)
+## Route 1 — MT5 export from your own broker (best quality)
 
 This is the route the repo already assumes: `tools/mt5-crossval.js:36` lists `'UK100.s'`
 and `tools/mt5-squeeze.js:70` already reads a broker specs file.
@@ -23,42 +23,43 @@ target moves from 45.5% at zero cost to 53.0% at a 2-point spread — so a guess
 spread does not produce a weaker answer, it produces a different one. MT5 records the real
 spread on every bar.
 
-Run this as a script in MetaEditor (`MQL5/Scripts/`), attach it to a UK100 chart:
+**Use `tools/mt5/ExportBars.mq5`.** Open it in MetaEditor, press F7 to compile, then drag
+"ExportBars" from the Navigator onto a chart of your index. It takes the symbol from the chart
+it is attached to, so it needs no editing.
 
-```mql5
-void OnStart() {
-   string sym = "UK100.s";                       // your broker's exact symbol
-   ENUM_TIMEFRAMES tfs[] = {PERIOD_M1, PERIOD_M5, PERIOD_M15};
-   string names[] = {"M1", "M5", "M15"};
+It writes `<SYMBOL>_M5.csv`, `<SYMBOL>_M1.csv`, `<SYMBOL>_M15.csv` (each
+`time,o,h,l,c,v,spread`) plus `<SYMBOL>_specs.csv` carrying point size, tick value, min lot,
+lot step and the server name. It waits for the terminal to finish syncing history first —
+without that a fresh chart returns a few hundred bars and the export looks exactly like a
+market that stopped trading.
 
-   for (int k = 0; k < ArraySize(tfs); k++) {
-      MqlRates r[];
-      int n = CopyRates(sym, tfs[k], 0, 200000, r);      // ~2 years of M5
-      if (n <= 0) { Print("CopyRates failed for ", names[k], " err=", GetLastError()); continue; }
+### You do NOT need to change brokers
 
-      int h = FileOpen(sym + "_" + names[k] + ".csv", FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
-      if (h == INVALID_HANDLE) { Print("FileOpen failed"); continue; }
-      FileWrite(h, "time", "o", "h", "l", "c", "v", "spread");
-      for (int i = 0; i < n; i++)
-         FileWrite(h, TimeToString(r[i].time, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
-                   r[i].open, r[i].high, r[i].low, r[i].close,
-                   (long)r[i].tick_volume, (int)r[i].spread);
-      FileClose(h);
-      Print("wrote ", n, " ", names[k], " bars");
-   }
+Nothing in the ORB harness is broker-specific. `tools/orb-backtest.js` takes `--bars <any
+path>` and `--specs <any path>`; the loader sniffs the header rather than matching a filename.
 
-   // The specs file. Point size is NOT inferable from price decimals — an index
-   // printing "10734" reads as 0 decimals and yields a point 100x too large.
-   int s = FileOpen(sym + "_specs.csv", FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
-   FileWrite(s, "symbol", "point", "point_value", "volume_min", "volume_step");
-   FileWrite(s, sym,
-             SymbolInfoDouble(sym, SYMBOL_POINT),
-             SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE),
-             SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN),
-             SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP));
-   FileClose(s);
-}
+The `Bybit-Live-4_` prefix you may have seen is hardcoded only in the OLDER tools
+(`tools/mt5-squeeze.js:53`, `tools/mt5-backtest.js:76`), where it was just the MT5 account
+name baked into a filename during the gold/crypto work. It is not a requirement and the new
+harness ignores it.
+
+**Stay on the account you actually trade.** If your ORB script runs on an Exness demo, export
+from Exness: the spread column is then *your* spread, on *your* feed, and the backtest answers
+the question you care about. Moving the terminal to a different broker would point it at a
+different symbol set with its own separately-downloaded history, and would stop anything
+already running on the old account — for no gain, since a different broker's feed answers a
+different question.
+
+Symbol names differ between brokers (`UK100`, `UK100m`, `FTSE100`, `UK100.s`). The script uses
+whatever the chart says, so just pass the same name through:
+
+```bash
+node tools/orb-backtest.js --bars data/UK100m_M5.csv --specs data/UK100m_specs.csv \
+     --symbol UK100m --tz-in <your server zone>
 ```
+
+If `--symbol` is omitted it is inferred from the filename up to the first underscore, which is
+why the script names files that way.
 
 Files land in `MQL5/Files/`. Copy them into `data/` in this repo and commit them — they
 are the evidence, so `data/` is deliberately **not** gitignored.
