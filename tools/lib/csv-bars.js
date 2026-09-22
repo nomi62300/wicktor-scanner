@@ -339,9 +339,20 @@ function resolveSpecs({ specsFile, symbol, pointSize, pointValue, minLot, lotSte
       const p = lines[i].split(',');
       if (p[col('symbol')] !== symbol) continue;
       const pick = (...names) => { for (const n of names) { const c = col(n); if (c >= 0 && p[c] != null && p[c] !== '') return parseFloat(p[c]); } return undefined; };
+      // MT5's SYMBOL_TRADE_TICK_VALUE is the value of ONE TICK, not of one
+      // index point, and the two differ by tick_size. On Exness UK100m,
+      // tick_size is 0.01 and tick_value 0.0133233 — so a naive read makes
+      // every position 100x too large and every dollar figure meaningless.
+      // Same class of error as spreadPts vs pointSize, in the other direction.
+      const tickVal = pick('point_value_per_point', 'value_per_point');
+      const rawTick = pick('tick_value', 'point_value', 'contract_value');
+      const tickSz = pick('tick_size', 'point', 'pointsize');
       fromFile = {
         pointSize: pick('point', 'pointsize', 'tick_size'),
-        pointValue: pick('point_value', 'tick_value', 'contract_value'),
+        pointValue: tickVal != null ? tickVal
+                  : (rawTick != null && tickSz > 0 ? rawTick / tickSz : rawTick),
+        pointValueNote: tickVal != null ? 'explicit per-point column'
+                  : (rawTick != null && tickSz > 0 ? `tick_value ${rawTick} / tick_size ${tickSz}` : 'raw'),
         minLot: pick('volume_min', 'min_lot', 'minlot'),
         lotStep: pick('volume_step', 'lot_step', 'lotstep')
       };
@@ -353,7 +364,8 @@ function resolveSpecs({ specsFile, symbol, pointSize, pointValue, minLot, lotSte
     pointValue: pointValue ?? fromFile.pointValue,
     minLot: minLot ?? fromFile.minLot ?? 0.1,
     lotStep: lotStep ?? fromFile.lotStep ?? 0.1,
-    source: (pointSize != null ? 'cli' : (fromFile.pointSize != null ? 'specs file' : 'MISSING'))
+    source: (pointSize != null ? 'cli' : (fromFile.pointSize != null ? 'specs file' : 'MISSING')),
+    pointValueNote: pointValue != null ? 'cli' : fromFile.pointValueNote
   };
   if (out.pointSize == null || !(out.pointSize > 0)) {
     throw new Error(
@@ -366,7 +378,59 @@ function resolveSpecs({ specsFile, symbol, pointSize, pointValue, minLot, lotSte
   return out;
 }
 
+/**
+ * Mean volume and range by LOCAL hour, plus the largest morning step-up.
+ *
+ * firstBarHistogram() only identifies the source zone for a CASH instrument,
+ * whose day literally begins at the open. A CFD like UK100m trades ~24h, so
+ * its first bar of the day is around midnight and says nothing about the
+ * zone. What still works is the cash open's FOOTPRINT: volume roughly
+ * triples at 08:00 London when the underlying opens. Locating that step-up
+ * in the declared zone verifies it, and locating it in the wrong zone shows
+ * a jump an hour or two off the open.
+ */
+function sessionActivityProfile(bars, zone, opts = {}) {
+  const tags = tz.tagBars(bars, zone);
+  const vol = new Array(24).fill(0), rng = new Array(24).fill(0), n = new Array(24).fill(0);
+  for (let i = 0; i < bars.length; i++) {
+    const h = Math.floor(tags[i].minutes / 60);
+    vol[h] += bars[i].v || 0;
+    rng[h] += (bars[i].h - bars[i].l);
+    n[h]++;
+  }
+  const meanVol = vol.map((v, h) => n[h] ? v / n[h] : 0);
+  const meanRng = rng.map((v, h) => n[h] ? v / n[h] : 0);
+  const from = opts.morningFrom != null ? opts.morningFrom : 5;
+  const to = opts.morningTo != null ? opts.morningTo : 12;
+  let jumpHour = null, jump = -Infinity;
+  for (let h = from; h <= to; h++) {
+    if (!n[h] || !n[h - 1]) continue;
+    const d = meanVol[h] - meanVol[h - 1];
+    if (d > jump) { jump = d; jumpHour = h; }
+  }
+  return { meanVol, meanRng, bars: n, jumpHour, jump };
+}
+
+function renderActivityProfile(prof, zoneLabel, expectHour) {
+  const out = [`Mean volume by hour in ${zoneLabel} (the cash open's footprint):`];
+  const peak = Math.max(...prof.meanVol);
+  for (let h = 0; h < 24; h++) {
+    if (!prof.bars[h]) continue;
+    const bar = '#'.repeat(Math.round(prof.meanVol[h] / peak * 32));
+    const mark = h === prof.jumpHour ? '  <-- biggest morning step-up' : '';
+    out.push(`  ${String(h).padStart(2, '0')}:00 ${String(Math.round(prof.meanVol[h])).padStart(5)} ${bar}${mark}`);
+  }
+  if (expectHour != null) {
+    out.push(prof.jumpHour === expectHour
+      ? `  OK: the step-up is at ${String(expectHour).padStart(2, '0')}:00, matching the session open.`
+      : `  WARNING: step-up at ${String(prof.jumpHour).padStart(2, '0')}:00 but the window opens at ` +
+        `${String(expectHour).padStart(2, '0')}:00. The source zone is probably wrong — every box would be measured off the wrong candle.`);
+  }
+  return out.join('\n');
+}
+
 module.exports = {
+  sessionActivityProfile, renderActivityProfile,
   loadBars, sniffHeader, parseTimestamp, naiveToUtc, validateBars,
   dayHistogram, firstBarHistogram, renderFirstBarHistogram,
   crossCheckBox, resolveSpecs, inferTfMs

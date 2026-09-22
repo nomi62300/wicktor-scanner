@@ -116,13 +116,29 @@ function main() {
            `box ${w.boxMin}M, chop ${cfg.chopMins}M, expiry ${cfg.expiryMins}M, flat ${tz.fmtHHMM(w.flatMin)}`);
   }
   L.push(`point size      ${specs.pointSize}  (${specs.source})   point value ${specs.pointValue ?? 'n/a'}` +
+         `${specs.pointValueNote && specs.pointValueNote !== 'cli' ? ` [${specs.pointValueNote}]` : ''}` +
          `   minLot ${specs.minLot}  step ${specs.lotStep}`);
 
-  // The timezone self-check. A wrong --tz-in makes this table visibly wrong.
+  // The timezone self-check. Two methods, because they suit different data:
+  // firstBarHistogram pins a CASH series (its day starts at the open), while
+  // a ~24h CFD needs the cash open's volume footprint instead.
   const primary = windows[0];
   const hist = CSV.firstBarHistogram(bars, primary.zone);
+  const cashLike = hist.modal === tz.fmtHHMM(primary.openMin);
   L.push('', CSV.renderFirstBarHistogram(hist, primary.zone, tz.fmtHHMM(primary.openMin)));
-  if (a.assertOpen && hist.modal !== a.assertOpen) {
+  const prof = CSV.sessionActivityProfile(bars, primary.zone);
+  if (!cashLike) {
+    L.push('', `(This looks like a ~24h CFD rather than a cash series — its day starts at ${hist.modal},`,
+           ' so the table above cannot verify the zone. Using the session-open volume footprint instead.)',
+           '', CSV.renderActivityProfile(prof, primary.zone, Math.floor(primary.openMin / 60)));
+  }
+  const zoneOk = cashLike || prof.jumpHour === Math.floor(primary.openMin / 60);
+  if (a.assertOpen === 'auto' && !zoneOk) {
+    L.push('', 'FATAL: --assert-open auto — neither check locates the session open where the',
+           '  declared zone says it should be. Refusing to produce numbers off a wrong clock.');
+    console.log(L.join('\n')); process.exit(3);
+  }
+  if (a.assertOpen && a.assertOpen !== 'auto' && hist.modal !== a.assertOpen) {
     L.push('', `FATAL: --assert-open ${a.assertOpen} but the modal first bar is ${hist.modal}.`,
            '  The declared source zone is almost certainly wrong. Refusing to produce numbers.');
     console.log(L.join('\n')); process.exit(3);
@@ -166,11 +182,17 @@ function main() {
   for (const d of dispositions) counts[d.disposition] = (counts[d.disposition] || 0) + 1;
   const order = ['incomplete_box', 'box_too_small', 'chop_timeout', 'expired', 'no_retest',
                  'traversed', 'divergence_veto', 'session_end', 'no_data', 'entered'];
-  L.push(`  ${pad('session-windows seen', 34)}${lpad(dispositions.length, 6)}`);
+  const nonSession = counts['no_session'] || 0;
+  const realSessions = dispositions.length - nonSession;
+  if (nonSession) {
+    L.push(`  ${pad('window-days with no open', 34)}${lpad(nonSession, 6)}   (instrument not trading at the open — excluded)`);
+  }
+  L.push(`  ${pad('tradeable session-windows', 34)}${lpad(realSessions, 6)}`);
   for (const k of order) {
     if (!counts[k]) continue;
     const label = k === 'entered' ? 'ENTERED' : `skipped: ${k}`;
-    L.push(`  ${pad(label, 34)}${lpad(counts[k], 6)}${k === 'box_too_small' ? '   <- Option A' : k === 'chop_timeout' ? '   <- Option B' : ''}`);
+    const share = realSessions ? `  ${(counts[k] / realSessions * 100).toFixed(0)}%` : '';
+    L.push(`  ${pad(label, 34)}${lpad(counts[k], 6)}${lpad(share, 6)}${k === 'box_too_small' ? '  <- Option A' : k === 'chop_timeout' ? '  <- Option B' : ''}`);
   }
   const nStd = trades.filter(t => t.branch === 'standard').length;
   const nRev = trades.filter(t => t.branch === 'reversal').length;

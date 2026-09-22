@@ -57,7 +57,8 @@ const SKIP = {
   TRAVERSED: 'traversed',
   SESSION_END: 'session_end',
   NO_RETEST: 'no_retest',
-  NO_DATA: 'no_data'
+  NO_DATA: 'no_data',
+  NO_SESSION: 'no_session'
 };
 
 // ----------------------------------------------------------------- helpers
@@ -148,7 +149,7 @@ function newSession(key, w, tag, i) {
     phase: 'PRE', startIdx: i,
     boxHigh: -Infinity, boxLow: Infinity, boxBars: 0, boxSealedIdx: null,
     boxCloseMin: w.openMin + w.boxMin,
-    dir: 0, breakoutIdx: null, brokeOutEver: false, excursion: null,
+    dir: 0, breakoutIdx: null, brokeOutEver: false, excursion: null, firstMinSeen: null,
     reversal: null, revDownCount: 0,
     disposition: null, signal: null
   };
@@ -162,13 +163,23 @@ function step(st, bars, i, tag, w, cfg, ctx) {
   const b = bars[i];
   const tfMin = ctx.tfMin;
   const m = tag.minutes;
+  if (st.firstMinSeen == null) st.firstMinSeen = m;
   const sinceBoxClose = m - st.boxCloseMin;
 
   // ---------------- PRE / BOX -------------------------------------------
   if (st.phase === 'PRE') {
     if (m < w.openMin) return null;
-    if (m >= st.boxCloseMin) {           // session opened without us seeing the box
-      st.phase = 'SKIPPED'; st.disposition = SKIP.INCOMPLETE_BOX; return null;
+    if (m >= st.boxCloseMin) {
+      // Two very different things land here, and conflating them corrupts the
+      // funnel. If the FIRST bar of this window-day is already past the box
+      // window, the instrument simply was not trading at its open — a CFD's
+      // Sunday-evening reopen produces one of these every week, and they are
+      // not sessions that were skipped, they are days that never had a
+      // session. A day that did have bars before the open but is missing some
+      // of the box is a genuine data hole and stays INCOMPLETE_BOX.
+      st.phase = 'SKIPPED';
+      st.disposition = (st.firstMinSeen >= st.boxCloseMin) ? SKIP.NO_SESSION : SKIP.INCOMPLETE_BOX;
+      return null;
     }
     st.phase = 'BOX';
   }
