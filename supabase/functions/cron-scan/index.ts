@@ -62,6 +62,11 @@ const SNAP_TABLE = 'scan_snapshot';
 // The client only ever reads the newest two. A few spares absorb a slow
 // reader mid-prune and make a bad run diagnosable after the fact.
 const SNAP_KEEP = 6;
+const STAGE_TABLE = 'scan_stage';
+// A half older than this is treated as missing rather than merged with a fresh
+// half -- a universe stitched from two different market states is worse than
+// no new snapshot at all.
+const STAGE_MAX_AGE_MS = 10 * 60 * 1000;
 
 const HOSTS = ['https://api.bybit.com', 'https://api.bytick.com'];
 const BAR_MS = 5 * 60 * 1000;
@@ -257,13 +262,42 @@ async function scanCategory(
 // `setup` and `m5` are dropped: m5 is 100 candles per coin (the single
 // largest thing in memory here) and setup duplicates fields the view
 // already carries. Only what render.js and app.js actually read is stored.
-async function writeSnapshot(coins: any[], log: string[]) {
+function toViews(coins: any[]) {
   const scores: Record<string, number> = {};
   const views = coins.map(({ setup, ...view }) => {
     scores[`${view.rawSymbol}:${view.market}`] = view.score;
     return view;
   });
+  return { views, scores };
+}
 
+// Park one category's half of the universe for the other stage to collect.
+// Upserts on `category`, so there is exactly one row per half and nothing to
+// prune.
+async function stashHalf(category: string, views: any[], scores: Record<string, number>) {
+  await pg(`${STAGE_TABLE}?on_conflict=category`, {
+    method: 'POST',
+    body: JSON.stringify({
+      category, captured_at: new Date().toISOString(), coins: views, scores
+    }),
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+  });
+}
+
+async function loadHalf(category: string) {
+  const rows = await pg(`${STAGE_TABLE}?select=captured_at,coins,scores&category=eq.${category}&limit=1`);
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const ageMs = Date.now() - new Date(rows[0].captured_at).getTime();
+  if (ageMs > STAGE_MAX_AGE_MS) return null;
+  return { views: rows[0].coins || [], scores: rows[0].scores || {}, ageMs };
+}
+
+async function writeSnapshot(coins: any[], log: string[]) {
+  const { views, scores } = toViews(coins);
+  return writeSnapshotFrom(views, scores, log);
+}
+
+async function writeSnapshotFrom(views: any[], scores: Record<string, number>, log: string[]) {
   await pg(SNAP_TABLE, {
     method: 'POST',
     body: JSON.stringify({ coin_count: views.length, scores, coins: views }),
@@ -412,6 +446,16 @@ async function resolveOpen(host: string, scannedCandles: Record<string, any>, lo
   return resolved + expired;
 }
 
+// Memory probe. WORKER_RESOURCE_LIMIT does not say WHICH resource ran out, and
+// the difference matters: an OOM is fixed by holding less, a CPU-budget kill by
+// doing less per invocation. Cheap enough to leave in permanently.
+function mem(tag: string, log: string[]) {
+  try {
+    const m = Deno.memoryUsage();
+    log.push(`mem[${tag}] rss=${(m.rss / 1048576).toFixed(1)}MB heap=${(m.heapUsed / 1048576).toFixed(1)}/${(m.heapTotal / 1048576).toFixed(1)}MB ext=${(m.external / 1048576).toFixed(1)}MB`);
+  } catch { /* not fatal -- a probe must never break a scan */ }
+}
+
 Deno.serve(async (req: Request) => {
   const auth = req.headers.get('Authorization') || '';
   if (!SERVICE_KEY || auth !== `Bearer ${SERVICE_KEY}`) {
@@ -422,15 +466,58 @@ Deno.serve(async (req: Request) => {
   const dryRun = url.searchParams.get('dry_run') === '1';
   const universeSize = Number(url.searchParams.get('universe_size') || 120);
 
+  // WHY THIS IS SPLIT. Measured 2026-09-23, reproducibly: a full run at
+  // universe_size=350 (699 coins) is killed with WORKER_RESOURCE_LIMIT. It is
+  // NOT memory -- peak is ~4MB against a 150MB cap -- it is the worker's CPU
+  // budget, and the kill lands at a different point every time:
+  //
+  //   scan 699, no writes ................. 30s, passes (almost pure network I/O)
+  //   scan 239 + resolve  81 + snapshot ... 31s, passes
+  //   scan 699 + resolve 100 + snapshot ... KILLED at 41s, then at 24s
+  //
+  // One failure wrote a complete 699-coin snapshot (the last step) and still
+  // died before returning; the next died mid-resolve having written only
+  // journal rows. That is a budget being spent, not a single oversized step.
+  //
+  // Shrinking the universe would "fix" it by changing the research dataset,
+  // which is not acceptable. Instead each half now runs as its OWN invocation
+  // with its OWN budget. Both halves are already proven to fit: 'scan' is the
+  // 699-coin case that passes, and 'resolve' does strictly less work than the
+  // 239-coin+81-resolve case that passes -- it skips the universe scan
+  // entirely and only needs a Bybit host.
+  //
+  //   stage=scan    (default) universe scan -> logSignals + writeSnapshot
+  //   stage=resolve            resolveOpen only, no scan
+  //   stage=all                the old single-shot behaviour, kept for manual
+  //                            runs and small universes; exceeds the budget at 350.
+  const STAGES = ['scan-spot', 'scan-linear', 'scan', 'resolve', 'all'];
+  const stage = url.searchParams.get('stage') || 'all';
+  if (!STAGES.includes(stage)) {
+    return new Response(JSON.stringify({ error: `unknown stage '${stage}'`, stages: STAGES }), {
+      status: 400, headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  const scansSpot = stage === 'scan-spot' || stage === 'scan' || stage === 'all';
+  const scansLinear = stage === 'scan-linear' || stage === 'scan' || stage === 'all';
+  const doesResolve = stage === 'resolve' || stage === 'all';
+
   const started = Date.now();
   const log: string[] = [];
   try {
     const host = await pickHost();
-    const [mcaps, stocks] = await Promise.all([mcapMap(), stockSymbolSet(host)]);
+    mem('start', log);
+
+    // stage=resolve never builds the universe. This is the whole point of the
+    // split: no mcap fetch, no instrument lists, no scoring -- just the open
+    // signals and their 5M candles.
     const coins: any[] = [];
-    await scanCategory(host, 'spot', universeSize, coins, mcaps, stocks);
-    await scanCategory(host, 'linear', universeSize, coins, mcaps, stocks);
-    log.push(`scored ${coins.length} coins (mcaps ${Object.keys(mcaps).length})`);
+    if (scansSpot || scansLinear) {
+      const [mcaps, stocks] = await Promise.all([mcapMap(), stockSymbolSet(host)]);
+      if (scansSpot) await scanCategory(host, 'spot', universeSize, coins, mcaps, stocks);
+      if (scansLinear) await scanCategory(host, 'linear', universeSize, coins, mcaps, stocks);
+      log.push(`scored ${coins.length} coins (mcaps ${Object.keys(mcaps).length})`);
+      mem('scanned', log);
+    }
 
     // Deliberately empty: resolveOpen() fetches 5M candles per OPEN signal
     // instead of the scan carrying them for every coin. See scoreCoin().
@@ -440,18 +527,62 @@ Deno.serve(async (req: Request) => {
     if (dryRun) {
       const barTime = Math.floor(Date.now() / BAR_MS) * BAR_MS;
       logged = coins.filter(c => c.score >= SignalJournal.MIN_SCORE).map(c => rowFor(c, barTime)).filter(Boolean).length;
-      log.push(`DRY_RUN: would log ${logged} and snapshot ${coins.length}, skipping writes`);
+      log.push(`DRY_RUN stage=${stage}: would log ${logged} and snapshot ${coins.length}, skipping writes`);
     } else {
-      logged = await logSignals(coins, log);
-      touched = await resolveOpen(host, candlesBySymbol, log);
+      if (scansSpot || scansLinear) {
+        logged = await logSignals(coins, log);
+        mem('logged', log);
+      }
+      if (doesResolve) {
+        touched = await resolveOpen(host, candlesBySymbol, log);
+        mem('resolved', log);
+      }
       // Last: the journal is the record that must not be missed, the
       // snapshot is a display cache. If this throws, the run has already
       // done its irreplaceable work.
-      snapshot = await writeSnapshot(coins, log);
+      // The two half-scans hand off through scan_stage: whichever half runs
+      // second stitches both into the ONE snapshot row the site reads. Writing
+      // a row per half instead would break the UI, which takes the newest row
+      // as the whole universe and diffs it against the row before it.
+      if (stage === 'scan-spot') {
+        // Stash only. ONE snapshot per cycle, written by the half that runs
+        // second -- see below.
+        const { views, scores } = toViews(coins);
+        await stashHalf('spot', views, scores);
+        log.push(`stashed ${views.length} spot for scan-linear to merge`);
+        mem('stashed', log);
+      } else if (stage === 'scan-linear') {
+        // The second half writes the snapshot for the whole cycle.
+        //
+        // Both halves writing one each looked symmetrical and was wrong: two
+        // consecutive rows then share an identical half, and app.js reads the
+        // row at offset=1 purely for its score map, to show how each score
+        // moved. Every spot coin would report a delta of exactly zero forever,
+        // and SNAP_KEEP=6 would hold three cycles instead of six.
+        const { views, scores } = toViews(coins);
+        const held = await loadHalf('spot');
+        if (!held) {
+          // Better no new row than a half-universe one: the site treats the
+          // newest row as the entire universe, so a linear-only snapshot would
+          // make every spot coin vanish from the grid for that cycle.
+          log.push(`no fresh spot half held -- wrote no snapshot (scored ${views.length} linear, journal rows still written)`);
+        } else {
+          snapshot = await writeSnapshotFrom(
+            held.views.concat(views),
+            { ...held.scores, ...scores },
+            log
+          );
+          log.push(`merged ${held.views.length} spot (held ${(held.ageMs / 1000).toFixed(0)}s) + ${views.length} linear`);
+        }
+        mem('snapshotted', log);
+      } else if (scansSpot && scansLinear) {
+        snapshot = await writeSnapshot(coins, log);
+        mem('snapshotted', log);
+      }
     }
 
     return new Response(JSON.stringify({
-      ok: true, logged, touched, snapshot, seconds: (Date.now() - started) / 1000, log
+      ok: true, stage, logged, touched, snapshot, seconds: (Date.now() - started) / 1000, log
     }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: String(e), log }), {

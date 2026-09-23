@@ -81,15 +81,33 @@ jobs:
           UNIVERSE_SIZE: ${{ github.event.inputs.universe_size || '350' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
         run: |
-          url="https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cron-scan?universe_size=${UNIVERSE_SIZE}"
-          if [ "$DRY_RUN" = "1" ]; then url="${url}&dry_run=1"; fi
-          http_code=$(curl -s -o response.json -w "%{http_code}" "$url" \
-            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            -H "x-region: ap-northeast-1")
-          cat response.json
-          echo ""
-          if [ "$http_code" != "200" ]; then
-            echo "cron-scan returned HTTP $http_code"
+          # THREE CALLS, NOT ONE. A combined run at universe_size=350 is
+          # killed with WORKER_RESOURCE_LIMIT -- the worker's CPU budget, not
+          # memory (peak heap measured at 17MB). Each stage fits comfortably on
+          # its own; only their sum does not. scan-spot stashes its half and
+          # scan-linear merges both into the single snapshot row the site
+          # reads, so the ORDER here matters. The sleeps keep each call off the
+          # previous one's warm worker, which was measured to be killed sooner
+          # than a cold one.
+          base="https://fpyfetynfobfrpunnnhv.supabase.co/functions/v1/cron-scan"
+          fail=0
+          for stage in scan-spot scan-linear resolve; do
+            url="${base}?stage=${stage}"
+            case "$stage" in scan-*) url="${url}&universe_size=${UNIVERSE_SIZE}";; esac
+            if [ "$DRY_RUN" = "1" ]; then url="${url}&dry_run=1"; fi
+            http_code=$(curl -s -o "response-${stage}.json" -w "%{http_code}" "$url" \
+              -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+              -H "x-region: ap-northeast-1")
+            echo "--- stage=${stage} -> HTTP ${http_code}"
+            cat "response-${stage}.json"
+            echo ""
+            if [ "$http_code" != "200" ]; then fail=1; fi
+            if [ "$stage" != "resolve" ]; then sleep 20; fi
+          done
+          # Report both stages before failing, so a broken run says which half
+          # broke rather than stopping at the first one.
+          if [ "$fail" != "0" ]; then
+            echo "cron-scan failed"
             exit 1
           fi

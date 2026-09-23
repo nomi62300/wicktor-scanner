@@ -26,6 +26,58 @@ sync going forward, live at `nomi62300.github.io/wicktor-scanner/` and
 `terminal.wicktor.top`. Not version-bumped or tagged yet regardless — C5
 (short-squeeze/OI positioning) and Phases D/E are still open.
 
+### Fixed (Scheduled scan: WORKER_RESOURCE_LIMIT, split into three stages)
+
+The scan had stopped producing snapshots — the site was showing a delay of
+over three hours. The schedule was never at fault: `cron_diag()` (added
+here) shows pg_cron firing on the minute exactly as configured, and pg_net
+delivering. Every invocation was simply failing.
+
+Reproduced deterministically: a full run at `universe_size=350` (699 coins)
+returns HTTP 546 `WORKER_RESOURCE_LIMIT`. Instrumenting the function with
+`Deno.memoryUsage()` settled which resource — peak heap 17MB, heapTotal
+25MB, external 4MB, nowhere near any memory cap. It is the worker's CPU
+budget, and scoring 699 coins (2,796 kline fetches parsed into ~280k candle
+objects, plus the indicator math) sits right on it. The kill landed in a
+different place each time; one failure had already written a complete
+699-coin snapshot — the very last step — and still died before returning,
+which is what produced the partially-written runs.
+
+    scan 699, no writes ................. passed 4/4
+    scan 239 + resolve  81 + snapshot ... passed
+    scan 699 + resolve 100 + snapshot ... killed 2/2
+    scan 699 + snapshot, resolve split .. killed 1/3
+
+Splitting `resolve` off was not enough, so the work is halved instead: one
+category per invocation, each with its own worker and its own budget. A
+`stage` parameter selects the work — `scan-spot`, `scan-linear`, `resolve`,
+plus `scan`/`all` kept for manual runs on small universes. Three pg_cron
+jobs a minute apart replace the single one; back-to-back invocations were
+measured to be killed sooner than cold ones (24s vs 41s), consistent with a
+warm worker carrying CPU accounting over.
+
+**The universe is unchanged at 350 per category.** Shrinking it would have
+"fixed" this by changing the research dataset, which is not acceptable —
+the journal's comparability across the whole history depends on it.
+
+The two halves hand off through a new `scan_stage` table, and only
+`scan-linear` — the half that runs second — writes the snapshot. Having
+both halves write one each looked symmetrical and was wrong: consecutive
+rows then share an identical half, and `app.js` reads the row at `offset=1`
+purely for its score map, so every spot coin would have reported a score
+delta of exactly zero forever, and `SNAP_KEEP=6` would have held three
+cycles instead of six. If the spot half is missing or older than 10
+minutes, no snapshot is written at all rather than a half-universe one —
+the site treats the newest row as the entire universe, so a linear-only row
+would make every spot coin vanish from the grid.
+
+Verified live: 9 consecutive three-stage cycles, all HTTP 200, 11-20s each,
+one 699-coin snapshot per cycle.
+
+`scan_stage` also repeated a trap this repo had already documented on
+`scan_snapshot`: service_role bypasses RLS *policies* but not table-level
+GRANTs, so the first write returned 42501 until granted.
+
 ### Added (Headless cron — the journal no longer needs a browser open)
 The journal only ever ran while a signed-in tab was open — verified live
 (2026-08-29): an 11-hour gap with nobody browsing meant **zero** new
