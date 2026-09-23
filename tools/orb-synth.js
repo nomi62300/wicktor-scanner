@@ -117,8 +117,13 @@ function generate(opts = {}) {
     seed = 42, from = '2025-01-02', to = '2025-12-31',
     mode = 'mixed', start = 10700, sigma = 8.2,
     spreadPts = 15, pointSize = 0.1, gridZone = 'Europe/London',
-    emitM1 = false
+    emitM1 = false,
+    // Price rounding. 1 decimal suits an index at 10,700; an FX pair at 1.16
+    // needs 5, and rounding it to 0.1 would flatten every bar to the same
+    // value. Default keeps ORB output bit-identical.
+    digits = 1
   } = opts;
+  const round = x => { const m = Math.pow(10, digits); return Math.round(x * m) / m; };
 
   const rnd = mulberry32(seed);
   const gauss = gaussFrom(rnd);
@@ -153,10 +158,10 @@ function generate(opts = {}) {
       }
       if (mh > hi) hi = mh;
       if (ml < lo) lo = ml;
-      if (emitM1) m1.push({ t: g.t + mi * 60000, o: round1(mo), h: round1(mh), l: round1(ml), c: round1(px), v: 20, spreadPts });
+      if (emitM1) m1.push({ t: g.t + mi * 60000, o: round(mo), h: round(mh), l: round(ml), c: round(px), v: 20, spreadPts });
     }
     bars.push({
-      t: g.t, o: round1(o), h: round1(hi), l: round1(lo), c: round1(px),
+      t: g.t, o: round(o), h: round(hi), l: round(lo), c: round(px),
       v: Math.round(50 + rnd() * 200), spreadPts
     });
   }

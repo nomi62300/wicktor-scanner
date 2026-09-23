@@ -1,0 +1,263 @@
+//@version=5
+// =============================================================================
+//  CWT London Alligator — EUR/USD London-open strategy
+//  Backtest twin: tools/cwt-backtest.js in this repo (run that for statistics).
+//
+//  WHY THIS IS NOT A COPY OF THE INDICATOR
+//  "CWT by ALI" bundles ZigZag + Alligator + S/R. No entry rule here uses
+//  ZigZag, and its `repaint` input defaults to true — a repainting component
+//  inside a strategy produces backtest results that cannot be reproduced
+//  live. So ZigZag is deliberately absent. The Alligator and the pivot S/R
+//  are carried over unchanged, so the lines plotted below sit exactly where
+//  the indicator draws them.
+//
+//  READ THIS BEFORE TRUSTING THE STRATEGY TESTER NUMBERS
+//  TradingView's free plan caps history at 5,000 bars. On EUR/USD 5M that is
+//  roughly 17 trading days — about 17 London sessions. Enough to SEE signals
+//  fire and confirm they match your chart; far too few to judge profitability
+//  (a 17-trade sample has a 95% interval near +/-0.5R). The info table warns
+//  you when you are against that cap.
+// =============================================================================
+
+strategy("CWT London Alligator", overlay = true,
+     initial_capital         = 5000,
+     default_qty_type        = strategy.fixed,
+     calc_on_every_tick      = false,
+     process_orders_on_close = false,   // fills at NEXT bar open, never the signal bar's own close
+     slippage                = 1,
+     pyramiding              = 0)
+
+// ----------------------------------------------------------------- inputs
+grpS = "1. Session (London)"
+openHH = input.int(8,  "London open hour",   minval=0, maxval=23, group=grpS)
+openMM = input.int(0,  "London open minute", minval=0, maxval=59, group=grpS)
+boxMin = input.int(15, "Let this many minutes form first", minval=5, step=5, group=grpS)
+flatHH = input.int(16, "Flatten hour",   minval=0, maxval=23, group=grpS)
+flatMM = input.int(30, "Flatten minute", minval=0, maxval=59, group=grpS)
+tzStr  = input.string("Europe/London", "Session timezone", group=grpS)
+
+grpW = "2. Wait windows (Alligator re-adjust)"
+waitMinMin = input.int(15, "Wait: minimum minutes", minval=0,  step=5, group=grpW)
+waitMaxMin = input.int(45, "Wait: maximum minutes", minval=5,  step=5, group=grpW)
+maxTrades  = input.int(3,  "Max trades per day",    minval=1,  group=grpW)
+
+grpA = "3. Alligator"
+jawLen        = input.int(13, "Jaw length",   minval=1, group=grpA)
+teethLen      = input.int(8,  "Teeth length", minval=1, group=grpA)
+lipsLen       = input.int(5,  "Lips length",  minval=1, group=grpA)
+jawOff        = input.int(8,  "Jaw offset",   minval=0, group=grpA)
+teethOff      = input.int(5,  "Teeth offset", minval=0, group=grpA)
+lipsOff       = input.int(3,  "Lips offset",  minval=0, group=grpA)
+tangleMult    = input.float(0.5, "Tangled when line spread < this x ATR14", minval=0.05, step=0.05, group=grpA)
+slopeLook     = input.int(3,  "Jaw slope lookback (bars)", minval=1, group=grpA)
+priorLookback = input.int(24, "Look back this many bars for the previous trend", minval=5, group=grpA)
+
+grpR = "4. Risk"
+// PIP SIZE IS EXPLICIT, NOT INFERRED.
+// On a 5-decimal EUR/USD feed mintick is 0.00001, so one pip is 10 ticks.
+// Your own quote widget proves it: SELL 1.14118 / BUY 1.14133 is labelled
+// "1.5", i.e. 0.00015 = 1.5 pips. Leave this at 0 to auto-derive, and CHECK
+// the value shown in the info table reads 0.0001 before trusting any stop.
+pipOverride  = input.float(0.0, "Pip size (0 = auto: mintick x 10)", minval=0, step=0.00001, group=grpR)
+slBufferPips = input.float(3.0, "SL buffer beyond level (pips)", minval=0, step=0.5, group=grpR)
+rr           = input.float(1.0, "Reward : Risk", minval=0.1, step=0.1, group=grpR)
+riskPct      = input.float(0.5, "Risk % of equity per trade", minval=0.01, step=0.05, group=grpR)
+reentryStop  = input.string("jaw", "Re-entry stop uses", options=["jaw","sr","wider"], group=grpR)
+
+grpSR = "5. Support / Resistance"
+leftBars  = input.int(15, "Pivot left bars",  minval=1, group=grpSR)
+rightBars = input.int(15, "Pivot right bars", minval=1, group=grpSR)
+
+pipSize  = pipOverride > 0 ? pipOverride : syminfo.mintick * 10
+slBuffer = slBufferPips * pipSize
+
+// ------------------------------------------------------------- alligator
+smma(src, len) =>
+    s = 0.0
+    s := na(s[1]) ? ta.sma(src, len) : (s[1] * (len - 1) + src) / len
+    s
+
+jawRaw   = smma(hl2, jawLen)
+teethRaw = smma(hl2, teethLen)
+lipsRaw  = smma(hl2, lipsLen)
+
+// AS DRAWN. plot(x, offset=8) paints the value computed at bar t over bar t+8,
+// so the value your eye reads at bar t was computed 8 bars ago. This reads
+// OLDER data than the raw average, so it can never be lookahead.
+jaw   = jawRaw[jawOff]
+teeth = teethRaw[teethOff]
+lips  = lipsRaw[lipsOff]
+
+atr14   = ta.atr(14)
+spreadA = math.max(jaw, teeth, lips) - math.min(jaw, teeth, lips)
+tangled = spreadA < tangleMult * atr14
+bullFan = not tangled and lips > teeth and teeth > jaw and jaw > jaw[slopeLook]
+bearFan = not tangled and lips < teeth and teeth < jaw and jaw < jaw[slopeLook]
+fanDir  = bullFan ? 1 : bearFan ? -1 : 0
+
+// -------------------------------------------------- support / resistance
+// CAUSAL as used here: a pivot needs `rightBars` bars to its right to
+// confirm, so the value read at the current bar refers to a pivot at least
+// rightBars+1 bars old and was genuinely known now. The indicator PLOTS them
+// with a negative offset, painting the level back to where the pivot was —
+// which makes a level look older on screen than it was. Do not judge a
+// missed setup by where the line appears to begin.
+res = fixnan(ta.pivothigh(leftBars, rightBars)[1])
+sup = fixnan(ta.pivotlow(leftBars, rightBars)[1])
+
+// ---------------------------------------------------------------- clocks
+lonMins      = hour(time, tzStr) * 60 + minute(time, tzStr)
+openMins     = openHH * 60 + openMM
+flatMins     = flatHH * 60 + flatMM
+decisionMins = openMins + boxMin
+dayId        = year(time, tzStr) * 10000 + month(time, tzStr) * 100 + dayofmonth(time, tzStr)
+dow          = dayofweek(time, tzStr)
+isWeekday    = dow != dayofweek.saturday and dow != dayofweek.sunday
+
+// A bar's `time` is its OPEN, so the bar opening at 08:15 is the one that
+// closes at 08:20 — the first 5M close after the opening candle.
+isDecision = isWeekday and lonMins == decisionMins
+
+// ------------------------------------------------------------- day state
+var int    curDay      = na
+var int    tradesToday = 0
+var bool   waiting     = false
+var int    waitFromMin = na
+var bool   dayDone     = false
+var float  pendStop    = na
+var string pendCase    = ""
+
+if dayId != curDay
+    curDay      := dayId
+    tradesToday := 0
+    waiting     := false
+    waitFromMin := na
+    dayDone     := false
+    pendCase    := ""
+
+// -------------------------------------------- previous trend (case 2)
+priorDir = 0
+for k = 1 to priorLookback
+    if priorDir == 0
+        up = (not tangled[k]) and lips[k] > teeth[k] and teeth[k] > jaw[k] and jaw[k] > jaw[k + slopeLook]
+        dn = (not tangled[k]) and lips[k] < teeth[k] and teeth[k] < jaw[k] and jaw[k] < jaw[k + slopeLook]
+        priorDir := up ? 1 : dn ? -1 : 0
+
+// ------------------------------------------------------------- helpers
+qtyFor(stopPx) =>
+    d = math.abs(close - stopPx)
+    d <= 0 ? 0.0 : (strategy.equity * riskPct / 100.0) / d
+
+// --------------------------------------------------------------- entries
+flat     = strategy.position_size == 0
+canTrade = isWeekday and not dayDone and tradesToday < maxTrades and flat and lonMins < flatMins
+
+longSig  = false
+shortSig = false
+sigStop  = float(na)
+sigTag   = ""
+
+if canTrade and isDecision
+    if fanDir != 0
+        // Case 1: clean fan -> stop beyond the JAW
+        sigStop := fanDir > 0 ? jaw - slBuffer : jaw + slBuffer
+        sigTag  := "case1-fan"
+        longSig := fanDir > 0
+        shortSig:= fanDir < 0
+    else if priorDir != 0 and not na(sup) and not na(res)
+        // Case 2: tangled, previous trend clear -> stop beyond S/R
+        st = priorDir > 0 ? sup - slBuffer : res + slBuffer
+        if (priorDir > 0 and st < close) or (priorDir < 0 and st > close)
+            sigStop := st
+            sigTag  := "case2-prior"
+            longSig := priorDir > 0
+            shortSig:= priorDir < 0
+    else
+        // Case 3: tangled AND previous trend unclear -> wait for the Alligator
+        waiting     := true
+        waitFromMin := lonMins
+        pendCase    := "case3"
+
+inWaitWindow = waiting and not na(waitFromMin) and
+     (lonMins - waitFromMin) >= waitMinMin and (lonMins - waitFromMin) <= waitMaxMin
+
+if canTrade and inWaitWindow and fanDir != 0
+    useSr = pendCase == "case3" or reentryStop == "sr"
+    stJaw = fanDir > 0 ? jaw - slBuffer : jaw + slBuffer
+    stSr  = fanDir > 0 ? (na(sup) ? stJaw : sup - slBuffer) : (na(res) ? stJaw : res + slBuffer)
+    st    = useSr ? stSr : reentryStop == "wider" ? (fanDir > 0 ? math.min(stJaw, stSr) : math.max(stJaw, stSr)) : stJaw
+    if (fanDir > 0 and st < close) or (fanDir < 0 and st > close)
+        sigStop := st
+        sigTag  := pendCase == "case3" ? "case3-waited" : "case4-reentry"
+        longSig := fanDir > 0
+        shortSig:= fanDir < 0
+
+if longSig or shortSig
+    pendStop    := sigStop
+    q            = qtyFor(sigStop)
+    if q > 0
+        if longSig
+            strategy.entry("L", strategy.long,  qty = q, comment = sigTag)
+        else
+            strategy.entry("S", strategy.short, qty = q, comment = sigTag)
+        tradesToday += 1
+        waiting     := false
+
+// Wait expired with no direction
+if waiting and not na(waitFromMin) and (lonMins - waitFromMin) > waitMaxMin
+    waiting := false
+    dayDone := true
+
+// ------------------------------------------------------------------ exits
+if strategy.position_size != 0 and not na(pendStop)
+    entryPx = strategy.position_avg_price
+    risk    = math.abs(entryPx - pendStop)
+    if risk > 0
+        if strategy.position_size > 0
+            strategy.exit("xL", from_entry = "L", stop = pendStop, limit = entryPx + rr * risk)
+        else
+            strategy.exit("xS", from_entry = "S", stop = pendStop, limit = entryPx - rr * risk)
+
+if strategy.position_size != 0 and lonMins >= flatMins
+    strategy.close_all(comment = "session end")
+
+// -------------------------------------------- re-arm after a stop (case 4)
+justClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
+if justClosed and strategy.closedtrades > 0
+    wasLoss = strategy.closedtrades.profit(strategy.closedtrades - 1) < 0
+    if wasLoss and tradesToday < maxTrades and lonMins < flatMins
+        waiting     := true
+        waitFromMin := lonMins
+        pendCase    := "case4"
+    else
+        dayDone := true
+
+// ----------------------------------------------------------------- plots
+plot(jawRaw,   "Jaw",   color = color.blue, linewidth = 2, offset = jawOff)
+plot(teethRaw, "Teeth", color = #E91E63,    linewidth = 2, offset = teethOff)
+plot(lipsRaw,  "Lips",  color = #66BB6A,    linewidth = 2, offset = lipsOff)
+plot(res, "Resistance", color = ta.change(res) ? na : color.red, linewidth = 2, offset = -(rightBars + 1), style = plot.style_linebr)
+plot(sup, "Support",    color = ta.change(sup) ? na : #233dee,   linewidth = 2, offset = -(rightBars + 1), style = plot.style_linebr)
+
+bgcolor(isDecision ? color.new(color.orange, 85) : waiting ? color.new(color.gray, 93) : na, title = "Session state")
+plotshape(isDecision and fanDir > 0,  "Decision: bull fan", shape.triangleup,   location.belowbar, color.new(color.green, 0),  size = size.tiny)
+plotshape(isDecision and fanDir < 0,  "Decision: bear fan", shape.triangledown, location.abovebar, color.new(color.red, 0),    size = size.tiny)
+plotshape(isDecision and fanDir == 0, "Decision: tangled",  shape.diamond,      location.abovebar, color.new(color.orange, 0), size = size.tiny)
+
+// ------------------------------------------------------------- info table
+var table info = table.new(position.top_right, 2, 6, border_width = 1)
+if barstate.islast
+    capHit = bar_index + 1 >= 4900
+    table.cell(info, 0, 0, "pip size",      text_size = size.small)
+    table.cell(info, 1, 0, str.tostring(pipSize, "#.#####") + (pipOverride > 0 ? " (manual)" : " (auto)"), text_size = size.small)
+    table.cell(info, 0, 1, "SL buffer",     text_size = size.small)
+    table.cell(info, 1, 1, str.tostring(slBufferPips) + " pip = " + str.tostring(slBuffer, "#.#####"), text_size = size.small)
+    table.cell(info, 0, 2, "decision bar",  text_size = size.small)
+    table.cell(info, 1, 2, str.tostring(math.floor(decisionMins / 60)) + ":" + str.tostring(decisionMins % 60, "00") + " " + tzStr, text_size = size.small)
+    table.cell(info, 0, 3, "alligator",     text_size = size.small)
+    table.cell(info, 1, 3, "as drawn (displaced)", text_size = size.small)
+    table.cell(info, 0, 4, "bars loaded",   text_size = size.small)
+    table.cell(info, 1, 4, str.tostring(bar_index + 1), text_size = size.small)
+    table.cell(info, 0, 5, "sample",        text_size = size.small)
+    table.cell(info, 1, 5, capHit ? "at the 5k free-plan cap — NOT evidence" : "below the cap", text_size = size.small,
+         text_color = capHit ? color.red : color.gray)
