@@ -6,5 +6,11 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/nomi62300/wicktor-scanner.git"
+  },
+  "scripts": {
+    "test": "node tests/indicators.test.js; node tests/orb.test.js; node tests/cwt.test.js",
+    "test:orb": "node tests/orb.test.js",
+    "test:cwt": "node tests/cwt.test.js",
+    "test:indicators": "node tests/indicators.test.js"
   }
 }
